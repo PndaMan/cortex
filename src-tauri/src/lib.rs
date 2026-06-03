@@ -113,7 +113,7 @@ mod pipeline_tests {
         let c = st.db.lock().unwrap();
 
         let sid = repo::insert_subject(&c, "Algorithms", Some("CS-3490"), None, None).unwrap();
-        let tid = repo::insert_topic(&c, &sid, "Dynamic programming").unwrap();
+        let tid = repo::insert_topic(&c, &sid, "Dynamic programming", None).unwrap();
         let srcid = repo::insert_source(&c, &sid, Some(&tid), "dp.md", "md", None).unwrap();
 
         let text = "Dynamic programming solves problems by combining solutions to \

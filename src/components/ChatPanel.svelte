@@ -281,6 +281,24 @@
       });
   }
 
+  // Start a fresh conversation — history persists per subject, so this clears
+  // the saved thread and the on-screen messages.
+  async function clearConversation() {
+    const sid = app.activeSubject?.id;
+    if (!sid) return;
+    const ok = await app.confirm({
+      title: "Start a new conversation?",
+      body: "This clears the saved chat history for this subject.",
+      danger: true,
+      okLabel: "Clear",
+    });
+    if (!ok) return;
+    await api.clearChat(sid).catch(() => {});
+    messages = [];
+    suggestions = [];
+    queued = [];
+  }
+
   // Send the next queued message (if any) once the current one finishes.
   function dequeue() {
     if (queued.length === 0) return;
@@ -376,7 +394,7 @@
     <div class="chat-model-pick" title="Chat model">
       <Picker value={chatModel} onChange={setChatModel} options={modelOptions} icon="bolt" placeholder="Model" />
     </div>
-    <button class="btn btn--icon btn--sm btn--ghost" title="History">
+    <button class="btn btn--icon btn--sm btn--ghost" title="New conversation (clears history)" onclick={clearConversation}>
       <Icon name="refresh" size={13} />
     </button>
     {#if onClose}

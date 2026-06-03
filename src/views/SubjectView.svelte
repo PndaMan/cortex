@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app } from "../lib/store.svelte";
+  import { app, topicGlyph } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import type { Source } from "../lib/api";
   import Icon from "../components/Icon.svelte";
@@ -67,6 +67,17 @@
     if (!(await app.confirm({ title: "Delete this source?", danger: true, okLabel: "Delete" }))) return;
     await app.deleteSource(src.id); // toasts + refreshes the store internally
     loadSources(); // reload the local list this tab renders from
+  }
+
+  function editTopicGroup(topicId: string, name: string) {
+    const t = subj?.topics.find((x) => x.id === topicId);
+    app.openEdit({
+      kind: "topic",
+      id: topicId,
+      name,
+      subjectId: subj!.id,
+      glyph: t?.glyph || topicGlyph(topicId),
+    });
   }
 
   async function deleteTopicGroup(topicId: string, name: string) {
@@ -151,6 +162,13 @@
                   <span class="faint">· {g.items.length}</span>
                   {#if g.key !== "__none__"}
                     <div class="grow"></div>
+                    <button
+                      class="btn btn--icon btn--sm btn--ghost"
+                      title="Edit topic"
+                      onclick={() => editTopicGroup(g.key, g.name)}
+                    >
+                      <Icon name="pencil" size={12} />
+                    </button>
                     <button
                       class="btn btn--icon btn--sm btn--ghost"
                       title="Delete topic"

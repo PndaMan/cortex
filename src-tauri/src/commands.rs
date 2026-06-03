@@ -173,9 +173,14 @@ pub fn delete_subject(state: State<AppState>, id: String) -> Result<()> {
 // ---- topics ------------------------------------------------------------
 
 #[tauri::command]
-pub fn create_topic(state: State<AppState>, subject_id: String, name: String) -> Result<Subject> {
+pub fn create_topic(
+    state: State<AppState>,
+    subject_id: String,
+    name: String,
+    glyph: Option<String>,
+) -> Result<Subject> {
     let c = state.db.lock().unwrap();
-    repo::insert_topic(&c, &subject_id, &name)?;
+    repo::insert_topic(&c, &subject_id, &name, glyph.as_deref())?;
     repo::get_subject(&c, &subject_id)
 }
 
@@ -185,9 +190,10 @@ pub fn update_topic(
     id: String,
     name: String,
     subject_id: String,
+    glyph: Option<String>,
 ) -> Result<Subject> {
     let c = state.db.lock().unwrap();
-    repo::update_topic(&c, &id, &name)?;
+    repo::update_topic(&c, &id, &name, glyph.as_deref())?;
     repo::get_subject(&c, &subject_id)
 }
 
@@ -525,7 +531,7 @@ pub fn seed_demo(state: State<AppState>) -> Result<Vec<Subject>> {
     for (name, code, topics) in demo {
         let sid = repo::insert_subject(&c, name, Some(code), None, None)?;
         for (tname, sources) in *topics {
-            let tid = repo::insert_topic(&c, &sid, tname)?;
+            let tid = repo::insert_topic(&c, &sid, tname, None)?;
             for (sname, kind) in *sources {
                 let srcid = repo::insert_source(&c, &sid, Some(&tid), sname, kind, None)?;
                 repo::finalize_source(

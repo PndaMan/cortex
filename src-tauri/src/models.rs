@@ -23,6 +23,7 @@ pub struct Topic {
     pub id: String,
     pub subject_id: String,
     pub name: String,
+    pub glyph: Option<String>,
     pub position: i64,
     pub sources: Vec<Source>,
 }

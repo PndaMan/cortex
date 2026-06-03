@@ -45,9 +45,9 @@
     });
   }
 
-  function editTopic(t: { id: string; name: string }, subjectId: string, e: Event) {
+  function editTopic(t: { id: string; name: string; glyph?: string | null }, subjectId: string, e: Event) {
     e.stopPropagation();
-    app.openEdit({ kind: "topic", id: t.id, name: t.name, subjectId });
+    app.openEdit({ kind: "topic", id: t.id, name: t.name, subjectId, glyph: t.glyph || topicGlyph(t.id) });
   }
 
   // Sources directly under a subject that belong to no topic (topic_id null).
@@ -189,7 +189,7 @@
                 onkeydown={(e) => (e.key === "Enter" || e.key === " ") && toggleTopic(t.id, e)}
               >
                 <span class="t-tw{tOpen ? ' open' : ''}"><Icon name="chevron" size={10} /></span>
-                <span class="t-glyph" style="flex:none;color:var(--fg-faint);font-size:11px;margin-right:5px">{topicGlyph(t.id)}</span>
+                <span class="t-glyph" style="flex:none;font-size:11px;margin-right:5px">{t.glyph || topicGlyph(t.id)}</span>
                 <span class="t-name">{t.name}</span>
                 <span class="t-actions">
                   <button

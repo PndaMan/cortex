@@ -60,7 +60,7 @@ export type DialogSpec = {
 // Rich edit-modal targets — carry the current field values to seed the form.
 export type EditTarget =
   | { kind: "subject"; id: string; name: string; code: string; glyph: string; color: string }
-  | { kind: "topic"; id: string; name: string; subjectId: string }
+  | { kind: "topic"; id: string; name: string; subjectId: string; glyph: string }
   | {
       kind: "source";
       id: string;
@@ -80,18 +80,25 @@ export const SUBJECT_COLORS = [
 // Selectable subject glyphs — subject-relevant emojis. Rendered as text so they
 // show in full where displayed; the subject's color accents the card/border.
 export const GLYPHS = [
-  "📘", "📗", "📙", "📐", "🧠", "⚛️", "🔬", "🧪", "💻", "📊",
-  "📈", "🧮", "🎨", "🎵", "🌍", "🗺️", "⚖️", "🏛️", "🩺", "🧬",
-  "🔭", "🪐", "📜", "✍️", "🧩", "💡", "🎭", "⚙️", "🔢", "🌐",
+  "📘", "📗", "📙", "📕", "📐", "📏", "🧠", "⚛️", "🔬", "🧪",
+  "🧫", "🦠", "🧬", "💻", "🖥️", "⌨️", "📊", "📈", "📉", "🧮",
+  "🔢", "➗", "🎨", "🖌️", "🎵", "🎼", "🎹", "🎸", "🌍", "🗺️",
+  "🧭", "⚖️", "🏛️", "📜", "🏺", "🗿", "🩺", "💊", "💉", "🫀",
+  "🔭", "🧰", "🪐", "🚀", "🛰️", "✍️", "🖊️", "📝", "🧩", "💡",
+  "🎭", "🎬", "🎮", "⚙️", "🔧", "🔌", "🔋", "🌐", "📡", "🛡️",
+  "⚔️", "🏹", "🎯", "🌱", "🌿", "🍃", "🌋", "🌊", "🔥", "❄️",
+  "🐍", "🦴", "🗣️", "💬", "📚", "🔑",
 ];
 
 // Clean, minimalist topic emojis, assigned deterministically per topic so each
 // has a stable little icon. Rendered slightly desaturated so they read as a
 // subtle accent rather than loud color.
 export const TOPIC_GLYPHS = [
-  "📄", "📝", "📐", "🔖", "🏷️", "📌", "📎", "🗂️", "📑", "💬",
-  "📊", "📈", "🔬", "🧪", "⚗️", "🧮", "📚", "🗒️", "📋", "🎯",
-  "🧩", "🔭", "💡", "⚙️", "🧠", "🪶", "🧭", "🔑", "📦", "🌱",
+  "📄", "📝", "📃", "📐", "🔖", "🏷️", "📌", "📍", "📎", "🗂️",
+  "📑", "🗃️", "🗄️", "📁", "📂", "💬", "🗨️", "💭", "📊", "📈",
+  "📉", "🔬", "🧪", "⚗️", "🧫", "🧮", "📚", "📖", "📓", "📔",
+  "🗒️", "📋", "🎯", "🧩", "🔭", "💡", "⚙️", "🧠", "🪶", "🧭",
+  "🔑", "📦", "🌱", "🔍", "🔎", "✏️", "🖊️", "⭐", "✨", "🔆",
 ];
 export function topicGlyph(id: string): string {
   let h = 0;
@@ -256,13 +263,13 @@ class AppStore {
     }
   }
 
-  async updateTopic(id: string, name: string, subjectId?: string) {
+  async updateTopic(id: string, name: string, subjectId?: string, glyph?: string) {
     const sid = subjectId ?? this.activeSubjectId;
     if (!sid || !name.trim()) return;
     try {
-      await api.updateTopic(id, name.trim(), sid);
+      await api.updateTopic(id, name.trim(), sid, glyph);
       await this.refresh();
-      this.pushToast({ kind: "success", title: "Topic renamed" });
+      this.pushToast({ kind: "success", title: "Topic updated" });
     } catch (e) {
       this.pushToast({ kind: "error", title: "Rename failed", body: String(e) });
     }
@@ -293,11 +300,11 @@ class AppStore {
     }
   }
 
-  async createTopic(name: string) {
+  async createTopic(name: string, glyph?: string) {
     const sid = this.activeSubjectId;
     if (!sid || !name.trim()) return;
     try {
-      await api.createTopic(sid, name.trim());
+      await api.createTopic(sid, name.trim(), glyph);
       await this.refresh();
       this.pushToast({ kind: "success", title: "Topic added" });
     } catch (e) {

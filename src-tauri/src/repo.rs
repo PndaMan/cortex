@@ -103,7 +103,12 @@ pub fn get_subject(conn: &Connection, id: &str) -> Result<Subject> {
 
 // ---- topics ------------------------------------------------------------
 
-pub fn insert_topic(conn: &Connection, subject_id: &str, name: &str) -> Result<String> {
+pub fn insert_topic(
+    conn: &Connection,
+    subject_id: &str,
+    name: &str,
+    glyph: Option<&str>,
+) -> Result<String> {
     let id = new_id();
     let ts = now_ms();
     let pos: i64 = conn
@@ -114,17 +119,21 @@ pub fn insert_topic(conn: &Connection, subject_id: &str, name: &str) -> Result<S
         )
         .unwrap_or(0);
     conn.execute(
-        "INSERT INTO topics (id, subject_id, name, position, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-        params![id, subject_id, name, pos, ts],
+        "INSERT INTO topics (id, subject_id, name, glyph, position, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+        params![id, subject_id, name, glyph, pos, ts],
     )?;
     Ok(id)
 }
 
-pub fn update_topic(conn: &Connection, id: &str, name: &str) -> Result<()> {
+pub fn update_topic(conn: &Connection, id: &str, name: &str, glyph: Option<&str>) -> Result<()> {
     let n = conn.execute(
-        "UPDATE topics SET name=?2, updated_at=?3 WHERE id=?1",
-        params![id, name, now_ms()],
+        "UPDATE topics SET
+            name=?2,
+            glyph=CASE WHEN ?3 IS NULL THEN glyph ELSE ?3 END,
+            updated_at=?4
+         WHERE id=?1",
+        params![id, name, glyph, now_ms()],
     )?;
     if n == 0 {
         return Err(Error::NotFound(format!("topic {id}")));
@@ -139,7 +148,7 @@ pub fn delete_topic(conn: &Connection, id: &str) -> Result<()> {
 
 pub fn list_topics(conn: &Connection, subject_id: &str) -> Result<Vec<Topic>> {
     let mut stmt = conn.prepare(
-        "SELECT id, subject_id, name, position FROM topics
+        "SELECT id, subject_id, name, glyph, position FROM topics
          WHERE subject_id=?1 ORDER BY position, created_at",
     )?;
     let rows = stmt.query_map(params![subject_id], |r| {
@@ -147,7 +156,8 @@ pub fn list_topics(conn: &Connection, subject_id: &str) -> Result<Vec<Topic>> {
             id: r.get(0)?,
             subject_id: r.get(1)?,
             name: r.get(2)?,
-            position: r.get(3)?,
+            glyph: r.get(3)?,
+            position: r.get(4)?,
             sources: Vec::new(),
         })
     })?;
@@ -830,7 +840,7 @@ mod tests {
         let st = AppState::in_memory().unwrap();
         let c = st.db.lock().unwrap();
         let sid = insert_subject(&c, "Algorithms", Some("CS-3490"), None, None).unwrap();
-        let tid = insert_topic(&c, &sid, "Recursion").unwrap();
+        let tid = insert_topic(&c, &sid, "Recursion", None).unwrap();
         let srcid = insert_source(&c, &sid, Some(&tid), "lec3.md", "md", None).unwrap();
         finalize_source(&c, &srcid, "ready", Some("3 pages"), Some("body"), None).unwrap();
         attach_tags(&c, &srcid, &["lecture".into(), "exam".into()]).unwrap();

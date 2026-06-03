@@ -1,7 +1,7 @@
 <script lang="ts">
   // Rich, fully-themed edit modal — subjects/topics/sources with all their
   // fields. Driven by app.editing; saves through the store's update actions.
-  import { app, SUBJECT_COLORS, GLYPHS } from "../lib/store.svelte";
+  import { app, SUBJECT_COLORS, GLYPHS, TOPIC_GLYPHS } from "../lib/store.svelte";
   import Picker from "./Picker.svelte";
 
   // Local form state, seeded whenever a new target opens.
@@ -19,7 +19,7 @@
     if (t.kind === "subject") {
       name = t.name; code = t.code ?? ""; glyph = t.glyph || "◆"; color = t.color || SUBJECT_COLORS[0];
     } else if (t.kind === "topic") {
-      name = t.name;
+      name = t.name; glyph = t.glyph || TOPIC_GLYPHS[0];
     } else {
       name = t.name; topicId = t.topicId ?? ""; tagsText = (t.tags ?? []).join(", ");
     }
@@ -38,7 +38,7 @@
     if (t.kind === "subject") {
       app.updateSubject(t.id, name.trim(), code.trim() || undefined, glyph.trim() || undefined, color);
     } else if (t.kind === "topic") {
-      app.updateTopic(t.id, name.trim(), t.subjectId);
+      app.updateTopic(t.id, name.trim(), t.subjectId, glyph.trim() || undefined);
     } else {
       const tags = tagsText.split(",").map((s) => s.trim()).filter(Boolean);
       app.updateSource(t.id, name.trim(), topicId || null, tags);
@@ -83,6 +83,21 @@
         <span class="edit-lbl">{t.kind === "topic" ? "Topic name" : "Name"}</span>
         <input bind:this={firstInput} bind:value={name} class="input" placeholder="Name" />
       </label>
+
+      {#if t.kind === "topic"}
+        <div class="edit-field">
+          <span class="edit-lbl">Icon</span>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            {#each TOPIC_GLYPHS as g}
+              <button
+                type="button"
+                style="width:28px;height:28px;border-radius:7px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;background:var(--surface-2);border:1px solid {glyph === g ? 'var(--accent)' : 'var(--border-strong)'}"
+                onclick={() => (glyph = g)}
+              >{g}</button>
+            {/each}
+          </div>
+        </div>
+      {/if}
 
       {#if t.kind === "subject"}
         <label class="edit-field">

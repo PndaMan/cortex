@@ -25,6 +25,7 @@ export interface Topic {
   id: string;
   subject_id: string;
   name: string;
+  glyph: string | null;
   position: number;
   sources: Source[];
 }
@@ -129,10 +130,10 @@ export const updateSubject = (
 export const deleteSubject = (id: string) => invoke<void>("delete_subject", { id });
 
 // ---- topics ----
-export const createTopic = (subjectId: string, name: string) =>
-  invoke<Subject>("create_topic", { subjectId, name });
-export const updateTopic = (id: string, name: string, subjectId: string) =>
-  invoke<Subject>("update_topic", { id, name, subjectId });
+export const createTopic = (subjectId: string, name: string, glyph?: string) =>
+  invoke<Subject>("create_topic", { subjectId, name, glyph });
+export const updateTopic = (id: string, name: string, subjectId: string, glyph?: string) =>
+  invoke<Subject>("update_topic", { id, name, subjectId, glyph });
 export const deleteTopic = (id: string, subjectId: string) =>
   invoke<Subject>("delete_topic", { id, subjectId });
 
