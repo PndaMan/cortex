@@ -9,11 +9,10 @@
 
   // ── scope state ──────────────────────────────────────────────────────────
   type Level = "subject" | "topic" | "source";
-  const ORDER: Level[] = ["subject", "topic", "source"];
 
   interface ChatMessage { role: "system" | "user" | "assistant"; text: string }
 
-  let level = $state<Level>("source");
+  let level = $state<Level>("subject");
   let srcId = $state<string | null>(null);
   let topicId = $state<string | null>(null);
   let messages = $state<ChatMessage[]>([]);
@@ -50,12 +49,20 @@
     return name.replace(/\.[^.]+$/, "").replace(/^lecture-0?/, "lec-");
   }
 
-  // Scope label derived from real data
-  const activeScopeLabel = $derived<Record<Level, string>>({
-    subject: "Subject: " + (app.activeSubject?.name ?? "—"),
-    topic: "Topic: " + (curTopic?.name ?? "—"),
-    source: curSrcObj ? "Source: " + curSrcObj.name : "Source",
-  });
+  // Effective level: downgrade gracefully when the chosen scope has no target
+  // (e.g. "source" scope but the subject has no sources → fall back to topic/subject).
+  const effLevel = $derived<Level>(
+    level === "source" && !curSrcObj ? (curTopic ? "topic" : "subject")
+      : level === "topic" && !curTopic ? "subject"
+      : level
+  );
+  // Plain display name of the current scope (no "Source:" prefix), used in the
+  // breadcrumb selector and the empty state.
+  const scopeName = $derived(
+    effLevel === "source" ? (curSrcObj?.name ?? "")
+      : effLevel === "topic" ? (curTopic?.name ?? "")
+      : (app.activeSubject?.name ?? "")
+  );
 
   // ── status-bar PWD sync ─────────────────────────────────────────────────────
   // Keep app.chatScope in lock-step with the chat's scope so the status bar
@@ -65,9 +72,9 @@
       app.chatScope = null;
       return;
     }
-    if (level === "source" && curSrcObj) {
+    if (effLevel === "source" && curSrcObj) {
       app.chatScope = { topicName: curTopic?.name, sourceName: curSrcObj.name };
-    } else if (level === "topic") {
+    } else if (effLevel === "topic") {
       app.chatScope = { topicName: curTopic?.name };
     } else {
       app.chatScope = null; // whole-subject
@@ -104,19 +111,6 @@
     return 0;
   });
 
-  // ── scope actions ─────────────────────────────────────────────────────────
-  function changeScope(k: Level) {
-    if (k === level) return;
-    const widening = ORDER.indexOf(k) < ORDER.indexOf(level);
-    level = k;
-    messages = [
-      ...messages,
-      {
-        role: "system",
-        text: (widening ? "scope widened to " : "scope narrowed to ") + activeScopeLabel[k],
-      },
-    ];
-  }
 
   // ── source-switcher overlay actions ─────────────────────────────────────────
   function openSwitcher() {
@@ -126,18 +120,16 @@
   }
 
   function applyOption(o: ScopeOption) {
+    // Silent scope change — no system message in the thread.
     if (o.kind === "subject") {
       level = "subject";
-      messages = [...messages, { role: "system", text: "scope set to whole subject" }];
     } else if (o.kind === "topic") {
       topicId = o.topicId;
       level = "topic";
-      messages = [...messages, { role: "system", text: "scope set to Topic: " + o.label }];
     } else {
       srcId = o.src.id;
       topicId = o.src.topic_id ?? topicId;
       level = "source";
-      messages = [...messages, { role: "system", text: "scope set to Source: " + o.label }];
     }
     switcherOpen = false;
     // Return focus to the composer so typing keeps working.
@@ -180,10 +172,10 @@
     streaming = "";
     try {
       const sourceId =
-        level === "source" && curSrcObj ? curSrcObj.id : undefined;
+        effLevel === "source" && curSrcObj ? curSrcObj.id : undefined;
       const result = await api.chatAnswer(
         app.activeSubject.id,
-        level,
+        effLevel,
         text,
         sourceId
       );
@@ -257,55 +249,21 @@
   <!-- ── header ─────────────────────────────────────────────────────────── -->
   <div class="chat-head">
     {#if app.activeSubject}
-      <!-- Scope breadcrumb (inlined) -->
-      <div class="scope" role="group" aria-label="chat scope">
-        <!-- Subject segment -->
-        <span
-          class="scope-seg{level === 'subject' ? ' is-active' : ''}"
-          role="button"
-          tabindex="0"
-          title="Scope chat to {activeScopeLabel.subject}"
-          onclick={() => changeScope("subject")}
-          onkeydown={(e) => e.key === "Enter" && changeScope("subject")}
-        >
-          <span class="seg-ico"><Icon name="diamond" size={11} /></span>{app.activeSubject.name}
-        </span>
-
-        {#if curTopic}
-          <span class="scope-sep">›</span>
-
-          <!-- Topic segment -->
-          <span
-            class="scope-seg{level === 'topic' ? ' is-active' : ''}"
-            role="button"
-            tabindex="0"
-            title="Scope chat to {activeScopeLabel.topic}"
-            onclick={() => changeScope("topic")}
-            onkeydown={(e) => e.key === "Enter" && changeScope("topic")}
-          >
-            <span class="seg-ico"><Icon name="chevron" size={11} /></span>{curTopic.name}
-          </span>
+      <!-- One clean clickable scope selector (opens the switcher). Shows the
+           current scope path; no redundant chevrons or banner. -->
+      <button class="scope-pick" type="button" title="Change scope (s)" onclick={openSwitcher}>
+        <span class="sp-ico">{app.activeSubject.glyph || "◆"}</span>
+        <span class="sp-name">{app.activeSubject.name}</span>
+        {#if effLevel !== "subject" && curTopic}
+          <span class="sp-sep">›</span>
+          <span class="sp-name sp-dim">{curTopic.name}</span>
         {/if}
-
-        <!-- Source segment (only when a source is available) -->
-        {#if curSrcObj}
-          <span class="scope-sep">›</span>
-          <div class="scope-srcwrap">
-            <span
-              class="scope-seg scope-seg--src{level === 'source' ? ' is-active' : ''}"
-              role="button"
-              tabindex="0"
-              title="Switch scope — {curSrcObj.name} (s)"
-              onclick={openSwitcher}
-              onkeydown={(e) => { if (e.key === "Enter") openSwitcher(); }}
-            >
-              <span class="seg-ico"><Icon name="doc" size={11} /></span>
-              <span class="src-seg-label">{shortName(curSrcObj.name)}</span>
-              <Icon name="chevron" size={10} />
-            </span>
-          </div>
+        {#if effLevel === "source" && curSrcObj}
+          <span class="sp-sep">›</span>
+          <span class="sp-name">{shortName(curSrcObj.name)}</span>
         {/if}
-      </div>
+        <Icon name="chevron" size={11} style="transform:rotate(90deg);opacity:.55;margin-left:2px" />
+      </button>
     {:else}
       <span class="faint" style="font-size:12px">No subject open</span>
     {/if}
@@ -332,15 +290,10 @@
         <div class="ces-sub">Ask questions grounded in your sources.</div>
       </div>
     {:else}
-      <div class="chat-scope-note">
-        <Icon name="diamond" size={9} color="var(--accent)" />
-        Answers limited to <b>{activeScopeLabel[level]}</b>
-      </div>
-
       {#if messages.length === 0 && streaming === null}
         <div class="chat-empty-state" style="min-height:48vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;">
           <div class="ces-ico"><Icon name="chat" size={22} color="var(--fg3)" /></div>
-          <div class="ces-title">Ask anything about {activeScopeLabel[level]}</div>
+          <div class="ces-title">Ask anything about {scopeName}</div>
           <div class="ces-sub">Press <span class="kbd">i</span> to start · <span class="kbd">s</span> to change scope</div>
         </div>
       {/if}
@@ -372,7 +325,7 @@
         placeholder={!app.activeSubject
           ? "Open a subject first…"
           : app.mode === "INS"
-          ? "Ask about " + activeScopeLabel[level] + "…"
+          ? "Ask about " + scopeName + "…"
           : "Press i to ask…"}
         bind:value={draft}
         disabled={!app.activeSubject}
@@ -463,6 +416,38 @@
 </div>
 
 <style>
+  /* ── scope selector (the reworked top bar: one clean clickable control) ─── */
+  .scope-pick {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    min-width: 0;
+    padding: 5px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md, 8px);
+    background: var(--surface-2);
+    color: var(--fg);
+    font: inherit;
+    font-size: var(--t-sm, 12.5px);
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  .scope-pick:hover {
+    background: var(--surface-3);
+    border-color: var(--accent-dim, var(--accent));
+  }
+  .scope-pick .sp-ico { flex: none; font-size: 13px; line-height: 1; }
+  .scope-pick .sp-name {
+    color: var(--fg-bright);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .scope-pick .sp-name.sp-dim { color: var(--fg-muted); }
+  .scope-pick .sp-sep { flex: none; color: var(--fg-faint); }
+
   /* ── fit-to-page: the panel always fills its container as a flex column.
      header (fixed) · messages (flex:1, scroll) · composer (fixed). This makes
      the messages region grow to fill the page in the full "Chats" tab while
