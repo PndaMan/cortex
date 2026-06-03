@@ -16,6 +16,8 @@
     { key: "f", label: "Flashcards",   detail: "study session",          run: () => app.setView("subject") },
     { key: "d", label: "Review diff",  detail: "cheatsheet draft",       run: () => app.reviewDiff() },
     { key: "w", label: "Web search",   detail: "search the web",         run: () => app.setView("websearch") },
+    { key: "n", label: "Notes",        detail: "markdown notes",         run: () => app.setView("notes") },
+    { key: "a", label: "Calendar",     detail: "events & tasks",         run: () => app.setView("calendar") },
     { key: "t", label: "Theme",        detail: "cycle Omarchy theme",    run: () => app.cycleTheme() },
     { key: "m", label: "Music",        detail: "study sound panel",      run: () => { app.musicOpen = true; } },
     { key: "p", label: "Pomodoro",     detail: "focus timer + bonsai",   run: () => { app.pomodoroOpen = true; } },

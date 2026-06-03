@@ -110,6 +110,72 @@ pub fn html_to_text(html: &str) -> String {
     re_ws.replace_all(text.trim(), " ").to_string()
 }
 
+/// Reduce a fetched HTML page to readable content for the in-app reader view:
+/// `(title, body_text, links)` where links are `(absolute_href, anchor_text)`.
+/// No JS executes — safe to render. Dependency-light (regex only).
+pub fn readable_page(html: &str, base_url: &str) -> (String, String, Vec<(String, String)>) {
+    // Title: <title>…</title>, falling back to the page host.
+    let title = regex::Regex::new(r"(?is)<title[^>]*>(.*?)</title>")
+        .unwrap()
+        .captures(html)
+        .map(|c| decode_entities(c[1].trim()).trim().to_string())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| base_url.to_string());
+
+    let text = html_to_text(html);
+
+    // Outbound links: <a href="…">text</a>, resolved to absolute http(s) URLs.
+    let re_a = regex::Regex::new(r#"(?is)<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>(.*?)</a>"#).unwrap();
+    let mut links: Vec<(String, String)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for caps in re_a.captures_iter(html) {
+        let href_raw = caps[1].trim();
+        if href_raw.is_empty()
+            || href_raw.starts_with('#')
+            || href_raw.starts_with("javascript:")
+            || href_raw.starts_with("mailto:")
+        {
+            continue;
+        }
+        let abs = resolve_url(base_url, href_raw);
+        if !abs.starts_with("http://") && !abs.starts_with("https://") {
+            continue;
+        }
+        let label = html_to_text(&caps[2]);
+        if label.is_empty() || !seen.insert(abs.clone()) {
+            continue;
+        }
+        links.push((abs, label));
+        if links.len() >= 120 {
+            break;
+        }
+    }
+    (title, text, links)
+}
+
+/// Resolve a possibly-relative href against a base URL (handles absolute,
+/// scheme-relative `//`, root-relative `/path`, and simple relative paths).
+fn resolve_url(base: &str, href: &str) -> String {
+    if href.starts_with("http://") || href.starts_with("https://") {
+        return href.to_string();
+    }
+    let scheme_end = base.find("://").map(|i| i + 3).unwrap_or(0);
+    let after = &base[scheme_end..];
+    let scheme = &base[..scheme_end]; // includes "://"
+    let host = after.split(['/', '?', '#']).next().unwrap_or(after);
+    if let Some(rest) = href.strip_prefix("//") {
+        let s = if scheme.is_empty() { "https://" } else { scheme };
+        return format!("{s}{rest}");
+    }
+    if let Some(path) = href.strip_prefix('/') {
+        return format!("{scheme}{host}/{path}");
+    }
+    // relative to the current directory of the base path
+    let base_no_query = base.split(['?', '#']).next().unwrap_or(base);
+    let dir = base_no_query.rsplit_once('/').map(|(d, _)| d).unwrap_or(base_no_query);
+    format!("{dir}/{href}")
+}
+
 /// Decode the common named entities plus numeric (`&#8203;`) and hex (`&#x27;`) refs.
 fn decode_entities(s: &str) -> String {
     let named = s

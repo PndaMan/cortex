@@ -104,9 +104,7 @@ pub fn run() {
             commands::db_stats,
             commands::delete_all_data,
             commands::ping_url,
-            commands::open_browser,
-            commands::browser_url,
-            commands::close_browser,
+            commands::fetch_page,
             // notes
             notes::create_note,
             notes::list_notes,

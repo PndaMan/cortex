@@ -12,7 +12,7 @@ use crate::repo;
 use crate::vector::f32s_to_blob;
 use rusqlite::Connection;
 use std::path::Path;
-use tauri::{AppHandle, Emitter, Manager, State, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const NO_MODEL: &str =
     "No model configured — add an API key in Settings → API keys (Gemini or OpenRouter), then pick it under Settings → Models.";
@@ -1342,48 +1342,61 @@ pub async fn ping_url(url: String) -> Result<bool> {
     .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
-// ---- in-app browser (real child webview window) -----------------------
+// ---- in-app page fetch (reader-mode browsing inside Web search) --------
 
-/// Label of the single reusable browser window.
-const BROWSER_LABEL: &str = "cortex-browser";
-
-/// Open (or navigate, if already open) a child webview window to `url`. This is
-/// the in-app browser that replaces the SearXNG dependency: the user browses any
-/// page here, then captures it as a source. Sync command → runs on the main
-/// thread, which window creation requires.
-#[tauri::command]
-pub fn open_browser(app: AppHandle, url: String) -> Result<()> {
-    let parsed = Url::parse(url.trim()).map_err(|e| Error::Other(format!("invalid URL: {e}")))?;
-    if let Some(win) = app.get_webview_window(BROWSER_LABEL) {
-        win.navigate(parsed).map_err(|e| Error::Other(e.to_string()))?;
-        let _ = win.set_focus();
-    } else {
-        WebviewWindowBuilder::new(&app, BROWSER_LABEL, WebviewUrl::External(parsed))
-            .title("Cortex Browser")
-            .inner_size(1024.0, 720.0)
-            .build()
-            .map_err(|e| Error::Other(e.to_string()))?;
-    }
-    Ok(())
+/// A fetched web page, reduced to readable content for in-app display. No
+/// JavaScript executes — this is a safe reader view, not a live webview.
+#[derive(serde::Serialize)]
+pub struct FetchedPage {
+    pub url: String,
+    pub final_url: String,
+    pub title: String,
+    pub text: String,
+    pub links: Vec<PageLink>,
 }
 
-/// The browser window's current/live URL (may differ from the in-app address
-/// bar after the user clicks links). Empty string when the window is closed.
-#[tauri::command]
-pub fn browser_url(app: AppHandle) -> Result<String> {
-    match app.get_webview_window(BROWSER_LABEL) {
-        Some(win) => Ok(win.url().map(|u| u.to_string()).unwrap_or_default()),
-        None => Ok(String::new()),
-    }
+#[derive(serde::Serialize)]
+pub struct PageLink {
+    pub href: String,
+    pub text: String,
 }
 
-/// Close the browser window if it is open (no-op otherwise).
+/// Fetch a URL and return its readable text + outbound links so the Web search
+/// view can browse pages in-app (no separate window, no SearXNG needed). Runs
+/// off-thread via spawn_blocking (reqwest::blocking).
 #[tauri::command]
-pub fn close_browser(app: AppHandle) -> Result<()> {
-    if let Some(win) = app.get_webview_window(BROWSER_LABEL) {
-        let _ = win.close();
-    }
-    Ok(())
+pub async fn fetch_page(url: String) -> Result<FetchedPage> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<FetchedPage> {
+        let url = url.trim().to_string();
+        let client = http_client(20);
+        let resp = client
+            .get(&url)
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) \
+                 Chrome/124.0 Safari/537.36",
+            )
+            .header("Accept", "text/html,application/xhtml+xml")
+            .send()?;
+        if !resp.status().is_success() {
+            return Err(Error::Other(format!("fetch failed: HTTP {}", resp.status())));
+        }
+        let final_url = resp.url().to_string();
+        let html = resp.text()?;
+        let (title, text, links) = ingest::readable_page(&html, &final_url);
+        Ok(FetchedPage {
+            url,
+            final_url,
+            title,
+            text,
+            links: links
+                .into_iter()
+                .map(|(href, text)| PageLink { href, text })
+                .collect(),
+        })
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
 /// Lightweight environment probe for the Settings screen (later slice).

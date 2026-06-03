@@ -36,7 +36,7 @@ pub struct GeminiLlm {
 
 impl Llm for GeminiLlm {
     fn complete(&self, system: &str, user: &str) -> Result<String> {
-        let client = reqwest::blocking::Client::new();
+        let client = llm_client();
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             self.model, self.api_key
@@ -67,7 +67,7 @@ impl Llm for GeminiLlm {
             let txt = resp.text().unwrap_or_default();
             return Err(Error::Other(format!("gemini {code}: {}", truncate(&txt, 300))));
         }
-        let json: serde_json::Value = resp.json()?;
+        let json = parse_json_body("gemini", resp)?;
         // Concatenate every text part (some responses split across parts).
         let text: String = json["candidates"][0]["content"]["parts"]
             .as_array()
@@ -100,6 +100,32 @@ fn truncate(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
+/// Shared blocking HTTP client for LLM calls: a generous request timeout (model
+/// generation can be slow) so a stalled connection fails cleanly instead of
+/// hanging forever.
+fn llm_client() -> reqwest::blocking::Client {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(180))
+        .build()
+        .unwrap_or_default()
+}
+
+/// Read a response body as text, then parse it as JSON. This is more tolerant
+/// and far more diagnosable than `resp.json()` (which surfaces an opaque
+/// "error decoding response body" when the body is gzipped, truncated, or an
+/// HTML/error page). On parse failure the raw body is included in the error.
+fn parse_json_body(provider: &str, resp: reqwest::blocking::Response) -> Result<serde_json::Value> {
+    let raw = resp
+        .text()
+        .map_err(|e| Error::Other(format!("{provider}: could not read response body: {e}")))?;
+    serde_json::from_str(&raw).map_err(|e| {
+        Error::Other(format!(
+            "{provider}: response was not valid JSON ({e}): {}",
+            truncate(raw.trim(), 300)
+        ))
+    })
+}
+
 /// OpenAI-compatible chat provider — used for OpenRouter and OpenAI (and any
 /// custom OpenAI-compatible gateway). One code path, different base URL/key.
 pub struct OpenAiCompatLlm {
@@ -118,7 +144,7 @@ impl Llm for OpenAiCompatLlm {
                 self.label
             )));
         }
-        let client = reqwest::blocking::Client::new();
+        let client = llm_client();
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let body = serde_json::json!({
             "model": self.model,
@@ -146,7 +172,7 @@ impl Llm for OpenAiCompatLlm {
                 self.label, self.model, key.len(), truncate(&txt, 300)
             )));
         }
-        let json: serde_json::Value = resp.json()?;
+        let json = parse_json_body(self.label, resp)?;
         let text = json["choices"][0]["message"]["content"]
             .as_str()
             .ok_or_else(|| Error::Other(format!("{}: empty response", self.label)))?
@@ -166,7 +192,7 @@ pub struct ClaudeLlm {
 
 impl Llm for ClaudeLlm {
     fn complete(&self, system: &str, user: &str) -> Result<String> {
-        let client = reqwest::blocking::Client::new();
+        let client = llm_client();
         let body = serde_json::json!({
             "model": self.model,
             "max_tokens": 4096,
@@ -185,7 +211,7 @@ impl Llm for ClaudeLlm {
             let txt = resp.text().unwrap_or_default();
             return Err(Error::Other(format!("claude {code}: {}", truncate(&txt, 300))));
         }
-        let json: serde_json::Value = resp.json()?;
+        let json = parse_json_body("claude", resp)?;
         let text = json["content"][0]["text"]
             .as_str()
             .ok_or_else(|| Error::Other("claude: empty response".into()))?

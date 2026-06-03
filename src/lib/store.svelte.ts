@@ -18,7 +18,6 @@ export type View =
   | "gen-material"
   | "notes"
   | "calendar"
-  | "browser"
   | "settings";
 export type Mode = "NOR" | "INS" | "SEL";
 export type Toast = {

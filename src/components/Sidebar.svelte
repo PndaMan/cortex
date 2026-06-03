@@ -112,7 +112,7 @@
       tabindex="0"
       onkeydown={(e) => e.key === "Enter" && app.setView("notes")}
     >
-      <Icon name="reader" size={14} /> Notes
+      <Icon name="reader" size={14} /> Notes <span class="nav-k">␣ n</span>
     </div>
     <div
       class="sb-nav-item{app.view === 'calendar' ? ' on' : ''}"
@@ -121,16 +121,7 @@
       tabindex="0"
       onkeydown={(e) => e.key === "Enter" && app.setView("calendar")}
     >
-      <Icon name="calendar" size={14} /> Calendar
-    </div>
-    <div
-      class="sb-nav-item{app.view === 'browser' ? ' on' : ''}"
-      onclick={() => app.setView("browser")}
-      role="button"
-      tabindex="0"
-      onkeydown={(e) => e.key === "Enter" && app.setView("browser")}
-    >
-      <Icon name="globe" size={14} /> Browser
+      <Icon name="calendar" size={14} /> Calendar <span class="nav-k">␣ a</span>
     </div>
 
     <!-- Subjects section header -->

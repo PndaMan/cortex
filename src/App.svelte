@@ -25,7 +25,6 @@
   import GenerateMaterial from "./views/GenerateMaterial.svelte";
   import NotesView from "./views/NotesView.svelte";
   import CalendarView from "./views/CalendarView.svelte";
-  import BrowserView from "./views/BrowserView.svelte";
   import Settings from "./views/Settings.svelte";
   import Onboarding from "./views/Onboarding.svelte";
 
@@ -99,7 +98,11 @@
 
       if (app.leaderOpen) return; // LeaderPane consumes its own keys
       const k = keybinds.map;
-      if (e.key === k.cmdk) { e.preventDefault(); app.cmdkOpen = true; return; }
+      // The command-palette key must be a symbol (":"). If a corrupt bind ever
+      // made it an alphanumeric (e.g. "c"), that would hijack typing AND steal
+      // the chat toggle — so sanitize at the use site, never trusting the value.
+      const cmdkKey = /^[a-z0-9]$/i.test(k.cmdk) ? ":" : k.cmdk;
+      if (e.key === cmdkKey) { e.preventDefault(); app.cmdkOpen = true; return; }
       if (e.key === k.leader) { e.preventDefault(); app.leaderOpen = true; return; }
       if (e.key === k.help) { e.preventDefault(); app.helpOpen = true; return; }
       if (e.key === k.dismissToast && app.toasts.length) { e.preventDefault(); app.dismissToast(app.toasts[app.toasts.length - 1].id); return; }
@@ -107,9 +110,6 @@
       if (gPrefix) {
         gPrefix = false;
         if (e.key === k.dashboard) { app.setView("dashboard"); return; }
-        if (e.key === "n") { app.setView("notes"); return; }
-        if (e.key === "a") { app.setView("calendar"); return; }
-        if (e.key === "b") { app.setView("browser"); return; }
       }
       if (e.key === "g") { gPrefix = true; setTimeout(() => (gPrefix = false), 600); return; }
 
@@ -171,8 +171,6 @@
           <NotesView />
         {:else if app.view === "calendar"}
           <CalendarView />
-        {:else if app.view === "browser"}
-          <BrowserView />
         {:else if app.view === "settings"}
           <Settings />
         {/if}
