@@ -199,6 +199,14 @@ export const getAllSettings = () => invoke<Record<string, string>>("get_all_sett
 export const setSettings = (values: Record<string, string>) =>
   invoke<void>("set_settings", { values });
 
+// ---- chat history (persisted per subject) ----
+export interface ChatMsg { role: string; text: string; created_at: number }
+export const listChatMessages = (subjectId: string) =>
+  invoke<ChatMsg[]>("list_chat_messages", { subjectId });
+export const addChatMessage = (subjectId: string, role: string, text: string) =>
+  invoke<void>("add_chat_message", { subjectId, role, text });
+export const clearChat = (subjectId: string) => invoke<void>("clear_chat", { subjectId });
+
 // ---- web search (SearXNG on the user's homelab) ----
 export interface WebResult {
   title: string;

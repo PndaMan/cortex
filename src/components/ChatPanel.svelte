@@ -51,6 +51,24 @@
     chatModel = spec;
     api.setSetting("model_chat", spec).catch(() => {});
   }
+
+  // ── persisted chat history: load the subject's conversation on open ────────
+  let loadedSubject: string | null = null;
+  $effect(() => {
+    const sid = app.activeSubjectId;
+    if (sid === loadedSubject) return;
+    loadedSubject = sid;
+    messages = [];
+    suggestions = [];
+    queued = [];
+    if (!sid) return;
+    api.listChatMessages(sid)
+      .then((ms) => {
+        if (app.activeSubjectId === sid)
+          messages = ms.map((m) => ({ role: m.role as ChatMessage["role"], text: m.text }));
+      })
+      .catch(() => {});
+  });
   let scrollEl = $state<HTMLElement | null>(null);
   let modelLabel = $state<string | null>(null);
   let composeEl = $state<HTMLTextAreaElement | null>(null);
@@ -215,14 +233,16 @@
       return;
     }
     if (textArg === undefined) draft = "";
+    const sid = app.activeSubject.id;
     messages = [...messages, { role: "user", text }];
+    api.addChatMessage(sid, "user", text).catch(() => {}); // persist
     suggestions = [];
     streaming = "";
     cancelled = false;
 
     const sourceId = effLevel === "source" && curSrcObj ? curSrcObj.id : undefined;
     api
-      .chatAnswer(app.activeSubject.id, effLevel, text, sourceId)
+      .chatAnswer(sid, effLevel, text, sourceId)
       .then((result) => {
         if (cancelled) { streaming = null; dequeue(); return; }
         const { body, sugg } = splitSuggestions(result.text);
@@ -232,7 +252,9 @@
           if (cancelled) {
             if (typeIv) clearInterval(typeIv);
             typeIv = null;
-            messages = [...messages, { role: "assistant", text: body.slice(0, i) || body }];
+            const partial = body.slice(0, i) || body;
+            messages = [...messages, { role: "assistant", text: partial }];
+            api.addChatMessage(sid, "assistant", partial).catch(() => {}); // persist
             streaming = null;
             suggestions = sugg;
             dequeue();
@@ -244,6 +266,7 @@
             if (typeIv) clearInterval(typeIv);
             typeIv = null;
             messages = [...messages, { role: "assistant", text: body }];
+            api.addChatMessage(sid, "assistant", body).catch(() => {}); // persist
             streaming = null;
             suggestions = sugg;
             dequeue();

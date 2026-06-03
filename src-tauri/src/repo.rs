@@ -638,6 +638,75 @@ pub fn list_materials(conn: &Connection, subject_id: &str) -> Result<Vec<Materia
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
+// ---- chat history (one rolling thread per subject) ---------------------
+
+/// Return the subject's rolling chat thread id, creating it on first use.
+pub fn subject_thread(conn: &Connection, subject_id: &str) -> Result<String> {
+    if let Some(id) = conn
+        .query_row(
+            "SELECT id FROM chat_threads WHERE subject_id=?1 ORDER BY created_at LIMIT 1",
+            params![subject_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()?
+    {
+        return Ok(id);
+    }
+    let id = new_id();
+    let ts = now_ms();
+    conn.execute(
+        "INSERT INTO chat_threads (id, subject_id, scope, created_at, updated_at)
+         VALUES (?1, ?2, 'subject', ?3, ?3)",
+        params![id, subject_id, ts],
+    )?;
+    Ok(id)
+}
+
+/// Append a message to the subject's thread and bump the thread's updated_at.
+pub fn add_chat_message(
+    conn: &Connection,
+    subject_id: &str,
+    role: &str,
+    text: &str,
+) -> Result<()> {
+    let tid = subject_thread(conn, subject_id)?;
+    let ts = now_ms();
+    conn.execute(
+        "INSERT INTO chat_messages (id, thread_id, role, text, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![new_id(), tid, role, text, ts],
+    )?;
+    conn.execute(
+        "UPDATE chat_threads SET updated_at=?2 WHERE id=?1",
+        params![tid, ts],
+    )?;
+    Ok(())
+}
+
+/// All messages in the subject's thread, oldest first.
+pub fn list_chat_messages(conn: &Connection, subject_id: &str) -> Result<Vec<ChatMsg>> {
+    let tid = subject_thread(conn, subject_id)?;
+    let mut stmt = conn.prepare(
+        "SELECT role, text, created_at FROM chat_messages
+         WHERE thread_id=?1 ORDER BY created_at ASC",
+    )?;
+    let rows = stmt.query_map(params![tid], |r| {
+        Ok(ChatMsg {
+            role: r.get(0)?,
+            text: r.get(1)?,
+            created_at: r.get(2)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Delete every message in the subject's thread (keeps the thread row).
+pub fn clear_chat(conn: &Connection, subject_id: &str) -> Result<()> {
+    let tid = subject_thread(conn, subject_id)?;
+    conn.execute("DELETE FROM chat_messages WHERE thread_id=?1", params![tid])?;
+    Ok(())
+}
+
 // ---- settings ----------------------------------------------------------
 
 /// All settings as a JSON object (for the Settings page to hydrate).

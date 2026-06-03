@@ -166,6 +166,9 @@ class AppStore {
       if (savedTheme && THEMES.includes(savedTheme)) this.setTheme(savedTheme);
       else this.applyTheme(this.theme);
       await keybinds.load(all); // reuse the settings we already fetched
+      // Reopen the last-viewed subject (its chat history loads with it).
+      const last = all["last_subject_id"];
+      if (last && this.subjects.some((s) => s.id === last)) this.activeSubjectId = last;
       if (all["default_station"]) this.music = { ...this.music, current: all["default_station"] };
       if (all["autoplay"] === "true") this.toggleMusic();
     } catch {
@@ -186,6 +189,7 @@ class AppStore {
     this.activeSubjectId = id;
     this.view = "subject";
     this.subjectTab = "cheatsheet"; // land on the cheatsheet (the default page)
+    api.setSetting("last_subject_id", id).catch(() => {}); // reopen on next launch
   }
   openSource(src: Source) {
     this.activeSource = src;

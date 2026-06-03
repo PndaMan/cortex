@@ -93,6 +93,14 @@ pub struct ChatAnswer {
     pub model: String,
 }
 
+/// A persisted chat message (one rolling thread per subject).
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatMsg {
+    pub role: String,
+    pub text: String,
+    pub created_at: i64,
+}
+
 // ---- cheatsheet -------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

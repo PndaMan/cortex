@@ -666,6 +666,31 @@ pub async fn chat_answer(
     .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
+// ---- chat history (one rolling thread per subject) --------------------
+
+#[tauri::command]
+pub fn add_chat_message(
+    state: State<AppState>,
+    subject_id: String,
+    role: String,
+    text: String,
+) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    repo::add_chat_message(&c, &subject_id, &role, &text)
+}
+
+#[tauri::command]
+pub fn list_chat_messages(state: State<AppState>, subject_id: String) -> Result<Vec<ChatMsg>> {
+    let c = state.db.lock().unwrap();
+    repo::list_chat_messages(&c, &subject_id)
+}
+
+#[tauri::command]
+pub fn clear_chat(state: State<AppState>, subject_id: String) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    repo::clear_chat(&c, &subject_id)
+}
+
 // ---- AI: cheatsheet synthesis ----------------------------------------
 
 fn parse_cheatsheet(raw: &str) -> Vec<CsSection> {
