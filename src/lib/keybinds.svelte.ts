@@ -85,6 +85,27 @@ class Keybinds {
         if (v !== HELIX_BINDS[a]) anyCustom = true;
       }
     }
+    // Auto-heal a corrupted command-palette bind: it must be a symbol key (":"),
+    // never a letter/digit (a stray "c"/"p" bind would hijack typing & copy).
+    if (/^[a-z0-9]$/i.test(this.map.cmdk)) {
+      this.map.cmdk = HELIX_BINDS.cmdk;
+      api.setSettings({ keybind_cmdk: HELIX_BINDS.cmdk }).catch(() => {});
+    }
+    // De-dupe: if two actions ended up on the same key (capture-bug artifact),
+    // reset the whole map to the Helix preset so nothing double-fires.
+    const used = new Set<string>();
+    let dupe = false;
+    for (const a of ACTION_ORDER) {
+      if (used.has(this.map[a])) { dupe = true; break; }
+      used.add(this.map[a]);
+    }
+    if (dupe) {
+      this.map = { ...HELIX_BINDS };
+      const vals: Record<string, string> = { keybind_preset: "helix" };
+      for (const a of ACTION_ORDER) vals["keybind_" + a] = HELIX_BINDS[a];
+      api.setSettings(vals).catch(() => {});
+      anyCustom = false;
+    }
     const savedPreset = all["keybind_preset"] as Preset | undefined;
     this.preset = savedPreset ?? (anyCustom ? "custom" : "helix");
   }

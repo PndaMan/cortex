@@ -413,6 +413,88 @@ pub fn search_chunks(
     Ok(hits)
 }
 
+/// Tokenize a query into significant lowercase terms: split on non-alphanumerics,
+/// drop very short tokens and a small stopword list. De-duplicated, capped.
+fn query_terms(query: &str) -> Vec<String> {
+    const STOPWORDS: &[&str] = &[
+        "the", "and", "for", "are", "but", "not", "you", "all", "any", "can", "her", "was",
+        "one", "our", "out", "day", "get", "has", "him", "his", "how", "man", "new", "now",
+        "old", "see", "two", "way", "who", "boy", "did", "its", "let", "put", "say", "she",
+        "too", "use", "what", "when", "with", "this", "that", "from", "have", "your", "about",
+        "into", "than", "then", "them", "they", "will", "would", "could", "should", "does",
+        "doing", "explain", "describe", "tell", "give", "list", "define",
+    ];
+    let mut seen = std::collections::HashSet::new();
+    let mut terms = Vec::new();
+    for raw in query.split(|c: char| !c.is_alphanumeric()) {
+        let t = raw.trim().to_lowercase();
+        if t.len() < 3 || STOPWORDS.contains(&t.as_str()) {
+            continue;
+        }
+        if seen.insert(t.clone()) {
+            terms.push(t);
+        }
+        if terms.len() >= 12 {
+            break;
+        }
+    }
+    terms
+}
+
+/// Keyword fallback for retrieval when vector search is unreliable (e.g. the
+/// "stub" embedder). Scans chunk text with case-insensitive LIKE for each
+/// significant query term, scoped identically to vector search (subject, and
+/// optionally a single source), and ranks chunks by the count of distinct
+/// query terms they contain. Returns the top-`k`.
+pub fn keyword_search_chunks(
+    conn: &Connection,
+    subject_id: Option<&str>,
+    source_id: Option<&str>,
+    query: &str,
+    k: usize,
+) -> Result<Vec<ChunkHit>> {
+    let terms = query_terms(query);
+    if terms.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = "SELECT c.id, c.source_id, s.name, c.text, c.loc
+               FROM chunks c JOIN sources s ON s.id=c.source_id
+               WHERE (?1 IS NULL OR c.subject_id=?1)
+                 AND (?2 IS NULL OR c.source_id=?2)";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params![subject_id, source_id], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, Option<String>>(4)?,
+        ))
+    })?;
+    let mut hits: Vec<ChunkHit> = Vec::new();
+    for row in rows {
+        let (id, source_id, source_name, text, loc) = row?;
+        let lower = text.to_lowercase();
+        let matched = terms.iter().filter(|t| lower.contains(t.as_str())).count();
+        if matched == 0 {
+            continue;
+        }
+        hits.push(ChunkHit {
+            id,
+            source_id,
+            source_name,
+            text,
+            loc,
+            // Score = fraction of distinct query terms present, so it is
+            // comparable in spirit to a cosine similarity in [0,1].
+            score: matched as f32 / terms.len() as f32,
+        });
+    }
+    hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    hits.truncate(k);
+    Ok(hits)
+}
+
 // ---- context gathering (for synthesis) --------------------------------
 
 /// Concatenate chunk text for a subject (optionally a topic), capped to `max_chars`.

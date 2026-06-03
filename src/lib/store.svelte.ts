@@ -85,12 +85,13 @@ export const GLYPHS = [
   "🔭", "🪐", "📜", "✍️", "🧩", "💡", "🎭", "⚙️", "🔢", "🌐",
 ];
 
-// Monochrome topic glyphs — rendered grey (in the current muted text color),
-// assigned deterministically per topic so each topic has a stable little symbol.
+// Clean, minimalist topic emojis, assigned deterministically per topic so each
+// has a stable little icon. Rendered slightly desaturated so they read as a
+// subtle accent rather than loud color.
 export const TOPIC_GLYPHS = [
-  "◆", "●", "▲", "■", "◈", "✦", "◇", "▼", "◐", "✸",
-  "⬡", "◭", "❂", "✺", "⟐", "▣", "◎", "✚", "◢", "❉",
-  "✤", "❖", "⬢", "◫", "⊚", "⊛", "✱", "❍", "⬠", "◤",
+  "📄", "📝", "📐", "🔖", "🏷️", "📌", "📎", "🗂️", "📑", "💬",
+  "📊", "📈", "🔬", "🧪", "⚗️", "🧮", "📚", "🗒️", "📋", "🎯",
+  "🧩", "🔭", "💡", "⚙️", "🧠", "🪶", "🧭", "🔑", "📦", "🌱",
 ];
 export function topicGlyph(id: string): string {
   let h = 0;

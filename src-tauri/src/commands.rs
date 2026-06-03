@@ -571,18 +571,39 @@ pub async fn chat_answer(
     // Require a real model before doing any work.
     let model = llm::from_spec(&chat_spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
 
-    let embedder = embed::from_settings(&embed_provider, keys.gemini.as_deref(), ollama_url.as_deref());
-    let qvec = embedder.embed(&[query.clone()])?.pop().unwrap_or_default();
+    // Scope: source-level chats are restricted to a single source's chunks; the
+    // keyword path applies this in SQL, the vector path filters its results.
+    let scoped_source = if level == "source" { source_id.as_deref() } else { None };
 
-    let mut hits = {
+    // The "stub" embedder (and an empty/unset provider) produces meaningless
+    // vectors, so cosine search returns irrelevant chunks. In that case rely on
+    // keyword search only. With a real embedder, run BOTH and merge by id so
+    // retrieval is robust either way.
+    let embeddings_reliable = !embed_provider.is_empty() && embed_provider != "stub";
+
+    let mut hits: Vec<ChunkHit> = if embeddings_reliable {
+        let embedder =
+            embed::from_settings(&embed_provider, keys.gemini.as_deref(), ollama_url.as_deref());
+        let qvec = embedder.embed(&[query.clone()])?.pop().unwrap_or_default();
         let c = state.db.lock().unwrap();
-        repo::search_chunks(&c, Some(&subject_id), &qvec, 8)?
-    };
-    if level == "source" {
-        if let Some(sid) = &source_id {
-            hits.retain(|h| &h.source_id == sid);
+        let mut vec_hits = repo::search_chunks(&c, Some(&subject_id), &qvec, 8)?;
+        if let Some(sid) = scoped_source {
+            vec_hits.retain(|h| h.source_id == sid);
         }
-    }
+        let kw_hits =
+            repo::keyword_search_chunks(&c, Some(&subject_id), scoped_source, &query, 8)?;
+        // Append keyword hits not already present (vector results first).
+        for h in kw_hits {
+            if !vec_hits.iter().any(|x| x.id == h.id) {
+                vec_hits.push(h);
+            }
+        }
+        vec_hits.truncate(8);
+        vec_hits
+    } else {
+        let c = state.db.lock().unwrap();
+        repo::keyword_search_chunks(&c, Some(&subject_id), scoped_source, &query, 8)?
+    };
     hits.truncate(6);
 
     let context = hits
