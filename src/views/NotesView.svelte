@@ -168,7 +168,7 @@
       {#if selected}
         <div class="notes-detail-head">
           <input
-            class="input notes-title"
+            class="notes-title"
             placeholder="Untitled"
             value={title}
             oninput={(e) => { title = (e.target as HTMLInputElement).value; markDirty(); }}
@@ -178,7 +178,9 @@
           </span>
         </div>
 
-        <MarkdownEditor value={body} onChange={(v) => { body = v; markDirty(); }} />
+        <div class="notes-editor-wrap">
+          <MarkdownEditor value={body} onChange={(v) => { body = v; markDirty(); }} />
+        </div>
 
         <div class="notes-actions">
           <button class="btn btn--danger btn--sm" type="button" style="margin-right:auto" onclick={remove}>
@@ -207,7 +209,7 @@
 {#if embedded}
   {@render notesWorkspace()}
 {:else}
-  <div class="workspace-scroll">
+  <div class="workspace-scroll notes-workspace-scroll">
     <div class="notes-page">
       <div class="notes-page-head">
         <div class="eyebrow">Notes</div>
@@ -222,47 +224,98 @@
 {/if}
 
 <style>
-  .notes-page { max-width: 1100px; margin: 0 auto; padding: 8px 4px 32px; }
-  .notes-page-head { margin-bottom: 18px; }
+  /* ── Full-page wrapper ──────────────────────────────────────────────────── */
+  /* Make workspace-scroll a flex column so notes-page can fill height.
+     We scope this override via a companion class so it doesn't bleed to other
+     views that also use workspace-scroll. */
+  :global(.notes-workspace-scroll) {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* notes-page fills the scroll container vertically and spans full width.
+     The page-head is flex-none; the notes grid takes all remaining height. */
+  .notes-page {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0;
+    min-height: 0;
+    padding: 24px 28px 0;
+  }
+
+  .notes-page-head {
+    flex: none;
+    margin-bottom: 16px;
+  }
+
   .notes-page-title {
     margin: 4px 0 2px; font-size: var(--r-lg, 20px); color: var(--fg-bright); font-weight: 600;
   }
 
+  /* ── Master–detail grid ─────────────────────────────────────────────────── */
+  /* Full view: fixed list column + editor fills remaining width. Both columns
+     stretch to the same height (the remaining workspace height). */
   .notes {
     display: grid;
     grid-template-columns: 260px 1fr;
-    gap: 16px;
-    align-items: start;
-  }
-  .notes--embedded {
-    grid-template-columns: 180px 1fr;
-    gap: 10px;
+    gap: 0;
+    align-items: stretch;
+    flex: 1 1 0;
+    min-height: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg, 12px);
+    overflow: hidden;
+    margin-bottom: 24px;
   }
 
-  /* ----- list ----- */
+  /* Embedded (dock) mode: narrower list, single frame, no extra margin. */
+  .notes--embedded {
+    grid-template-columns: 180px 1fr;
+    flex: none;
+    min-height: 420px;
+    margin-bottom: 0;
+    border-radius: var(--r-lg, 12px);
+  }
+
+  /* ── Left: note list ────────────────────────────────────────────────────── */
   .notes-list {
-    display: flex; flex-direction: column;
-    border: 1px solid var(--border); border-radius: var(--r-lg, 12px);
-    background: var(--surface); overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-2);
+    border-right: 1px solid var(--border);
+    overflow: hidden;
   }
+
   .notes-list-head {
+    flex: none;
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface-2);
+    padding: 12px 12px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
   }
+
   .notes-list-title {
     font-size: var(--t-2xs, 10.5px); font-weight: 600; letter-spacing: 0.12em;
     text-transform: uppercase; color: var(--fg-faint);
   }
-  .notes-items { display: flex; flex-direction: column; padding: 6px; gap: 2px; max-height: 70vh; overflow-y: auto; }
-  .notes--embedded .notes-items { max-height: none; }
+
+  /* List items area scrolls independently within the fixed column height. */
+  .notes-items {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex; flex-direction: column;
+    padding: 6px; gap: 2px;
+  }
+
   .notes-item {
     display: flex; flex-direction: column; gap: 2px; text-align: left;
     padding: 8px 10px; border-radius: 8px; cursor: pointer;
     background: none; border: 1px solid transparent; color: var(--fg);
     transition: background 0.1s ease, border-color 0.1s ease;
   }
-  .notes-item:hover { background: var(--surface-2); }
-  .notes-item.on { background: var(--surface-3); border-color: var(--border-strong); }
+  .notes-item:hover { background: var(--surface-3); }
+  .notes-item.on { background: var(--surface); border-color: var(--border-strong); }
   .notes-item-title {
     font-size: var(--t-xs, 12.5px); color: var(--fg-bright); font-weight: 500;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -270,27 +323,67 @@
   .notes-item-time { font-size: var(--t-2xs, 10px); color: var(--fg-faint); font-family: var(--font-mono); }
   .notes-hint { padding: 10px; color: var(--fg-faint); font-size: var(--t-xs, 12px); }
 
-  /* ----- detail ----- */
-  .notes-detail { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-  .notes-detail-head { display: flex; align-items: center; gap: 12px; }
-  .notes-title {
-    flex: 1; min-width: 0; font-size: var(--t-md, 15px); font-weight: 600; color: var(--fg-bright);
+  /* ── Right: detail pane ─────────────────────────────────────────────────── */
+  /* Detail pane fills the grid cell and lays out as a flex column so the
+     MarkdownEditor (flex:1) can grow to fill all remaining space. */
+  .notes-detail {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    background: var(--surface);
   }
+
+  .notes-detail-head {
+    flex: none;
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .notes-title {
+    flex: 1; min-width: 0;
+    font-size: var(--t-md, 15px); font-weight: 600; color: var(--fg-bright);
+    background: transparent; border: none; outline: none;
+    padding: 0;
+  }
+  .notes-title:focus { color: var(--fg-bright); }
+
   .notes-saved {
     display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
     font-size: var(--t-2xs, 10.5px); color: var(--fg-faint); font-family: var(--font-mono);
     transition: color 0.15s ease;
   }
   .notes-saved.on { color: var(--accent); }
-  .notes-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  /* MarkdownEditor lives here and is flex:1 in its own styles; wrap it in a
+     flex-grow region so it fills vertical space between the header and footer. */
+  .notes-editor-wrap {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 16px 20px;
+  }
+
+  .notes-actions {
+    flex: none;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 20px 14px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
   .notes-convert-wrap { display: inline-flex; }
 
-  /* ----- empty states ----- */
+  /* ── Empty states ───────────────────────────────────────────────────────── */
   .notes-empty, .notes-detail-empty {
     display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
     padding: 40px 16px; color: var(--fg-muted);
   }
   .notes-detail-empty {
+    flex: 1;
+    margin: 16px;
     border: 1px dashed var(--border-strong); border-radius: var(--r-lg, 12px); background: var(--surface);
   }
   .notes-empty-glyph { font-size: 30px; line-height: 1; }

@@ -2,6 +2,7 @@
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import Icon from "../components/Icon.svelte";
+  import { jobs, type JobKind } from "../lib/jobs.svelte";
 
   // ── Material type definitions ──────────────────────────────
   const GEN_TYPES = [
@@ -28,7 +29,6 @@
   let type  = $state<string>("flashcards");
   let sel   = $state<string[]>([]);
   let title = $state("");
-  let gen   = $state<null | "working" | "done">(null);
 
   // ── Derived ───────────────────────────────────────────────────
   const selSources = $derived(allSources.filter(s => sel.includes(s.id)));
@@ -73,37 +73,39 @@
     sel = allOn ? sel.filter(i => !ids.includes(i)) : Array.from(new Set([...sel, ...ids]));
   }
 
-  async function generate() {
+  // Kick off generation in the BACKGROUND via the global jobs store, then
+  // immediately return to the Materials view. The job keeps running even though
+  // this launcher unmounts; Materials shows a GeneratingCard and refreshes its
+  // list when the job completes.
+  function generate() {
     const sub = app.activeSubject;
     if (!sub) {
       app.pushToast({ kind: "error", title: "No active subject", body: "Select a subject first." });
       return;
     }
 
-    gen = "working";
+    const kind = type as JobKind;
+    const subjectId = sub.id;
+    const topicId = dominantTopicId;
+    const matTitle = finalTitle || undefined;
 
-    try {
-      const result = await api.generateMaterial(
-        sub.id,
-        type as "flashcards" | "quiz" | "audio" | "infographic" | "slideshow",
-        dominantTopicId,
-        finalTitle || undefined,
-      );
-      gen = "done";
-      setTimeout(() => {
-        app.pushToast({
-          kind: "success",
-          title: "Material ready",
-          body: `${result.title} filed under ${result.topic}.`,
-        });
-        app.setView("subject");
-        app.setTab("materials");
-      }, 800);
-    } catch (e: unknown) {
-      gen = null;
-      const msg = e instanceof Error ? e.message : String(e);
-      app.pushToast({ kind: "error", title: "Generation failed", body: msg });
-    }
+    jobs.start({
+      kind,
+      label: finalTitle || tm.label,
+      subjectId,
+      topicId,
+      run: () =>
+        api.generateMaterial(
+          subjectId,
+          kind as "flashcards" | "quiz" | "audio" | "infographic" | "slideshow",
+          topicId,
+          matTitle,
+        ),
+    });
+
+    // Hand off to Materials, where the generating card + result will appear.
+    app.setView("subject");
+    app.setTab("materials");
   }
 
   function cancel() {
@@ -112,35 +114,7 @@
   }
 </script>
 
-{#if gen}
-  <!-- ── Generating / done state ───────────────────────────── -->
-  <div class="workspace-scroll">
-    <div class="genmat genmat--working">
-      <div class="gm-working">
-        <div class="gm-spin-wrap">
-          {#if gen === "done"}
-            <Icon name="check" size={26} color="var(--ok)" />
-          {:else}
-            <span class="gm-spin"></span>
-          {/if}
-        </div>
-        <h1 class="read">
-          {gen === "done" ? "Material ready" : `Generating ${tm.label.toLowerCase()}…`}
-        </h1>
-        <p class="mono muted">
-          {gen === "done"
-            ? `Filed under ${autoTopic ?? "your subject"}`
-            : `Synthesizing from ${sel.length} source${sel.length > 1 ? "s" : ""} · ${autoTopic ?? ""}`}
-        </p>
-        <div class="gm-prog">
-          <div class="gm-prog-bar" style:width={gen === "done" ? "100%" : "70%"}></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-{:else}
-  <!-- ── Form ─────────────────────────────────────────────── -->
+<!-- ── Form ─────────────────────────────────────────────── -->
   <div class="workspace-scroll">
     <div class="genmat">
       <!-- Header -->
@@ -274,4 +248,3 @@
       </div>
     </div>
   </div>
-{/if}

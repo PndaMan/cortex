@@ -123,6 +123,15 @@
     >
       <Icon name="calendar" size={14} /> Calendar
     </div>
+    <div
+      class="sb-nav-item{app.view === 'browser' ? ' on' : ''}"
+      onclick={() => app.setView("browser")}
+      role="button"
+      tabindex="0"
+      onkeydown={(e) => e.key === "Enter" && app.setView("browser")}
+    >
+      <Icon name="globe" size={14} /> Browser
+    </div>
 
     <!-- Subjects section header -->
     <div class="sb-section-l">

@@ -136,7 +136,6 @@ class AppStore {
   cmdkOpen = $state(false);
   leaderOpen = $state(false);
   chatOpen = $state(true);
-  notesOpen = $state(false); // notes side-dock (can be open alongside chat)
   musicOpen = $state(false);
   diffOpen = $state(false);
   helpOpen = $state(false);

@@ -8,6 +8,8 @@
   import Quiz from "./Quiz.svelte";
   import InfographicView from "../components/InfographicView.svelte";
   import SlideshowView from "../components/SlideshowView.svelte";
+  import GeneratingCard from "../components/GeneratingCard.svelte";
+  import { jobs } from "../lib/jobs.svelte";
 
   // material type metadata
   const MAT_TYPES: Record<string, { label: string; group: string; icon: string; color: string }> = {
@@ -34,11 +36,9 @@
   let materials = $state<Card[]>([]);
   let loading = $state(false);
 
-  $effect(() => {
-    const sub = app.activeSubject;
-    if (!sub) { materials = []; return; }
+  function loadMaterials(subjectId: string) {
     loading = true;
-    api.listMaterials(sub.id).then((recs: MaterialRec[]) => {
+    api.listMaterials(subjectId).then((recs: MaterialRec[]) => {
       materials = recs.map((r) => ({
         id: r.id,
         type: r.kind,
@@ -49,6 +49,34 @@
         payload: r.payload,
       }));
     }).catch(() => { materials = []; }).finally(() => { loading = false; });
+  }
+
+  $effect(() => {
+    const sub = app.activeSubject;
+    if (!sub) { materials = []; return; }
+    loadMaterials(sub.id);
+  });
+
+  // Background material-generation jobs for this subject (cheatsheet lives in its
+  // own view). Running cards show "generating…"; errors stay until dismissed.
+  const matJobs = $derived(
+    jobs.forSubject(app.activeSubjectId).filter(
+      (j) => j.kind !== "cheatsheet" && (j.status === "running" || j.status === "error")
+    )
+  );
+  const runningCount = $derived(
+    jobs.running(app.activeSubjectId).filter((j) => j.kind !== "cheatsheet").length
+  );
+
+  // When the running count drops (a job finished), reload the persisted list so
+  // the freshly-generated material appears — even if generation was kicked off
+  // from another view and we navigated here afterward.
+  let lastRunning = $state(-1);
+  $effect(() => {
+    const n = runningCount;
+    const sub = app.activeSubject;
+    if (lastRunning !== -1 && n < lastRunning && sub) loadMaterials(sub.id);
+    lastRunning = n;
   });
 
   let filter   = $state("all");
@@ -127,6 +155,10 @@
           <Icon name="bolt" size={12} /> Generate material
         </button>
       </div>
+
+      {#each matJobs as job (job.id)}
+        <GeneratingCard {job} />
+      {/each}
 
       {#if loading}
         <div class="mat-empty">

@@ -1,8 +1,18 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
-  import type { CsSection as ApiCsSection } from "../lib/api";
+  import type { CheatsheetData, CsSection as ApiCsSection } from "../lib/api";
   import Icon from "../components/Icon.svelte";
+  import { jobs } from "../lib/jobs.svelte";
+  import GeneratingCard from "../components/GeneratingCard.svelte";
+
+  // Background cheatsheet jobs for the active subject (running + any errors to surface).
+  const csJobs = $derived(
+    jobs.forSubject(app.activeSubjectId).filter(
+      (j) => j.kind === "cheatsheet" && (j.status === "running" || j.status === "error")
+    )
+  );
+  const csGenerating = $derived(csJobs.some((j) => j.status === "running"));
 
   // ── reactive data ────────────────────────────────────────────
   let sections = $state<ApiCsSection[]>([]);
@@ -10,7 +20,6 @@
   let cheatSub = $state<string>("");
   let sourceCount = $state<number>(0);
   let hasCheatsheet = $state(false);  // true = real cheatsheet loaded
-  let regenerating = $state(false);
 
   // Track sections that were just approved (for flash animation).
   let recentlyApproved = $state<Record<string, boolean>>({});
@@ -57,35 +66,45 @@
 
   const sectionCount = $derived(sections.length);
 
-  // ── generate / regenerate action ─────────────────────────────
-  async function generate() {
+  // Apply a freshly-loaded cheatsheet to local view state.
+  function applyCheatsheet(data: CheatsheetData) {
+    sections = data.sections;
+    cheatTopic = data.topic;
+    cheatSub = data.subject;
+    sourceCount = data.sources;
+    hasCheatsheet = true;
+    app.pending = data.sections.filter((s) => s.state === "draft-pending").length;
+  }
+
+  // ── generate / regenerate action (runs in the BACKGROUND) ─────
+  // Kicks off generation through the global jobs store so navigating away does
+  // not cancel it; on completion we reload the persisted cheatsheet from the DB.
+  function generate() {
     const sub = app.activeSubject;
-    if (!sub || regenerating) return;
-    regenerating = true;
-    try {
-      const topicId = sub.topics[0]?.id;
-      const result = await api.generateCheatsheet(sub.id, topicId);
-      sections = result.sections;
-      cheatTopic = result.topic;
-      cheatSub = result.subject;
-      sourceCount = result.sources;
-      hasCheatsheet = true;
-      app.pending = result.sections.filter((s) => s.state === "draft-pending").length;
-      app.pushToast({
-        kind: "success",
-        title: "Cheatsheet synthesized",
-        body: "from " + result.sources + " sources · " + result.model,
-      });
-    } catch (e) {
-      app.pushToast({ kind: "error", title: "Couldn't generate", body: String(e) });
-    } finally {
-      regenerating = false;
-    }
+    if (!sub || csGenerating) return;
+    const topicId = sub.topics[0]?.id;
+    jobs.start({
+      kind: "cheatsheet",
+      label: sub.name,
+      subjectId: sub.id,
+      topicId,
+      run: () => api.generateCheatsheet(sub.id, topicId),
+      onDone: () => {
+        // Only refresh if the user is still on this subject.
+        if (app.activeSubjectId !== sub.id) return;
+        api.getCheatsheet(sub.id, topicId).then((data) => {
+          if (data) applyCheatsheet(data);
+        }).catch(() => {});
+      },
+    });
   }
 </script>
 
 <div class="workspace-scroll">
   <div class="cs-doc">
+    {#each csJobs as job (job.id)}
+      <GeneratingCard {job} />
+    {/each}
     {#if !app.activeSubject}
       <!-- No subject open -->
       <div class="cs-empty-state">
@@ -108,8 +127,8 @@
             A completeness-checked cheatsheet will be generated from this subject's {app.activeSubject.sourceCount} source{app.activeSubject.sourceCount !== 1 ? "s" : ""}.
           {/if}
         </p>
-        <button class="btn btn--primary btn--sm" onclick={generate} disabled={regenerating}>
-          <Icon name="refresh" size={13} /> {regenerating ? "Synthesizing…" : "Generate cheatsheet"}
+        <button class="btn btn--primary btn--sm" onclick={generate} disabled={csGenerating}>
+          <Icon name="refresh" size={13} /> {csGenerating ? "Synthesizing…" : "Generate cheatsheet"}
         </button>
       </div>
     {:else}
@@ -124,8 +143,8 @@
           </div>
         </div>
         <div class="cs-doc-actions">
-          <button class="btn btn--sm" onclick={generate} disabled={regenerating}>
-            <Icon name="refresh" size={13} /> {regenerating ? "Synthesizing…" : "Regenerate"}
+          <button class="btn btn--sm" onclick={generate} disabled={csGenerating}>
+            <Icon name="refresh" size={13} /> {csGenerating ? "Synthesizing…" : "Regenerate"}
           </button>
         </div>
       </div>

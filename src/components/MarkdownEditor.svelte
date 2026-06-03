@@ -126,25 +126,33 @@
     ></textarea>
   {:else}
     <div class="md-preview">
-      {#if value.trim()}
-        <RichText text={value} />
-      {:else}
-        <div class="md-empty">Nothing to preview yet.</div>
-      {/if}
+      <div class="md-preview-inner">
+        {#if value.trim()}
+          <RichText text={value} />
+        {:else}
+          <div class="md-empty">Nothing to preview yet.</div>
+        {/if}
+      </div>
     </div>
   {/if}
 </div>
 
 <style>
+  /* Fill whatever flex/grid cell the parent assigns — the parent (notes-detail)
+     controls height; we just stretch to consume it. */
   .md {
     display: flex;
     flex-direction: column;
+    flex: 1 1 0;
+    min-height: 0;
     border: 1px solid var(--border-strong);
     border-radius: var(--r-lg, 12px);
     background: var(--surface);
     overflow: hidden;
   }
+  /* Fixed-height toolbar row — never grows. */
   .md-bar {
+    flex: none;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -179,17 +187,33 @@
   }
   .md-segbtn:hover { color: var(--fg-bright); }
   .md-segbtn.on { color: var(--accent-fg); background: var(--accent); }
+  /* Textarea stretches to fill all remaining editor height. No resize handle —
+     the pane itself is already full-height, so manual resize adds no value. */
   .md-area {
-    width: 100%; box-sizing: border-box; resize: vertical;
-    min-height: 280px; padding: 14px 16px;
-    font-family: var(--font-mono); font-size: var(--t-xs, 12.5px); line-height: 1.6;
+    flex: 1 1 0;
+    min-height: 0;
+    width: 100%;
+    box-sizing: border-box;
+    resize: none;
+    padding: 16px 20px;
+    font-family: var(--font-mono); font-size: var(--t-xs, 12.5px); line-height: 1.7;
     color: var(--fg-bright); background: var(--surface); border: none; outline: none;
     tab-size: 2;
   }
   .md-area::placeholder { color: var(--fg-faint); }
+  /* Preview fills height and scrolls; inner prose gets a comfortable line-length
+     cap while the scroll container stays full-width. */
   .md-preview {
-    min-height: 280px; padding: 14px 16px;
-    color: var(--fg); font-size: var(--t-xs, 12.5px); overflow-y: auto;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0;
+    color: var(--fg); font-size: var(--t-xs, 12.5px);
+  }
+  .md-preview-inner {
+    max-width: 72ch;
+    margin: 0 auto;
+    padding: 16px 20px;
   }
   .md-empty {
     color: var(--fg-faint); font-style: italic; font-size: var(--t-xs, 12px);
