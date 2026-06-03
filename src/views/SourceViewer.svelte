@@ -2,6 +2,7 @@
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import type { ChunkInfo } from "../lib/api";
+  import { convertFileSrc } from "@tauri-apps/api/core";
   import Icon from "../components/Icon.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
 
@@ -11,16 +12,72 @@
   let split = $state(58); // percent for left pane
   let dragging = $state(false);
 
-  // ---- load chunks on mount ----
+  // ---- per-kind preview routing ----
+  // `assetUrl` is the webview-loadable URL for the persisted original (or, for
+  // pptx/docx, the backend-rendered PDF). Guarded against a null stored_path.
+  const assetUrl = $derived(
+    app.activeSource?.stored_path
+      ? convertFileSrc(app.activeSource.stored_path)
+      : null
+  );
+  // A document renders as an embedded PDF when the kind says so OR whenever the
+  // stored file is a .pdf — this catches pptx/docx that the backend rendered to
+  // PDF for slide preview.
+  const isPdfDoc = $derived(
+    !!app.activeSource &&
+      (app.activeSource.kind === "pdf" ||
+        !!app.activeSource.stored_path?.toLowerCase().endsWith(".pdf"))
+  );
+  const isImage = $derived(app.activeSource?.kind === "image" && !!assetUrl);
+  const isAudio = $derived(app.activeSource?.kind === "audio" && !!assetUrl);
+  // Readable text: explicit text-ish kinds, or any source with no stored file
+  // but extracted content to show.
+  const TEXT_KINDS = ["txt", "md", "web", "url"];
+  const isText = $derived(
+    !!app.activeSource &&
+      !isPdfDoc &&
+      !isImage &&
+      !isAudio &&
+      !!app.activeSource.content &&
+      (TEXT_KINDS.includes(app.activeSource.kind) || !app.activeSource.stored_path)
+  );
+  // Anything with a dedicated preview skips the chunk-list fallback.
+  const hasPreview = $derived(isPdfDoc || isImage || isAudio || isText);
+
+  // ---- load chunks on mount / when the active source changes ----
+  // Re-runs reactively whenever app.activeSource (or its id) changes. We only
+  // need raw chunks when there's no richer preview to fall back to, plus audio
+  // uses them as a transcript fallback.
   $effect(() => {
     const src = app.activeSource;
     if (!src) return;
+    // Skip the (potentially large) chunk fetch when a real preview is shown and
+    // we don't need a transcript fallback.
+    if (hasPreview && !isAudio) {
+      chunks = [];
+      loading = false;
+      return;
+    }
     loading = true;
     api.listChunks(src.id)
       .then((c) => { chunks = c; })
       .catch(() => { chunks = []; })
       .finally(() => { loading = false; });
   });
+
+  // ---- delete ----
+  function confirmDelete() {
+    const src = app.activeSource;
+    if (!src) return;
+    if (confirm(`Delete "${src.name}"? This removes the source and its embeddings.`)) {
+      app.deleteSource(src.id); // store action closes the viewer on success
+    }
+  }
+
+  // transcript text for audio: prefer extracted content, fall back to chunks
+  const transcript = $derived(
+    app.activeSource?.content ?? (chunks.length ? chunks.map((c) => c.text).join("\n\n") : "")
+  );
 
   // ---- splitter drag ----
   $effect(() => {
@@ -81,14 +138,60 @@
         {/if}
       {/if}
 
-      <button class="btn btn--icon btn--sm btn--ghost">
+      <button class="btn btn--icon btn--sm btn--ghost" title="Search">
         <Icon name="search" size={13} />
       </button>
+      {#if src}
+        <button
+          class="btn btn--icon btn--sm btn--ghost sv-delete"
+          onclick={confirmDelete}
+          title="Delete source"
+        >
+          <Icon name="x" size={13} color="currentColor" />
+        </button>
+      {/if}
     </div>
 
-    <!-- Embedding proof scrollable area -->
-    <div class="sv-doc">
-      {#if loading}
+    <!-- Preview / embedding proof scrollable area -->
+    <div class="sv-doc" class:sv-doc--flush={isPdfDoc || isImage}>
+      {#if src?.error}
+        <!-- Failed ingest: surface the error prominently instead of an empty view -->
+        <div class="pdf-page sv-error" style="width:100%;max-width:560px">
+          <h3 class="pdf-h" style="color:var(--err, var(--warn))">Failed to ingest</h3>
+          <p class="read pdf-note">{src.error}</p>
+          <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--fg-muted)">
+            This source couldn't be parsed. Try deleting and re-adding it.
+          </p>
+        </div>
+      {:else if isPdfDoc && assetUrl}
+        <!-- PDF / rendered slide preview (also covers pptx & docx via rendered PDF) -->
+        <iframe class="sv-frame" src={assetUrl} title={src?.name ?? "document"}></iframe>
+      {:else if isImage && assetUrl}
+        <!-- Image preview, centered & fit -->
+        <div class="sv-img-wrap">
+          <img class="sv-img" src={assetUrl} alt={src?.name ?? "image"} />
+        </div>
+      {:else if isAudio && assetUrl}
+        <!-- Audio player + transcript -->
+        <div class="pdf-page" style="width:100%;max-width:560px">
+          <audio class="sv-audio" controls src={assetUrl}></audio>
+        </div>
+        <div class="pdf-page" style="width:100%;max-width:560px">
+          <h3 class="pdf-h">Transcript</h3>
+          {#if transcript}
+            <p class="read pdf-note sv-text">{transcript}</p>
+          {:else}
+            <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--fg-muted)">
+              No transcript available yet.
+            </p>
+          {/if}
+        </div>
+      {:else if isText && src?.content}
+        <!-- Readable extracted text (txt / md / web / url, or content-only sources) -->
+        <div class="pdf-page" style="width:100%;max-width:680px">
+          <p class="read pdf-note sv-text">{src.content}</p>
+        </div>
+      {:else if loading}
         <div class="pdf-page" style="width:100%;max-width:560px">
           <div class="pdf-line sk" style="width:60%;height:14px;margin-bottom:18px"></div>
           <div class="pdf-line sk" style="width:90%"></div>
@@ -96,7 +199,7 @@
           <div class="pdf-line sk" style="width:70%"></div>
         </div>
       {:else}
-        <!-- Embedding proof header -->
+        <!-- Fallback: raw chunk list (nothing richer to show) -->
         <div class="pdf-page" style="width:100%;max-width:560px">
           {#if chunks.length > 0}
             <h3 class="pdf-h" style="color:var(--ok)">
@@ -142,3 +245,49 @@
     <ChatPanel />
   </div>
 </div>
+
+<style>
+  /* PDF / image previews fill the pane edge-to-edge instead of the padded,
+     centered "document" column used by the chunk list. */
+  .sv-doc--flush {
+    padding: 0;
+    gap: 0;
+    align-items: stretch;
+  }
+  .sv-frame {
+    flex: 1;
+    width: 100%;
+    border: none;
+    background: var(--surface);
+  }
+  .sv-img-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--sp-6);
+    min-height: 0;
+  }
+  .sv-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: var(--rad-2);
+    border: 1px solid var(--border);
+  }
+  .sv-audio {
+    width: 100%;
+    display: block;
+  }
+  /* Preserve paragraphs/newlines for readable plaintext and transcripts. */
+  .sv-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .sv-error {
+    border-color: color-mix(in oklab, var(--warn) 40%, var(--border));
+  }
+  .sv-delete:hover {
+    color: var(--err, var(--warn));
+  }
+</style>

@@ -1,13 +1,39 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
-  import * as mock from "../lib/mock";
-  import type { SearchResult } from "../lib/mock";
+  import * as api from "../lib/api";
+  import type { WebResult } from "../lib/api";
   import Icon from "../components/Icon.svelte";
 
+  // Default query shown in the first tab (replaces mock.search.suggested).
+  const SUGGESTED = "dynamic programming memoization";
+
   // ---- types ----
+  // A renderable result: the real WebResult plus the extra fields the existing
+  // markup expects (fav chip, reader paragraphs, engines list, category).
+  type Result = {
+    id: string;
+    title: string;
+    url: string;
+    host: string;
+    snippet: string;
+    fav: string;
+    favBg: string;
+    cat: string;
+    engines: string[];
+    reader: string[];
+  };
+
+  type SerpState = "idle" | "loading" | "results" | "error" | "setup";
+
   type StackEntry =
-    | { kind: "serp"; query: string }
-    | { kind: "page"; page: SearchResult; query: string };
+    | {
+        kind: "serp";
+        query: string;
+        state: SerpState;
+        results: Result[];
+        error: string;
+      }
+    | { kind: "page"; page: Result; query: string };
 
   type Tab = {
     id: string;
@@ -24,10 +50,46 @@
   const SERP_CATS = ["All", "General", "Science", "Files", "Videos"];
   let __tabSeq = 1;
 
+  // Deterministic favicon background derived from the host string.
+  const FAV_BGS = ["#3b6ea5", "#2dd5b7", "#a31f34", "#e07a26", "#5b6ee1", "#3a5", "#b54bd6"];
+  function favBgFor(host: string): string {
+    let h = 0;
+    for (let i = 0; i < host.length; i++) h = (h * 31 + host.charCodeAt(i)) >>> 0;
+    return FAV_BGS[h % FAV_BGS.length];
+  }
+  function favLetter(host: string): string {
+    const clean = host.replace(/^www\./, "");
+    return (clean[0] ?? "?").toUpperCase();
+  }
+
+  // Map a real WebResult into a renderable Result with sensible fallbacks.
+  function toResult(w: WebResult, i: number): Result {
+    const host = w.host || w.url.replace(/^https?:\/\//, "").split("/")[0];
+    const reader = w.snippet
+      ? [w.snippet]
+      : ["No preview text was returned for this result. Open it in your browser or add it as a source to extract the full page."];
+    return {
+      id: "w" + i + "-" + w.url,
+      title: w.title || host,
+      url: w.url,
+      host,
+      snippet: w.snippet,
+      fav: favLetter(host),
+      favBg: favBgFor(host),
+      cat: "General",
+      engines: w.engine ? [w.engine] : [],
+      reader,
+    };
+  }
+
+  function makeSerp(query: string): StackEntry {
+    return { kind: "serp", query, state: "idle", results: [], error: "" };
+  }
+
   function makeTab(query: string): Tab {
     return {
       id: "t" + __tabSeq++,
-      stack: [{ kind: "serp", query }],
+      stack: [makeSerp(query)],
       idx: 0,
       draft: query,
       sel: 0,
@@ -38,7 +100,7 @@
   }
 
   // ---- state ----
-  let tabs = $state<Tab[]>([makeTab(mock.search.suggested)]);
+  let tabs = $state<Tab[]>([makeTab(SUGGESTED)]);
   let activeId = $state<string>(tabs[0].id);
   let inputEl = $state<HTMLInputElement | null>(null);
   let listEl = $state<HTMLElement | null>(null);
@@ -47,10 +109,12 @@
   const active = $derived(tabs.find((t) => t.id === activeId) ?? tabs[0]);
   const entry = $derived(active.stack[active.idx]);
   const cur = $derived(entry.kind === "page" ? entry.page : null);
+  const serp = $derived(entry.kind === "serp" ? entry : null);
+  // Results to render: the active serp entry's results, filtered by category.
   const results = $derived(
-    mock.search.results.filter(
-      (r) => active.cat === "All" || r.cat === active.cat
-    )
+    serp
+      ? serp.results.filter((r) => active.cat === "All" || r.cat === active.cat)
+      : []
   );
 
   // ---- scroll selected result into view ----
@@ -116,6 +180,15 @@
     tabs = tabs.map((t) => (t.id === activeId ? { ...t, ...fn(t) } : t));
   }
 
+  // Patch the current stack entry of a specific tab in place.
+  function patchEntry(id: string, fn: (e: StackEntry) => StackEntry) {
+    tabs = tabs.map((t) => {
+      if (t.id !== id) return t;
+      const stack = t.stack.map((e, i) => (i === t.idx ? fn(e) : e));
+      return { ...t, stack };
+    });
+  }
+
   function navigate(e: StackEntry) {
     patchActive((t) => {
       const stack = t.stack.slice(0, t.idx + 1).concat([e]);
@@ -123,19 +196,45 @@
     });
   }
 
-  function runSearch(q: string) {
-    if (!q.trim()) return;
-    navigate({ kind: "serp", query: q.trim() });
+  // Run a real web search for the active tab and stream the result into its
+  // current serp entry. Sets loading first, then results / setup / error.
+  async function runSearch(q: string) {
+    const query = q.trim();
+    if (!query) return;
+    navigate(makeSerp(query));
+    const tabId = activeId;
+    patchEntry(tabId, (e) =>
+      e.kind === "serp" ? { ...e, state: "loading", results: [], error: "" } : e
+    );
+    try {
+      const raw = await api.webSearch(query);
+      const mapped = raw.map((w, i) => toResult(w, i));
+      patchEntry(tabId, (e) =>
+        e.kind === "serp" && e.query === query
+          ? { ...e, state: "results", results: mapped, error: "" }
+          : e
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isSetup = /searxng_url not configured/i.test(msg);
+      patchEntry(tabId, (e) =>
+        e.kind === "serp" && e.query === query
+          ? { ...e, state: isSetup ? "setup" : "error", results: [], error: msg }
+          : e
+      );
+    }
   }
 
-  function openResult(r: SearchResult) {
+  function openResult(r: Result) {
     navigate({ kind: "page", page: r, query: r.url });
   }
 
   function openUrl(u: string) {
     const url = /^https?:\/\//.test(u) ? u : "https://" + u;
     const host = url.replace(/^https?:\/\//, "").split("/")[0];
-    const existing = mock.search.results.find((r) => r.url === url || r.host === host);
+    // Reuse a result already loaded in the current serp entry if it matches.
+    const existing =
+      serp?.results.find((r) => r.url === url || r.host === host) ?? null;
     if (existing) return openResult(existing);
     navigate({
       kind: "page",
@@ -145,11 +244,11 @@
         title: host,
         url,
         host,
-        fav: host[0]?.toUpperCase() ?? "?",
-        favBg: "#3a5",
+        snippet: "",
+        fav: favLetter(host),
+        favBg: favBgFor(host),
         cat: "General",
         engines: [],
-        snippet: "",
         reader: [
           "Reader view of " + url + ". In the desktop build, Cortex fetches the page through your self-hosted instance.",
           "Use the 'Add as source' button to ingest it.",
@@ -181,6 +280,38 @@
     );
   }
 
+  // Reload re-runs the current serp query (or no-ops on a reader page).
+  function reload() {
+    if (entry.kind === "serp" && entry.query.trim()) {
+      const q = entry.query;
+      const tabId = activeId;
+      patchEntry(tabId, (e) =>
+        e.kind === "serp" ? { ...e, state: "loading", results: [], error: "" } : e
+      );
+      void (async () => {
+        try {
+          const raw = await api.webSearch(q);
+          const mapped = raw.map((w, i) => toResult(w, i));
+          patchEntry(tabId, (e) =>
+            e.kind === "serp" && e.query === q
+              ? { ...e, state: "results", results: mapped, error: "" }
+              : e
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const isSetup = /searxng_url not configured/i.test(msg);
+          patchEntry(tabId, (e) =>
+            e.kind === "serp" && e.query === q
+              ? { ...e, state: isSetup ? "setup" : "error", results: [], error: msg }
+              : e
+          );
+        }
+      })();
+    } else {
+      patchActive(() => ({}));
+    }
+  }
+
   function addTab() {
     const t = makeTab("");
     tabs = [...tabs, t];
@@ -192,7 +323,7 @@
     e?.stopPropagation();
     const left = tabs.filter((t) => t.id !== id);
     if (!left.length) {
-      const n = makeTab(mock.search.suggested);
+      const n = makeTab(SUGGESTED);
       tabs = [n];
       if (id === activeId) activeId = n.id;
     } else {
@@ -210,7 +341,7 @@
     } catch {}
   }
 
-  function addSource(r: SearchResult) {
+  function addSource(r: Result) {
     const steps = ["parsing", "chunking", "embedding", "done"];
     let i = 0;
     patchActive(() => ({ ingest: steps[0] }));
@@ -220,7 +351,7 @@
         patchActive(() => ({ ingest: steps[i] }));
       } else {
         clearInterval(iv);
-        patchActive((t) => ({ ingest: "done" }));
+        patchActive(() => ({ ingest: "done" }));
         app.pushToast({
           kind: "success",
           title: "Source embedded",
@@ -231,10 +362,6 @@
         }, 1400);
       }
     }, 800);
-  }
-
-  function favSquare(r: SearchResult, size: number) {
-    return { bg: r.favBg, letter: r.fav, size };
   }
 </script>
 
@@ -303,7 +430,7 @@
       </button>
       <button
         class="br-ico"
-        onclick={() => patchActive(() => ({}))}
+        onclick={reload}
         title="Reload"
       >
         <Icon name="refresh" size={13} />
@@ -335,82 +462,137 @@
 
   <!-- Content -->
   {#if entry.kind === "serp"}
+    {@const st = entry.state}
     <div class="serp">
       <div class="serp-main">
-        <div class="serp-bar">
-          <span class="mono faint">≈ 41,200 results · {results.length} shown · via SearXNG</span>
-          <div class="serp-cats">
-            {#each SERP_CATS as cat}
-              <button
-                class="serp-cat{active.cat === cat ? ' on' : ''}"
-                onclick={() => patchActive(() => ({ cat, sel: 0 }))}
-              >{cat}</button>
+        {#if st === "results"}
+          <div class="serp-bar">
+            <span class="mono faint">{entry.results.length} results · {results.length} shown · via SearXNG</span>
+            <div class="serp-cats">
+              {#each SERP_CATS as cat}
+                <button
+                  class="serp-cat{active.cat === cat ? ' on' : ''}"
+                  onclick={() => patchActive(() => ({ cat, sel: 0 }))}
+                >{cat}</button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        {#if st === "idle"}
+          <!-- (a) idle / empty: no query has been run yet -->
+          <div class="serp-state">
+            <div class="ss-icon"><Icon name="search" size={26} color="var(--fg-faint)" /></div>
+            <div class="ss-title read">Search the web</div>
+            <p class="ss-body mono faint">
+              Type a query in the address bar above, or press <kbd>/</kbd> to focus it.
+              Results come from your self-hosted SearXNG instance.
+            </p>
+            <button class="btn btn--sm btn--primary" onclick={() => runSearch(active.draft || SUGGESTED)}>
+              <Icon name="search" size={13} /> Search “{(active.draft || SUGGESTED).trim()}”
+            </button>
+          </div>
+
+        {:else if st === "loading"}
+          <!-- (b) loading -->
+          <div class="serp-state">
+            <div class="ss-icon"><span class="is-spin"></span></div>
+            <div class="ss-title read">Searching…</div>
+            <p class="ss-body mono faint">Querying SearXNG for “{entry.query}”.</p>
+          </div>
+
+        {:else if st === "setup"}
+          <!-- (c) setup: SearXNG endpoint not configured yet -->
+          <div class="serp-state">
+            <div class="ss-icon"><Icon name="bolt" size={26} color="var(--accent)" /></div>
+            <div class="ss-title read">Web search needs a SearXNG endpoint</div>
+            <p class="ss-body mono faint">
+              Cortex runs web searches through your own self-hosted
+              <strong>SearXNG</strong> instance — nothing is sent to a third party.
+              Set the <code>searxng_url</code> value under
+              <strong>Settings → Homelab</strong> to point at your instance, then try again.
+            </p>
+            <button class="btn btn--sm btn--primary" onclick={() => app.setView("settings")}>
+              <Icon name="bolt" size={13} /> Open Settings → Homelab
+            </button>
+          </div>
+
+        {:else if st === "error"}
+          <!-- error: any other failure -->
+          <div class="serp-state">
+            <div class="ss-icon"><Icon name="x" size={24} color="var(--bad, #e0533a)" /></div>
+            <div class="ss-title read">Search failed</div>
+            <p class="ss-body mono faint">{entry.error || "An unknown error occurred."}</p>
+            <button class="btn btn--sm" onclick={reload}>
+              <Icon name="refresh" size={13} /> Try again
+            </button>
+          </div>
+
+        {:else}
+          <!-- results -->
+          <div class="serp-list" bind:this={listEl}>
+            {#if results.length === 0}
+              <div class="serp-empty mono faint">No results in this category.</div>
+            {/if}
+            {#each results as r, i (r.id)}
+              <div
+                class="serp-row{i === active.sel ? ' sel' : ''}"
+                onmouseenter={() => patchActive(() => ({ sel: i }))}
+                onclick={() => openResult(r)}
+                role="button"
+                tabindex="0"
+                onkeydown={(e) => e.key === "Enter" && openResult(r)}
+              >
+                <div class="serp-head">
+                  <span
+                    class="br-fav"
+                    style:background={r.favBg}
+                    style:width="18px"
+                    style:height="18px"
+                    style:font-size="10px"
+                  >{r.fav}</span>
+                  <div class="serp-host mono">
+                    {r.host}<span class="serp-path">{r.url.replace(/^https?:\/\/[^/]+/, "")}</span>
+                  </div>
+                </div>
+                <div class="serp-title">{r.title}</div>
+                <div class="serp-snippet">{r.snippet}</div>
+                <div class="serp-foot">
+                  <div class="serp-engines">
+                    {#each r.engines as eng}
+                      <span class="engine-chip mono">{eng}</span>
+                    {/each}
+                  </div>
+                  <div class="serp-actions">
+                    <button
+                      class="btn btn--sm btn--ghost"
+                      onclick={(e) => { e.stopPropagation(); openResult(r); }}
+                    >
+                      <Icon name="search" size={12} /> Read
+                    </button>
+                    <button
+                      class="btn btn--sm btn--ghost"
+                      onclick={(e) => { e.stopPropagation(); openExternal(r.url); }}
+                    >
+                      <Icon name="arrowR" size={12} /> Open
+                    </button>
+                    <button
+                      class="btn btn--sm btn--ghost"
+                      onclick={(e) => { e.stopPropagation(); openResult(r); setTimeout(() => addSource(r), 60); }}
+                    >
+                      <Icon name="plus" size={12} /> Source
+                    </button>
+                  </div>
+                </div>
+              </div>
             {/each}
           </div>
-        </div>
-
-        <div class="serp-list" bind:this={listEl}>
-          {#if results.length === 0}
-            <div class="serp-empty mono faint">No results in this category.</div>
-          {/if}
-          {#each results as r, i (r.id)}
-            <div
-              class="serp-row{i === active.sel ? ' sel' : ''}"
-              onmouseenter={() => patchActive(() => ({ sel: i }))}
-              onclick={() => openResult(r)}
-              role="button"
-              tabindex="0"
-              onkeydown={(e) => e.key === "Enter" && openResult(r)}
-            >
-              <div class="serp-head">
-                <span
-                  class="br-fav"
-                  style:background={r.favBg}
-                  style:width="18px"
-                  style:height="18px"
-                  style:font-size="10px"
-                >{r.fav}</span>
-                <div class="serp-host mono">
-                  {r.host}<span class="serp-path">{r.url.replace(/^https?:\/\/[^/]+/, "")}</span>
-                </div>
-              </div>
-              <div class="serp-title">{r.title}</div>
-              <div class="serp-snippet">{r.snippet}</div>
-              <div class="serp-foot">
-                <div class="serp-engines">
-                  {#each r.engines as eng}
-                    <span class="engine-chip mono">{eng}</span>
-                  {/each}
-                </div>
-                <div class="serp-actions">
-                  <button
-                    class="btn btn--sm btn--ghost"
-                    onclick={(e) => { e.stopPropagation(); openResult(r); }}
-                  >
-                    <Icon name="search" size={12} /> Read
-                  </button>
-                  <button
-                    class="btn btn--sm btn--ghost"
-                    onclick={(e) => { e.stopPropagation(); openExternal(r.url); }}
-                  >
-                    <Icon name="arrowR" size={12} /> Open
-                  </button>
-                  <button
-                    class="btn btn--sm btn--ghost"
-                    onclick={(e) => { e.stopPropagation(); openResult(r); setTimeout(() => addSource(r), 60); }}
-                  >
-                    <Icon name="plus" size={12} /> Source
-                  </button>
-                </div>
-              </div>
-            </div>
-          {/each}
-        </div>
+        {/if}
       </div>
 
       <!-- Preview aside -->
       <aside class="serp-preview">
-        {#if results[active.sel]}
+        {#if st === "results" && results[active.sel]}
           {@const prev = results[active.sel]}
           <div class="prev-head">
             <span
@@ -432,7 +614,9 @@
             Open reader <Icon name="arrowR" size={12} />
           </button>
         {:else}
-          <div class="prev-empty mono faint">Hover a result to preview.</div>
+          <div class="prev-empty mono faint">
+            {#if st === "results"}Hover a result to preview.{:else}No preview.{/if}
+          </div>
         {/if}
       </aside>
     </div>
@@ -518,3 +702,46 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .serp-state {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 12px;
+    padding: 32px 28px;
+  }
+  .ss-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    background: var(--bg-soft, rgba(127, 127, 127, 0.08));
+  }
+  .ss-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .ss-body {
+    max-width: 420px;
+    line-height: 1.5;
+    font-size: 12px;
+  }
+  .ss-body code {
+    padding: 1px 5px;
+    border-radius: 5px;
+    background: var(--bg-soft, rgba(127, 127, 127, 0.12));
+  }
+  .ss-body kbd {
+    padding: 1px 6px;
+    border-radius: 5px;
+    border: 1px solid color-mix(in oklab, currentColor 25%, transparent);
+    font-family: inherit;
+  }
+</style>

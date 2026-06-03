@@ -19,7 +19,18 @@
   async function create() {
     if (!ready) return;
     try {
-      await api.createSubject(name.trim(), code.trim() || undefined);
+      const subj = await api.createSubject(name.trim(), code.trim() || undefined);
+      // Create each non-empty starter topic sequentially. Resilient: a failing
+      // topic surfaces a toast but never blocks the rest or the navigation.
+      for (const t of topics) {
+        const tn = t.trim();
+        if (!tn) continue;
+        try {
+          await api.createTopic(subj.id, tn);
+        } catch (te) {
+          app.pushToast({ kind: "error", title: "Couldn't add topic", body: `${tn}: ${String(te)}` });
+        }
+      }
       await app.refresh();
       app.pushToast({ kind: "success", title: "Subject created", body: name.trim() + " is ready." });
       app.setView("dashboard");

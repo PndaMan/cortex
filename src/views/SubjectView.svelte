@@ -28,11 +28,36 @@
   // Load ALL sources for the subject (including ones with no topic, which the
   // subject tree omits) and group them by topic for the Sources tab.
   let srcList = $state<Source[]>([]);
-  $effect(() => {
+  function loadSources() {
     const id = subj?.id;
     if (!id) { srcList = []; return; }
     api.listSources(id).then((s) => (srcList = s)).catch(() => (srcList = []));
+  }
+  $effect(() => {
+    // loadSources reads subj?.id, so this effect re-runs whenever it changes
+    loadSources();
   });
+
+  async function deleteSrc(e: MouseEvent, src: Source) {
+    e.stopPropagation();
+    if (!confirm(`Delete source "${src.name}"? This cannot be undone.`)) return;
+    await app.deleteSource(src.id); // toasts + refreshes the store internally
+    loadSources(); // reload the local list this tab renders from
+  }
+
+  async function deleteTopicGroup(topicId: string, name: string) {
+    if (!confirm(`Delete topic "${name}"? Its sources become ungrouped.`)) return;
+    await app.deleteTopic(topicId); // toasts + refreshes store internally
+    loadSources();
+  }
+
+  async function addTopic() {
+    const name = window.prompt("New topic name");
+    if (name && name.trim()) {
+      await app.createTopic(name.trim()); // adds to active subject + toasts + refreshes
+      loadSources();
+    }
+  }
   const groups = $derived.by(() => {
     const m = new Map<string, Source[]>();
     for (const s of srcList) {
@@ -80,6 +105,9 @@
             <div class="sources-toolbar">
               <span class="label">{srcList.length} {srcList.length === 1 ? "source" : "sources"} · {groups.length} {groups.length === 1 ? "group" : "groups"}</span>
               <div class="grow"></div>
+              <button class="btn btn--sm btn--ghost" onclick={addTopic}>
+                <Icon name="plus" size={12} /> Add topic
+              </button>
               <button class="btn btn--sm btn--primary" onclick={() => app.setView("add-source")}>
                 <Icon name="plus" size={12} /> Add source
               </button>
@@ -90,10 +118,28 @@
                 <div class="src-topic-h mono">
                   <Icon name="chevron" size={11} /> {g.name}
                   <span class="faint">· {g.items.length}</span>
+                  {#if g.key !== "__none__"}
+                    <div class="grow"></div>
+                    <button
+                      class="btn btn--icon btn--sm btn--ghost"
+                      title="Delete topic"
+                      onclick={() => deleteTopicGroup(g.key, g.name)}
+                    >
+                      <Icon name="x" size={12} />
+                    </button>
+                  {/if}
                 </div>
                 <div class="src-grid">
                   {#each g.items as src (src.id)}
-                    <button class="source-tile" onclick={() => app.openSource(src)} title="Open source">
+                    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                    <div
+                      class="source-tile"
+                      role="button"
+                      tabindex="0"
+                      onclick={() => app.openSource(src)}
+                      onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); app.openSource(src); } }}
+                      title="Open source"
+                    >
                       <div class="stl-top">
                         <span class="badge badge--{kindBadge(src.kind)}">
                           <span class="dot"></span>{kindLabel(src.kind)}
@@ -101,6 +147,14 @@
                         <span class="status-pill status-pill--{src.status === 'ready' ? 'ready' : 'draft'}">
                           <span class="dot"></span>
                         </span>
+                        <div class="grow"></div>
+                        <button
+                          class="btn btn--icon btn--sm btn--ghost"
+                          title="Delete source"
+                          onclick={(e) => deleteSrc(e, src)}
+                        >
+                          <Icon name="x" size={12} />
+                        </button>
                       </div>
                       <div class="stl-name mono">{src.name}</div>
                       {#if src.meta}
@@ -111,17 +165,28 @@
                           {#each src.tags as tag (tag)}<span class="src-tag">{tag}</span>{/each}
                         </div>
                       {/if}
-                    </button>
+                    </div>
                   {/each}
                 </div>
               </div>
             {/each}
 
             {#if srcList.length === 0}
-              <div style:text-align="center" style:padding="60px 0" style:color="var(--fg-faint)">
-                <Icon name="doc" size={24} />
-                <p style:margin-top="12px">No sources yet. Add your first source to get started.</p>
-                <button class="btn btn--primary" style:margin-top="16px" onclick={() => app.setView("add-source")}>
+              <div
+                style:display="flex"
+                style:flex-direction="column"
+                style:align-items="center"
+                style:justify-content="center"
+                style:text-align="center"
+                style:gap="12px"
+                style:height="100%"
+                style:min-height="50vh"
+                style:color="var(--fg-faint)"
+              >
+                <Icon name="doc" size={26} color="var(--fg-faint)" />
+                <h1 class="read" style:font-size="var(--r-xl)" style:color="var(--fg-bright)" style:font-weight="500">No sources yet</h1>
+                <p class="mono muted">Add a lecture, PDF, link, recording or photo to start building this subject.</p>
+                <button class="btn btn--primary" onclick={() => app.setView("add-source")}>
                   <Icon name="plus" size={13} /> Add source
                 </button>
               </div>

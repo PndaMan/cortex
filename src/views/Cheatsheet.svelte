@@ -36,12 +36,14 @@
         cheatSub = data.subject;
         sourceCount = data.sources;
         hasCheatsheet = true;
+        app.pending = data.sections.filter((s) => s.state === "draft-pending").length;
       } else {
         sections = [];
         cheatTopic = sub.topics[0]?.name ?? "";
         cheatSub = sub.name;
         sourceCount = sub.sourceCount;
         hasCheatsheet = false;
+        app.pending = 0;
       }
     }).catch(() => {
       sections = [];
@@ -49,6 +51,7 @@
       cheatSub = sub.name;
       sourceCount = sub.sourceCount;
       hasCheatsheet = false;
+      app.pending = 0;
     });
   });
 
@@ -67,6 +70,7 @@
       cheatSub = result.subject;
       sourceCount = result.sources;
       hasCheatsheet = true;
+      app.pending = result.sections.filter((s) => s.state === "draft-pending").length;
       app.pushToast({
         kind: "success",
         title: "Cheatsheet synthesized",
@@ -91,22 +95,19 @@
       </div>
     {:else if !hasCheatsheet}
       <!-- Subject open but no cheatsheet generated yet -->
-      <div class="cs-doc-head">
-        <div>
-          <div class="eyebrow">Cheatsheet</div>
-          <h1 class="cs-title">{app.activeSubject.topics[0]?.name ?? app.activeSubject.name}</h1>
-          <div class="cs-sub mono">
-            {app.activeSubject.name}{app.activeSubject.code ? " · " + app.activeSubject.code : ""}
-          </div>
+      {@const noSources = app.activeSubject.sourceCount === 0}
+      <div class="cs-working">
+        <div class="cs-working-ico">
+          <Icon name="diamond" size={26} color="var(--fg3)" />
         </div>
-      </div>
-
-      <div class="cs-empty-state">
-        <Icon name="diamond" size={28} color="var(--fg3)" />
-        <div class="ces-title">No cheatsheet yet</div>
-        <div class="ces-sub">
-          Generate a completeness-checked cheatsheet from this subject's {app.activeSubject.sourceCount} source{app.activeSubject.sourceCount !== 1 ? "s" : ""}.
-        </div>
+        <h1 class="cs-working-title read">No cheatsheet yet</h1>
+        <p class="cs-working-sub mono muted">
+          {#if noSources}
+            Add sources to this subject first — your cheatsheet is synthesized from them.
+          {:else}
+            A completeness-checked cheatsheet will be generated from this subject's {app.activeSubject.sourceCount} source{app.activeSubject.sourceCount !== 1 ? "s" : ""}.
+          {/if}
+        </p>
         <button class="btn btn--primary btn--sm" onclick={generate} disabled={regenerating}>
           <Icon name="refresh" size={13} /> {regenerating ? "Synthesizing…" : "Generate cheatsheet"}
         </button>
@@ -170,3 +171,46 @@
     {/if}
   </div>
 </div>
+
+<style>
+  /* Centered empty / working states — mirrors GenerateMaterial's .genmat--working */
+  .cs-empty-state,
+  .cs-working {
+    min-height: 60vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 12px;
+  }
+  .cs-working-ico {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    display: grid;
+    place-items: center;
+    margin-bottom: 4px;
+  }
+  .cs-working-title {
+    font-size: var(--r-xl);
+    color: var(--fg-bright);
+    font-weight: 500;
+  }
+  .cs-working-sub,
+  .cs-empty-state .ces-sub {
+    max-width: 380px;
+    font-size: var(--t-sm);
+    line-height: 1.55;
+  }
+  .cs-empty-state .ces-title {
+    font-size: var(--r-lg);
+    color: var(--fg-bright);
+    font-weight: 500;
+  }
+  .cs-working .btn {
+    margin-top: 4px;
+  }
+</style>

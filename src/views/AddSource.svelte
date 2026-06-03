@@ -31,7 +31,14 @@
   const ORDER = ["parsing", "chunking", "embedding", "storing", "done"];
 
   const subj = $derived(app.activeSubject);
-  const topicId = $derived(subj?.topics[0]?.id ?? null);
+  // Selected target topic. Empty string means "no topic" → null on the wire.
+  // Defaults to the first topic of the active subject when one exists.
+  let selectedTopic = $state("");
+  $effect(() => {
+    // (re)default the selection whenever the active subject changes
+    selectedTopic = subj?.topics[0]?.id ?? "";
+  });
+  const topicId = $derived(selectedTopic || null);
 
   function isDone(st: string) {
     return ORDER.indexOf(st) < ORDER.indexOf(stage ?? "");
@@ -239,7 +246,7 @@
         <h1 class="addpage-title read">New source</h1>
         {#if subj}
           <div class="mono faint" style:font-size="var(--t-xs)">
-            into {subj.name}{subj.topics[0] ? " › " + subj.topics[0].name : ""}
+            into {subj.name}{selectedTopic ? " › " + (subj.topics.find((t) => t.id === selectedTopic)?.name ?? "") : ""}
           </div>
         {/if}
       </div>
@@ -265,6 +272,19 @@
           </button>
         {/each}
       </div>
+
+      <!-- Target topic -->
+      {#if subj}
+        <div class="field" style:margin-top="14px">
+          <label class="onb-label mono" for="addsrc-topic">TOPIC <span class="faint">where this source lives</span></label>
+          <select id="addsrc-topic" class="input mono" bind:value={selectedTopic}>
+            {#each subj.topics as t (t.id)}
+              <option value={t.id}>{t.name}</option>
+            {/each}
+            <option value="">— no topic —</option>
+          </select>
+        </div>
+      {/if}
 
       <!-- URL input -->
       {#if method === "url"}

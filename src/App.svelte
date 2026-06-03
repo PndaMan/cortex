@@ -9,6 +9,8 @@
   import SourceMetaModal from "./components/SourceMetaModal.svelte";
   import LeaderPane from "./components/LeaderPane.svelte";
   import ChatPanel from "./components/ChatPanel.svelte";
+  import HelpOverlay from "./components/HelpOverlay.svelte";
+  import { keybinds } from "./lib/keybinds.svelte";
 
   import Dashboard from "./views/Dashboard.svelte";
   import SubjectView from "./views/SubjectView.svelte";
@@ -57,23 +59,25 @@
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       if (app.leaderOpen) return; // LeaderPane consumes its own keys
-      if (e.key === ":") { e.preventDefault(); app.cmdkOpen = true; return; }
-      if (e.key === " ") { e.preventDefault(); app.leaderOpen = true; return; }
-      if (e.key === "q" && app.toasts.length) { e.preventDefault(); app.dismissToast(app.toasts[app.toasts.length - 1].id); return; }
+      const k = keybinds.map;
+      if (e.key === k.cmdk) { e.preventDefault(); app.cmdkOpen = true; return; }
+      if (e.key === k.leader) { e.preventDefault(); app.leaderOpen = true; return; }
+      if (e.key === k.help) { e.preventDefault(); app.helpOpen = true; return; }
+      if (e.key === k.dismissToast && app.toasts.length) { e.preventDefault(); app.dismissToast(app.toasts[app.toasts.length - 1].id); return; }
 
       if (gPrefix) {
         gPrefix = false;
-        if (e.key === "d") { app.setView("dashboard"); return; }
+        if (e.key === k.dashboard) { app.setView("dashboard"); return; }
       }
       if (e.key === "g") { gPrefix = true; setTimeout(() => (gPrefix = false), 600); return; }
 
-      if (e.key === "c") { app.toggleChat(); return; }
-      if (e.key === "n") { e.preventDefault(); app.setView("add-subject"); return; }
-      if (e.key === "r") { app.setView("recorder"); return; }
-      if (e.key === "w") { app.setView("websearch"); return; }
-      if (e.key === "t") { app.cycleTheme(); return; }
-      if (e.key === "m") { app.musicOpen = true; return; }
-      if (e.key === "i") {
+      if (e.key === k.toggleChat) { app.toggleChat(); return; }
+      if (e.key === k.newSubject) { e.preventDefault(); app.setView("add-subject"); return; }
+      if (e.key === k.recorder) { app.setView("recorder"); return; }
+      if (e.key === k.websearch) { app.setView("websearch"); return; }
+      if (e.key === k.cycleTheme) { app.cycleTheme(); return; }
+      if (e.key === k.music) { app.musicOpen = true; return; }
+      if (e.key === k.insert) {
         const ta = document.querySelector<HTMLTextAreaElement>(".compose-box textarea");
         if (ta) { e.preventDefault(); ta.focus(); app.setMode("INS"); }
         return;
@@ -144,6 +148,7 @@
     <!-- overlays -->
     <CommandPalette />
     <LeaderPane />
+    <HelpOverlay />
     <DiffModal />
     <MusicPanel />
     <SourceMetaModal />

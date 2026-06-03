@@ -228,8 +228,11 @@
   <div class="chat-scroll" bind:this={scrollEl}>
     {#if !app.activeSubject}
       <div class="chat-empty-state">
-        <Icon name="diamond" size={22} color="var(--fg3)" />
-        <div class="ces-title">Open a subject to start chatting.</div>
+        <div class="ces-ico">
+          <Icon name="diamond" size={22} color="var(--fg3)" />
+        </div>
+        <div class="ces-title">Open a subject to start chatting</div>
+        <div class="ces-sub">Ask questions grounded in your sources.</div>
       </div>
     {:else}
       <div class="chat-scope-note">
@@ -293,3 +296,38 @@
     </div>
   </div>
 </div>
+
+<style>
+  /* Centered "no subject" empty state — mirrors GenerateMaterial's .genmat--working */
+  .chat-empty-state {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 10px;
+  }
+  .chat-empty-state .ces-ico {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    display: grid;
+    place-items: center;
+    margin-bottom: 2px;
+  }
+  .chat-empty-state .ces-title {
+    font-size: var(--r-md);
+    color: var(--fg-bright);
+    font-weight: 500;
+  }
+  .chat-empty-state .ces-sub {
+    max-width: 260px;
+    font-size: var(--t-sm);
+    color: var(--fg-muted);
+    line-height: 1.5;
+  }
+</style>

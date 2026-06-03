@@ -19,6 +19,21 @@
     expanded = id;
     app.openSubject(id);
   }
+
+  function renameSubject(s: { id: string; name: string; code?: string | null }, e: Event) {
+    e.stopPropagation();
+    const next = window.prompt("Rename subject", s.name);
+    if (next && next.trim() && next.trim() !== s.name) {
+      app.updateSubject(s.id, next.trim(), s.code ?? undefined);
+    }
+  }
+
+  function removeSubject(s: { id: string; name: string }, e: Event) {
+    e.stopPropagation();
+    if (window.confirm(`Delete subject “${s.name}”? This can’t be undone.`)) {
+      app.deleteSubject(s.id);
+    }
+  }
 </script>
 
 <div class="sidebar">
@@ -106,6 +121,26 @@
             <Icon name="chevron" size={11} />
           </span>
           <span class="s-name">{s.name}</span>
+          <span class="s-actions">
+            <button
+              class="s-act"
+              type="button"
+              title="Rename subject"
+              aria-label="Rename {s.name}"
+              onclick={(e) => renameSubject(s, e)}
+            >
+              <Icon name="pencil" size={12} />
+            </button>
+            <button
+              class="s-act s-act--danger"
+              type="button"
+              title="Delete subject"
+              aria-label="Delete {s.name}"
+              onclick={(e) => removeSubject(s, e)}
+            >
+              <Icon name="x" size={12} />
+            </button>
+          </span>
           <span class="s-count">{s.sourceCount}</span>
           <span
             class="s-dot"
@@ -126,7 +161,13 @@
                 <Icon name="chevron" size={10} /> {t.name}
               </div>
               {#each t.sources as src (src.id)}
-                <div class="sb-src" role="button" tabindex="0">
+                <div
+                  class="sb-src"
+                  role="button"
+                  tabindex="0"
+                  onclick={() => app.openSource(src)}
+                  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && app.openSource(src)}
+                >
                   <span
                     class="badge badge--{src.kind === 'audio' ? 'audio' : src.kind}"
                     style:height="14px"
@@ -180,3 +221,43 @@
     </button>
   </div>
 </div>
+
+<style>
+  /* Per-subject inline rename / delete controls — faint, brighten on row hover */
+  .sb-subj-row .s-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+    opacity: 0;
+    transition: opacity var(--dur-fast);
+  }
+  .sb-subj-row:hover .s-actions,
+  .sb-subj-row:focus-within .s-actions {
+    opacity: 1;
+  }
+  .sb-subj-row .s-act {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    background: none;
+    border-radius: var(--rad-2);
+    color: var(--fg-faint);
+    cursor: pointer;
+    transition: color var(--dur-fast), background var(--dur-fast);
+  }
+  .sb-subj-row .s-act:hover {
+    color: var(--fg-bright);
+    background: var(--surface-3);
+  }
+  .sb-subj-row .s-act--danger:hover {
+    color: var(--err);
+  }
+  /* Count still hugs the dot; cancel the row's default margin-auto on name */
+  .sb-subj-row .s-actions + .s-count {
+    margin-left: 0;
+  }
+</style>

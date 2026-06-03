@@ -114,11 +114,19 @@
     const subj = app.activeSubject;
     if (!subj) { status = "ready"; return; }
 
-    status = "transcribing";
     const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
     const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
     const name = `lecture-${new Date().toISOString().slice(0, 16).replace("T", "-").replace(":", "")}.webm`;
+    await saveAudio(bytes, name, `${mm}:${ss} captured`);
+  }
 
+  // Shared save/transcribe pipeline for both live recordings and uploaded files.
+  async function saveAudio(bytes: number[], name: string, capturedLabel: string) {
+    const subj = app.activeSubject;
+    if (!subj) { status = "ready"; return; }
+
+    status = "transcribing";
+    errorMsg = null;
     unlisten = await api.onIngestProgress((p) => { note = p.detail; });
     try {
       const res = await api.saveRecording(subj.id, name, bytes, subj.topics[0]?.id);
@@ -130,7 +138,7 @@
         app.pushToast({
           kind: "success",
           title: "Recording transcribed",
-          body: `${mm}:${ss} captured · ${res.chunk_count} chunks embedded.`,
+          body: `${capturedLabel} · ${res.chunk_count} chunks embedded.`,
         });
       }
       app.setView("subject");
@@ -140,6 +148,25 @@
       status = "ready";
     } finally {
       if (unlisten) { unlisten(); unlisten = null; }
+    }
+  }
+
+  // Fallback: pick a pre-recorded audio file and run it through the same pipeline.
+  async function uploadAudioFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = ""; // allow re-picking the same file
+    if (!file) return;
+    if (!app.activeSubject) {
+      app.pushToast({ kind: "error", title: "Open a subject first", body: "Select a subject before adding audio." });
+      return;
+    }
+    try {
+      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+      await saveAudio(bytes, file.name, "Uploaded audio");
+    } catch (err) {
+      errorMsg = String(err);
+      status = "ready";
     }
   }
 
@@ -212,6 +239,18 @@
 
     {#if errorMsg}
       <div style:color="var(--err)" style:margin-top="14px" style:font-size="var(--t-sm)" style:max-width="420px" style:text-align="center">{errorMsg}</div>
+    {/if}
+
+    <!-- Fallback: upload a pre-recorded audio file (always available, emphasised on error) -->
+    {#if status !== "transcribing"}
+      <div class="rec-upload mono faint" style:margin-top={errorMsg ? "12px" : "18px"}>
+        {#if errorMsg}Can't use the mic? {/if}
+        <label class="btn btn--ghost btn--sm" style:cursor="pointer">
+          <Icon name="doc" size={13} />
+          Upload an audio file
+          <input type="file" accept="audio/*" onchange={uploadAudioFile} style:display="none" />
+        </label>
+      </div>
     {/if}
 
     {#if tags.length > 0}

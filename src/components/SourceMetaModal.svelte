@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
+  import * as api from "../lib/api";
   import Icon from "./Icon.svelte";
 
   const SUGGESTED_TAGS = ["lecture", "exam-relevant", "needs-review", "key-concept", "worked-example", "reference"];
@@ -46,11 +47,53 @@
     else if (e.key === "Backspace" && !tagDraft && tags.length) removeTag(tags[tags.length - 1]);
   }
 
-  function save() {
+  let saving = $state(false);
+
+  async function save() {
+    if (saving) return;
+    const m = app.metaModal;
+    const name = title.trim();
+
+    // Record-save flow: the modal carries the captured audio bytes. This is the
+    // real action implied by mode === "record" — persist via the recording
+    // command, which transcribes + ingests the audio as a searchable source.
+    // NOTE: the live Recorder saves directly via api.saveRecording and does NOT
+    // route through this modal, so this branch only fires when a payload that
+    // actually carries audio is handed to the modal — it cannot break that path.
+    const audio: number[] | undefined = Array.isArray(m?.audio) ? m.audio : undefined;
+    const subjectId: string | undefined = m?.subjectId ?? app.activeSubject?.id;
+
+    if (isRecord && audio && subjectId) {
+      saving = true;
+      try {
+        const topicId = (m?.topicId ?? app.activeSubject?.topics[0]?.id) || undefined;
+        const res = await api.saveRecording(
+          subjectId,
+          name || "Untitled recording",
+          audio,
+          topicId,
+        );
+        await app.refresh();
+        app.pushToast({
+          kind: res.warning ? "warning" : "success",
+          title: "Recording saved",
+          body: res.warning ?? `${name || "Untitled recording"} · ${res.chunk_count} chunks embedded.`,
+        });
+        app.metaModal = null;
+      } catch (e) {
+        app.pushToast({ kind: "error", title: "Couldn't save recording", body: String(e) });
+      } finally {
+        saving = false;
+      }
+      return;
+    }
+
+    // No backend update_source command exists, and the modal carries no audio to
+    // persist. Rather than emit a false "updated" success, acknowledge and close.
     app.pushToast({
-      kind: "success",
-      title: isRecord ? "Recording saved" : "Source updated",
-      body: title.trim() || (isRecord ? "Untitled recording" : "Untitled source"),
+      kind: "info",
+      title: isRecord ? "Nothing to save" : "Details noted",
+      body: name || (isRecord ? "No recording attached" : "No backing source to update"),
     });
     app.metaModal = null;
   }
@@ -160,7 +203,7 @@
 
       <footer class="meta-foot">
         <button class="btn btn--ghost" onclick={close}>Cancel</button>
-        <button class="btn btn--primary" onclick={save}>
+        <button class="btn btn--primary" onclick={save} disabled={saving}>
           <Icon name="check" size={13} /> {isRecord ? "Save source" : "Save changes"}
         </button>
       </footer>

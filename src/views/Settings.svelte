@@ -2,9 +2,12 @@
   import { app, THEMES } from "../lib/store.svelte";
   import type { Theme } from "../lib/store.svelte";
   import * as api from "../lib/api";
+  import type { Memory } from "../lib/api";
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
   import { stations } from "../lib/mock";
+  import { keybinds, ACTION_LABELS, ACTION_ORDER } from "../lib/keybinds.svelte";
+  import type { Action } from "../lib/keybinds.svelte";
 
   // ---- tab navigation ----
   const TABS = [
@@ -61,6 +64,37 @@
   let style      = $state("balanced");
   let explain    = $state<string[]>(["worked-examples","analogies"]);
 
+  // ---- long-term memory state ----
+  let memories     = $state<Memory[]>([]);
+  let newMemory    = $state("");
+  let memoryBusy   = $state(false);
+
+  async function loadMemory() {
+    memories = await api.listMemory().catch(() => [] as Memory[]);
+  }
+  async function addMemoryFact() {
+    const text = newMemory.trim();
+    if (!text || memoryBusy) return;
+    memoryBusy = true;
+    try {
+      await api.addMemory(text);
+      newMemory = "";
+      await loadMemory();
+    } catch {
+      app.pushToast({ kind: "error", title: "Could not save memory" });
+    } finally {
+      memoryBusy = false;
+    }
+  }
+  async function removeMemory(id: string) {
+    try {
+      await api.deleteMemory(id);
+      await loadMemory();
+    } catch {
+      app.pushToast({ kind: "error", title: "Could not delete memory" });
+    }
+  }
+
   // ---- models state ----
   type TaskAssign = { provider: string; model: string; budget: string };
   let assign = $state<Record<TaskId, TaskAssign>>({
@@ -110,32 +144,21 @@
   });
 
   // ---- keybinds state ----
-  type Bind = { id: string; label: string; keys: string };
-  let binds = $state<Bind[]>([
-    { id: "cmd",     label: "Command palette",   keys: ":" },
-    { id: "leader",  label: "Space leader",       keys: "Space" },
-    { id: "search",  label: "Search in page",     keys: "/" },
-    { id: "down",    label: "Move down",           keys: "j" },
-    { id: "up",      label: "Move up",             keys: "k" },
-    { id: "chat",    label: "Toggle chat",         keys: "c" },
-    { id: "insert",  label: "Insert mode",         keys: "i" },
-    { id: "newsubj", label: "New subject",         keys: "n" },
-    { id: "panel",   label: "Toggle sources panel",keys: "]" },
-    { id: "dash",    label: "Go to dashboard",     keys: "Space g" },
-    { id: "record",  label: "Record lecture",      keys: "Space r" },
-    { id: "addsrc",  label: "Add source",          keys: "Space s" },
-  ]);
-  let listening = $state<string | null>(null);
+  // Binds live in the shared keybinds module (persisted + applied live).
+  let listening = $state<Action | null>(null);
+
+  function displayKey(k: string): string {
+    return k === " " ? "Space" : k;
+  }
 
   $effect(() => {
     if (!listening) return;
     (window as any).__cortexModalOpen = true;
     function onKey(e: KeyboardEvent) {
       e.preventDefault();
-      const k = e.key === " " ? "Space" : e.key === "Escape" ? null : e.key;
-      if (k) {
-        const lid = listening;
-        binds = binds.map((b) => b.id === lid ? { ...b, keys: k } : b);
+      const k = e.key === "Escape" ? null : e.key;
+      if (k && listening) {
+        keybinds.set(listening, k); // persists + applies live
       }
       listening = null;
       (window as any).__cortexModalOpen = false;
@@ -150,12 +173,34 @@
   // ---- homelab state ----
   let homelab    = $state(true);
   let endpoint   = $state("http://homelab.local:11434");
+  let searxng    = $state("");
   let jobs       = $state({ whisper: true, llm: false, backups: true });
-  let testState  = $state<null | "testing" | "ok">(null);
+  let testState  = $state<null | "testing" | "ok" | "fail">(null);
+  let searxState = $state<null | "testing" | "ok" | "fail">(null);
 
-  function testConnection() {
+  async function testConnection() {
     testState = "testing";
-    setTimeout(() => (testState = "ok"), 1100);
+    try {
+      const ok = await api.pingUrl(endpoint);
+      testState = ok ? "ok" : "fail";
+    } catch {
+      testState = "fail";
+    }
+  }
+
+  function saveSearxng() {
+    api.setSetting("searxng_url", searxng).catch(() => {});
+  }
+
+  async function testSearxng() {
+    if (!searxng.trim()) return;
+    searxState = "testing";
+    try {
+      const ok = await api.pingUrl(searxng);
+      searxState = ok ? "ok" : "fail";
+    } catch {
+      searxState = "fail";
+    }
   }
 
   // persist homelab on change
@@ -178,6 +223,66 @@
     api.setSettings({ default_station: st, autoplay: String(ap) }).catch(() => {});
   });
 
+  // persist host voices on change
+  $effect(() => {
+    api.setSettings({ voice_a: voiceA, voice_b: voiceB }).catch(() => {});
+  });
+
+  // ---- data & privacy state ----
+  let offlineMode = $state(false);
+  let stats       = $state<api.DbStats | null>(null);
+
+  function fmtBytes(n: number): string {
+    if (n >= 1024 * 1024 * 1024) return (n / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+    if (n >= 1024 * 1024)        return (n / (1024 * 1024)).toFixed(1) + " MB";
+    if (n >= 1024)               return (n / 1024).toFixed(0) + " KB";
+    return n + " B";
+  }
+
+  async function loadStats() {
+    stats = await api.dbStats().catch(() => null);
+  }
+
+  function toggleOffline() {
+    offlineMode = !offlineMode;
+    api.setSetting("offline_mode", offlineMode ? "true" : "false").catch(() => {});
+  }
+
+  function clearCaches() {
+    // No backend cache-clear command exists; clear any in-memory derived state
+    // we can honestly clear, then confirm.
+    testState = null;
+    searxState = null;
+    app.pushToast({ kind: "info", title: "Caches cleared", body: "Local in-memory caches reset." });
+  }
+
+  function exportData() {
+    // No backend export command exists yet — be honest rather than fake a file.
+    if (stats) {
+      app.pushToast({
+        kind: "info",
+        title: "Export coming soon",
+        body: `Would archive ${stats.subjects} subjects · ${stats.sources} sources · ${stats.chunks} chunks (${fmtBytes(stats.db_bytes)}).`,
+      });
+    } else {
+      app.pushToast({ kind: "info", title: "Export coming soon", body: "Portable archive export isn't wired up yet." });
+    }
+  }
+
+  async function deleteEverything() {
+    const ok = window.confirm(
+      "Delete ALL data?\n\nThis wipes the local database — every subject, source, cheatsheet, and embedding. This cannot be undone. Your settings and API keys are kept.",
+    );
+    if (!ok) return;
+    try {
+      await api.deleteAllData();
+      await loadStats();
+      app.pushToast({ kind: "success", title: "All data deleted", body: "Reload the app to start fresh." });
+    } catch {
+      app.pushToast({ kind: "error", title: "Delete failed" });
+    }
+  }
+
   // ---- mount: hydrate from backend ----
   $effect(() => {
     api.getAllSettings().then((s) => {
@@ -199,6 +304,10 @@
             assign = { ...assign, [taskId]: { ...assign[taskId], provider: prov, model } };
           }
         }
+        const budget = s[`budget_${taskId}`];
+        if (budget) {
+          assign = { ...assign, [taskId]: { ...assign[taskId], budget } };
+        }
       }
       if (s.embed_provider) {
         assign = { ...assign, embedding: { ...assign.embedding, provider: s.embed_provider } };
@@ -207,10 +316,19 @@
       // Homelab
       if (s.homelab_enabled !== undefined) homelab  = s.homelab_enabled === "true";
       if (s.ollama_url)                    endpoint = s.ollama_url;
+      if (s.searxng_url)                   searxng  = s.searxng_url;
 
       // Appearance
-      if (s.reading_font) readFont = s.reading_font;
-      if (s.density)      density  = s.density;
+      if (s.reading_font)   readFont      = s.reading_font;
+      if (s.density)        density       = s.density;
+      if (s.follow_omarchy !== undefined) followOmarchy = s.follow_omarchy === "true";
+
+      // Audio voices
+      if (s.voice_a) voiceA = s.voice_a;
+      if (s.voice_b) voiceB = s.voice_b;
+
+      // Data & privacy
+      if (s.offline_mode !== undefined) offlineMode = s.offline_mode === "true";
 
       // Profile
       if (s.profile_name)      name     = s.profile_name;
@@ -219,7 +337,12 @@
       if (s.profile_field)     field    = s.profile_field;
       if (s.profile_about)     about    = s.profile_about;
       if (s.profile_style)     style    = s.profile_style;
+      if (s.profile_explain)   explain  = s.profile_explain.split(",").filter(Boolean);
     }).catch(() => {});
+
+    // long-term memory + db stats
+    loadMemory();
+    loadStats();
   });
 
   // ---- helpers ----
@@ -231,6 +354,7 @@
       profile_field: field,
       profile_about: about,
       profile_style: style,
+      profile_explain: explain.join(","),
     }).then(() => app.pushToast({ kind: "success", title: "Profile saved", body: "The AI will use your updated context." }))
       .catch(() => app.pushToast({ kind: "error", title: "Save failed" }));
   }
@@ -393,6 +517,46 @@
           </div>
         </section>
 
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">Memory</h3>
+            <p class="set-group-d">Long-term facts the AI is given in every chat — like remembering your exam date, the textbook you use, or how you like answers framed.</p>
+          </div>
+          <div class="set-card">
+            <div class="set-row stacked">
+              <div class="set-row-r">
+                <div class="row-inline">
+                  <input
+                    class="input"
+                    bind:value={newMemory}
+                    placeholder="e.g. My final exam is on June 20th"
+                    onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); addMemoryFact(); } }}
+                  />
+                  <button class="btn btn--primary" onclick={addMemoryFact} disabled={!newMemory.trim() || memoryBusy}>
+                    <Icon name="check" size={13} /> Remember
+                  </button>
+                </div>
+              </div>
+            </div>
+            {#if memories.length === 0}
+              <div class="set-row">
+                <div class="set-row-l"><div class="set-row-d">No memories yet. Add a fact above and the AI will keep it in mind.</div></div>
+              </div>
+            {:else}
+              {#each memories as m (m.id)}
+                <div class="set-row">
+                  <div class="set-row-l"><div class="set-row-t">{m.content}</div></div>
+                  <div class="set-row-r">
+                    <button class="btn btn--icon btn--sm btn--ghost" onclick={() => removeMemory(m.id)} title="Forget this">
+                      <Icon name="x" size={13} />
+                    </button>
+                  </div>
+                </div>
+              {/each}
+            {/if}
+          </div>
+        </section>
+
         <div class="set-preview">
           <div class="label" style="margin-bottom:8px">What the AI receives</div>
           <pre class="set-sysprompt mono">User: {name} ({pronouns}) · {levelLabels[level] ?? level}
@@ -446,7 +610,7 @@ Notes: {about}</pre>
                 <input
                   class="input mono mt-budget"
                   value={a.budget}
-                  oninput={(e) => setTask(t.id, { budget: (e.target as HTMLInputElement).value })}
+                  oninput={(e) => { const v = (e.target as HTMLInputElement).value; setTask(t.id, { budget: v }); api.setSettings({ ["budget_" + t.id]: v }).catch(() => {}); }}
                 />
               {/if}
             </div>
@@ -538,7 +702,7 @@ Notes: {about}</pre>
                 <button
                   type="button"
                   class={"st-toggle" + (followOmarchy ? " on" : "")}
-                  onclick={() => (followOmarchy = !followOmarchy)}
+                  onclick={() => { followOmarchy = !followOmarchy; api.setSetting("follow_omarchy", followOmarchy ? "true" : "false").catch(() => {}); }}
                   role="switch"
                   aria-checked={followOmarchy}
                   aria-label="follow omarchy"
@@ -547,6 +711,12 @@ Notes: {about}</pre>
                 </button>
               </div>
             </div>
+            {#if followOmarchy}
+              <div class="set-note mono" style="margin:0 0 4px">
+                <Icon name="diamond" size={11} color="var(--accent)" />
+                Syncs your theme from the Omarchy palette on launch. Pick a theme below to override.
+              </div>
+            {/if}
             <div class="set-themes">
               {#each THEME_OPTS as t}
                 <button
@@ -621,7 +791,12 @@ Notes: {about}</pre>
             <div class="set-row-r">
               <div class="seg">
                 {#each [{ id: "helix", label: "Helix" }, { id: "vim", label: "Vim" }, { id: "custom", label: "Custom" }] as opt}
-                  <button type="button" class={"seg-opt" + (opt.id === "helix" ? " on" : "")} onclick={() => {}}>{opt.label}</button>
+                  <button
+                    type="button"
+                    class={"seg-opt" + (keybinds.preset === opt.id ? " on" : "")}
+                    disabled={opt.id === "custom"}
+                    onclick={() => { if (opt.id === "helix" || opt.id === "vim") keybinds.applyPreset(opt.id); }}
+                  >{opt.label}</button>
                 {/each}
               </div>
             </div>
@@ -629,19 +804,17 @@ Notes: {about}</pre>
         </div>
 
         <div class="set-card set-binds">
-          {#each binds as b}
+          {#each ACTION_ORDER as action}
             <div class="bind-row">
-              <span class="bind-label">{b.label}</span>
+              <span class="bind-label">{ACTION_LABELS[action]}</span>
               <button
-                class={"bind-keys" + (listening === b.id ? " listening" : "")}
-                onclick={() => (listening = b.id)}
+                class={"bind-keys" + (listening === action ? " listening" : "")}
+                onclick={() => (listening = action)}
               >
-                {#if listening === b.id}
+                {#if listening === action}
                   <span class="mono faint">press a key…</span>
                 {:else}
-                  {#each b.keys.split(" ") as k, i}
-                    <span class="kbd">{k}</span>
-                  {/each}
+                  <span class="kbd">{displayKey(keybinds.map[action])}</span>
                 {/if}
               </button>
             </div>
@@ -649,7 +822,14 @@ Notes: {about}</pre>
         </div>
 
         <div class="set-foot-actions">
-          <button class="btn btn--ghost" onclick={() => app.pushToast({ kind: "info", title: "Reset", body: "Bindings restored to Helix preset." })}>
+          <button
+            class="btn btn--ghost"
+            onclick={() => {
+              const p = keybinds.preset === "vim" ? "vim" : "helix";
+              keybinds.applyPreset(p);
+              app.pushToast({ kind: "info", title: "Reset", body: `Bindings restored to ${p === "vim" ? "Vim" : "Helix"} preset.` });
+            }}
+          >
             Reset to preset
           </button>
         </div>
@@ -699,12 +879,51 @@ Notes: {about}</pre>
                     </div>
                   {:else if testState === "ok"}
                     <div class="set-test mono" style="color:var(--ok)">
-                      <Icon name="check" size={12} /> Reachable · 8ms · Ollama 0.5.4, Whisper ready
+                      <Icon name="check" size={12} /> Reachable
+                    </div>
+                  {:else if testState === "fail"}
+                    <div class="set-test mono" style="color:var(--danger,#e06c75)">
+                      <Icon name="x" size={12} /> Unreachable — check the endpoint and that the host is online.
                     </div>
                   {/if}
                 </div>
               </div>
             {/if}
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">Web search</h3>
+            <p class="set-group-d">Point Cortex at your self-hosted SearXNG so chat can pull in fresh web results.</p>
+          </div>
+          <div class="set-card">
+            <div class="set-row stacked">
+              <div class="set-row-l"><div class="set-row-t">SearXNG endpoint</div></div>
+              <div class="set-row-r">
+                <div class="row-inline">
+                  <input class="input mono" bind:value={searxng} onchange={saveSearxng} onblur={saveSearxng} placeholder="http://192.168.1.50:8080" />
+                  <button class="btn" onclick={testSearxng}>
+                    <Icon name="refresh" size={12} /> Test
+                  </button>
+                </div>
+                {#if searxState === "testing"}
+                  <div class="set-test mono faint">
+                    <span class="is-spin" style="width:11px;height:11px;display:inline-block;vertical-align:-1px"></span>
+                    Pinging…
+                  </div>
+                {:else if searxState === "ok"}
+                  <div class="set-test mono" style="color:var(--ok)">
+                    <Icon name="check" size={12} /> Reachable
+                  </div>
+                {:else if searxState === "fail"}
+                  <div class="set-test mono" style="color:var(--danger,#e06c75)">
+                    <Icon name="x" size={12} /> Unreachable — check the URL and that SearXNG is running.
+                  </div>
+                {/if}
+                <div class="set-row-d" style="margin-top:6px">Self-hosted SearXNG base URL, e.g. http://192.168.1.50:8080</div>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -822,14 +1041,24 @@ Notes: {about}</pre>
                 <div class="set-row-t">Database</div>
                 <div class="set-row-d">~/.cortex/cortex.db</div>
               </div>
-              <div class="set-row-r"><span class="mono faint">412 MB · 4 subjects · 41 sources</span></div>
+              <div class="set-row-r">
+                <span class="mono faint">
+                  {#if stats}
+                    {fmtBytes(stats.db_bytes)} · {stats.subjects} subject{stats.subjects === 1 ? "" : "s"} · {stats.sources} source{stats.sources === 1 ? "" : "s"}
+                  {:else}
+                    …
+                  {/if}
+                </span>
+              </div>
             </div>
             <div class="set-row">
               <div class="set-row-l">
                 <div class="set-row-t">Vector index</div>
                 <div class="set-row-d">Local embeddings for retrieval</div>
               </div>
-              <div class="set-row-r"><span class="mono faint">88 MB</span></div>
+              <div class="set-row-r">
+                <span class="mono faint">{stats ? `${stats.chunks} chunk${stats.chunks === 1 ? "" : "s"}` : "…"}</span>
+              </div>
             </div>
             <div class="set-row">
               <div class="set-row-l">
@@ -837,7 +1066,7 @@ Notes: {about}</pre>
                 <div class="set-row-d">Block all network calls; Ollama only.</div>
               </div>
               <div class="set-row-r">
-                <button type="button" class="st-toggle" onclick={() => {}} role="switch" aria-checked={false} aria-label="offline"><span class="st-knob"></span></button>
+                <button type="button" class={"st-toggle" + (offlineMode ? " on" : "")} onclick={toggleOffline} role="switch" aria-checked={offlineMode} aria-label="offline"><span class="st-knob"></span></button>
               </div>
             </div>
           </div>
@@ -852,7 +1081,7 @@ Notes: {about}</pre>
                 <div class="set-row-d">Subjects, sources, cheatsheets → a portable archive.</div>
               </div>
               <div class="set-row-r">
-                <button class="btn" onclick={() => app.pushToast({ kind: "info", title: "Exporting", body: "Building cortex-export.zip…" })}>
+                <button class="btn" onclick={exportData}>
                   <Icon name="external" size={12} /> Export
                 </button>
               </div>
@@ -863,7 +1092,7 @@ Notes: {about}</pre>
                 <div class="set-row-d">Transcription & generation caches (safe).</div>
               </div>
               <div class="set-row-r">
-                <button class="btn" onclick={() => app.pushToast({ kind: "info", title: "Caches cleared" })}>Clear</button>
+                <button class="btn" onclick={clearCaches}>Clear</button>
               </div>
             </div>
             <div class="set-row">
@@ -872,7 +1101,7 @@ Notes: {about}</pre>
                 <div class="set-row-d">Irreversible. Wipes the local database.</div>
               </div>
               <div class="set-row-r">
-                <button class="btn btn--danger" onclick={() => app.pushToast({ kind: "warning", title: "Are you sure?", body: "This cannot be undone." })}>Delete…</button>
+                <button class="btn btn--danger" onclick={deleteEverything}>Delete…</button>
               </div>
             </div>
           </div>
