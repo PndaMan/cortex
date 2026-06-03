@@ -105,6 +105,24 @@
     >
       <Icon name="plus" size={14} /> Add source <span class="nav-k">␣ s</span>
     </div>
+    <div
+      class="sb-nav-item{app.view === 'notes' ? ' on' : ''}"
+      onclick={() => app.setView("notes")}
+      role="button"
+      tabindex="0"
+      onkeydown={(e) => e.key === "Enter" && app.setView("notes")}
+    >
+      <Icon name="reader" size={14} /> Notes
+    </div>
+    <div
+      class="sb-nav-item{app.view === 'calendar' ? ' on' : ''}"
+      onclick={() => app.setView("calendar")}
+      role="button"
+      tabindex="0"
+      onkeydown={(e) => e.key === "Enter" && app.setView("calendar")}
+    >
+      <Icon name="calendar" size={14} /> Calendar
+    </div>
 
     <!-- Subjects section header -->
     <div class="sb-section-l">
@@ -210,6 +228,21 @@
                   >
                     <Icon name="plus" size={11} />
                   </button>
+                  {#if t.sources.length === 0}
+                    <button
+                      class="s-act"
+                      type="button"
+                      title="Delete empty topic"
+                      aria-label="Delete topic {t.name}"
+                      onclick={async (e) => {
+                        e.stopPropagation();
+                        const ok = await app.confirm({ title: `Delete topic "${t.name}"?`, body: "This empty topic will be removed.", danger: true, okLabel: "Delete" });
+                        if (ok) app.deleteTopic(t.id, s.id);
+                      }}
+                    >
+                      <Icon name="x" size={11} />
+                    </button>
+                  {/if}
                 </span>
               </div>
               {#if tOpen}

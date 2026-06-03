@@ -2,6 +2,7 @@
   // Rich, fully-themed edit modal — subjects/topics/sources with all their
   // fields. Driven by app.editing; saves through the store's update actions.
   import { app, SUBJECT_COLORS, TOPIC_GLYPHS } from "../lib/store.svelte";
+  import * as api from "../lib/api";
   import Picker from "./Picker.svelte";
   import EmojiPicker from "./EmojiPicker.svelte";
 
@@ -13,6 +14,10 @@
   let topicId = $state<string>("");
   let tagsText = $state("");
   let firstInput = $state<HTMLInputElement | null>(null);
+  // Source-branch: which subject this source currently belongs to (or will be moved to).
+  let selectedSubjectId = $state<string>("");
+  // Source-branch: the subject id the source had when the modal opened (to detect a move).
+  let originalSubjectId = $state<string>("");
 
   $effect(() => {
     const t = app.editing;
@@ -23,28 +28,59 @@
       name = t.name; glyph = t.glyph || TOPIC_GLYPHS[0];
     } else {
       name = t.name; topicId = t.topicId ?? ""; tagsText = (t.tags ?? []).join(", ");
+      // The source's current subject is carried on the target (no app.subjects
+      // scan here, so a background refresh can't reset the open form).
+      selectedSubjectId = t.subjectId;
+      originalSubjectId = t.subjectId;
     }
     queueMicrotask(() => { firstInput?.focus(); firstInput?.select(); });
   });
 
+  const subjectOptions = $derived(
+    app.subjects.map((s) => ({ id: s.id, label: s.name }))
+  );
+
+  // Topic options are derived from the currently selected subject (not the
+  // static topicOptions baked into EditTarget, which only reflects the active subject).
   const topicOptions = $derived(
     app.editing?.kind === "source"
-      ? [...app.editing.topicOptions, { id: "", label: "— no topic —" }]
+      ? [
+          ...(app.subjects.find((s) => s.id === selectedSubjectId)?.topics ?? []).map((tp) => ({
+            id: tp.id,
+            label: tp.name,
+          })),
+          { id: "", label: "— no topic —" },
+        ]
       : []
   );
 
-  function save() {
+  async function save() {
     const t = app.editing;
     if (!t || !name.trim()) return;
     if (t.kind === "subject") {
       app.updateSubject(t.id, name.trim(), code.trim() || undefined, glyph.trim() || undefined, color);
+      app.closeEdit();
     } else if (t.kind === "topic") {
       app.updateTopic(t.id, name.trim(), t.subjectId, glyph.trim() || undefined);
+      app.closeEdit();
     } else {
       const tags = tagsText.split(",").map((s) => s.trim()).filter(Boolean);
-      app.updateSource(t.id, name.trim(), topicId || null, tags);
+      if (selectedSubjectId !== originalSubjectId) {
+        // Subject changed → move the source to the new subject/topic.
+        try {
+          await api.moveSource(t.id, selectedSubjectId, topicId || null);
+          await app.refresh();
+          app.pushToast({ kind: "success", title: "Source moved" });
+          app.closeEdit();
+        } catch (e) {
+          app.pushToast({ kind: "error", title: "Move failed", body: String(e) });
+        }
+      } else {
+        // Same subject → use normal update path (name/topic/tags).
+        app.updateSource(t.id, name.trim(), topicId || null, tags);
+        app.closeEdit();
+      }
     }
-    app.closeEdit();
   }
 
   async function del() {
@@ -119,6 +155,15 @@
       {/if}
 
       {#if t.kind === "source"}
+        <div class="edit-field">
+          <span class="edit-lbl">Subject</span>
+          <Picker
+            value={selectedSubjectId}
+            onChange={(id) => { selectedSubjectId = id; topicId = ""; }}
+            options={subjectOptions}
+            placeholder="— select subject —"
+          />
+        </div>
         <div class="edit-field">
           <span class="edit-lbl">Topic</span>
           <Picker

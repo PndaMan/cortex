@@ -116,6 +116,11 @@
     <path d="M6.5 9.5l3-3 M6 7l-1.5 1.5a2.1 2.1 0 0 0 3 3L9 10 M10 9l1.5-1.5a2.1 2.1 0 0 0-3-3L7 6" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
   {:else if name === "reader"}
     <path d="M3 3.5h10v9H3z M5 6h6 M5 8h6 M5 10h4" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
+  {:else if name === "calendar"}
+    <g>
+      <path d="M3 4h10v9H3z M3 6.5h10" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M5.5 2.5v2 M10.5 2.5v2" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
+    </g>
   {:else}
     <!-- fallback: small square -->
     <rect x="5" y="5" width="6" height="6" fill="none" stroke="currentColor" stroke-width={sw} />

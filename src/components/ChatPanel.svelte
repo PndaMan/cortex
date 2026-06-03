@@ -8,6 +8,30 @@
 
   let { compact = false, onClose }: { compact?: boolean; onClose?: () => void } = $props();
 
+  // ── vertical resize ────────────────────────────────────────────────────────
+  // A thin grab bar on the panel's top edge drags to change its height. Dragging
+  // up (negative dy) grows the panel; clamped between 240px and 90vh. Applied to
+  // the root so both the docked instance and the pop-out resize.
+  let panelHeight = $state<number | null>(null);
+  function startResize(e: PointerEvent) {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = panelHeight ?? (e.currentTarget instanceof HTMLElement
+      ? e.currentTarget.parentElement?.getBoundingClientRect().height ?? 480
+      : 480);
+    const maxH = window.innerHeight * 0.9;
+    const onMove = (ev: PointerEvent) => {
+      const next = startH + (startY - ev.clientY);
+      panelHeight = Math.max(240, Math.min(maxH, next));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
   // ── scope state ──────────────────────────────────────────────────────────
   type Level = "subject" | "topic" | "source";
 
@@ -70,7 +94,6 @@
       .catch(() => {});
   });
   let scrollEl = $state<HTMLElement | null>(null);
-  let modelLabel = $state<string | null>(null);
   let composeEl = $state<HTMLTextAreaElement | null>(null);
 
   // ── source-switcher overlay ────────────────────────────────────────────────
@@ -215,11 +238,18 @@
   let typeIv: ReturnType<typeof setInterval> | null = null;
   let cancelled = false;
 
-  // Split the trailing "SUGGESTIONS: a | b | c" line off the answer.
+  // Split the trailing "SUGGESTIONS: a | b | c" line off the answer. Harden the
+  // parse so placeholder/garbage chips (empty, single chars, a/b/c labels, the
+  // literal word "prompt") never render as suggestions.
   function splitSuggestions(full: string): { body: string; sugg: string[] } {
     const m = full.match(/\n?\s*SUGGESTIONS:\s*(.+?)\s*$/i);
     if (!m) return { body: full, sugg: [] };
-    const sugg = m[1].split("|").map((s) => s.trim()).filter(Boolean).slice(0, 3);
+    const reject = new Set(["prompt", "a", "b", "c"]);
+    const sugg = m[1]
+      .split("|")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 1 && !/^[a-c]$/i.test(s) && !reject.has(s.toLowerCase()))
+      .slice(0, 3);
     return { body: full.slice(0, m.index).trimEnd(), sugg };
   }
 
@@ -246,7 +276,6 @@
       .then((result) => {
         if (cancelled) { streaming = null; dequeue(); return; }
         const { body, sugg } = splitSuggestions(result.text);
-        modelLabel = result.model || null;
         let i = 0;
         typeIv = setInterval(() => {
           if (cancelled) {
@@ -329,6 +358,19 @@
     streaming = null;
   }
 
+  // ── save an assistant answer as a note ─────────────────────────────────────
+  // Title = first ~6 words of the message; body = the full markdown.
+  async function saveToNote(text: string) {
+    const title =
+      text.replace(/\s+/g, " ").trim().split(" ").slice(0, 6).join(" ") || "Note";
+    try {
+      await api.createNote(title, text, app.activeSubjectId ?? null);
+      app.pushToast({ kind: "success", title: "Saved to notes" });
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Save failed", body: String(e) });
+    }
+  }
+
   function handleKey(e: KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -380,7 +422,18 @@
      never receives keydown unless focused). panelKey ignores it while typing. -->
 <svelte:window onkeydown={panelKey} />
 
-<div class="chatdock-inner">
+<div class="chatdock-inner" style:height={panelHeight ? panelHeight + "px" : null}>
+  <!-- ── top drag handle: vertical resize of the whole panel ──────────────── -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="chat-resize"
+    role="separator"
+    aria-orientation="horizontal"
+    aria-label="Resize chat panel"
+    title="Drag to resize"
+    onpointerdown={startResize}
+  ></div>
+
   <!-- ── header ─────────────────────────────────────────────────────────── -->
   <div class="chat-head">
     {#if app.activeSubject}
@@ -445,7 +498,20 @@
         {:else if m.role === "user"}
           <div class="bubble user">{m.text}</div>
         {:else}
-          <div class="bubble assistant"><RichText text={m.text} /></div>
+          <div class="bubble assistant">
+            <RichText text={m.text} />
+            <div class="bubble-actions">
+              <button
+                type="button"
+                class="msg-action"
+                title="Save to notes"
+                aria-label="Save to notes"
+                onclick={() => saveToNote(m.text)}
+              >
+                <Icon name="plus" size={12} />
+              </button>
+            </div>
+          </div>
         {/if}
       {/each}
 
@@ -463,7 +529,7 @@
       <div class="chat-suggest">
         <span class="cs-label mono">Next</span>
         {#each suggestions as s}
-          <button type="button" class="suggest-chip" onclick={() => send(s)}>{s}</button>
+          <button type="button" class="suggest-chip" title={s} onclick={() => send(s)}>{s}</button>
         {/each}
       </div>
     {/if}
@@ -505,11 +571,6 @@
       <span><span class="kbd">⏎</span> send</span>
       <span><span class="kbd">⎋</span> normal</span>
       <span><span class="kbd">s</span> scope</span>
-      {#if modelLabel}
-        <span style="margin-left:auto" class="faint">
-          <span class="model-tag">{modelLabel}</span>
-        </span>
-      {/if}
     </div>
   </div>
 
@@ -643,9 +704,41 @@
     padding: 5px 10px; border-radius: 999px;
     border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--fg);
     transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+    max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .suggest-chip:hover { background: var(--surface-3); border-color: var(--accent-dim, var(--accent)); color: var(--fg-bright); }
   .chat-queued { font-size: 11px; margin-bottom: 6px; }
+
+  /* per-message save-to-note action (appears on hover of an assistant bubble) */
+  .bubble-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-top: 6px;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .bubble.assistant:hover .bubble-actions {
+    opacity: 1;
+  }
+  .msg-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: var(--r-lg, 8px);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  }
+  .msg-action:hover {
+    background: var(--surface-3);
+    color: var(--fg-bright);
+    border-color: var(--border-strong);
+  }
   .chat-stop .stop-sq { width: 10px; height: 10px; border-radius: 2px; background: var(--err); display: block; }
   .chat-stop { border-color: var(--border-strong); }
   .chat-model-pick { max-width: 200px; font-size: 11px; }
@@ -692,6 +785,27 @@
     height: 100%;
     min-height: 0;
     position: relative; /* anchor the scope-switcher overlay */
+  }
+  /* top drag handle for vertical resize */
+  .chat-resize {
+    flex: none;
+    height: 7px;
+    cursor: ns-resize;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+  }
+  .chat-resize::before {
+    content: "";
+    width: 34px;
+    height: 3px;
+    border-radius: 999px;
+    background: var(--border-strong);
+    transition: background 0.12s ease;
+  }
+  .chat-resize:hover::before {
+    background: var(--accent);
   }
   .chatdock-inner :global(.chat-head) {
     flex: none;

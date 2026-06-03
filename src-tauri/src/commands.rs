@@ -642,9 +642,11 @@ pub async fn chat_answer(
         whenever you use them. If the sources don't cover it, say so in one line, then explain briefly from \
         general knowledge. Use light Markdown (bold key terms, short bullet lists; a `---` divider only when \
         genuinely needed) and keep it scannable. \
-        On the FINAL line output exactly: `SUGGESTIONS: a | b | c` — 2–3 very short next-step prompts the \
-        learner could tap next (e.g. a deeper follow-up, or moving on to the next logical topic). Do not \
-        otherwise mention the suggestions line.";
+        On the FINAL line, write 2–3 SPECIFIC next-step prompts the learner could tap, each a real \
+        short phrase about THIS material (never placeholders like 'a' or 'b'), formatted exactly as: \
+        `SUGGESTIONS: <first prompt> | <second prompt> | <third prompt>` — e.g. \
+        `SUGGESTIONS: Walk me through an example | Why does this hold? | Move on to the next topic`. \
+        Do not otherwise mention the suggestions line.";
     let system = if preamble.is_empty() {
         base_system.to_string()
     } else {

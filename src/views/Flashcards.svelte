@@ -1,5 +1,7 @@
 <script lang="ts">
   import * as mock from "../lib/mock";
+  import * as api from "../lib/api";
+  import { app } from "../lib/store.svelte";
   import Icon from "../components/Icon.svelte";
 
   let { onExit, deck: deckProp }: { onExit?: () => void; deck?: { q: string; a: string }[] } = $props();
@@ -18,12 +20,29 @@
   let rated   = $state(0);
   let glow    = $state<string | null>(null);
 
+  // Review mode: null = normal deck, string[] = only fronts in this list
+  let reviewKeys  = $state<string[] | null>(null);
+  // Active deck: review subset or full deck
+  let activeDeck = $derived(
+    reviewKeys
+      ? reviewKeys.map((key) => deck.find((c) => c.q === key) ?? { q: key, a: "" })
+      : deck
+  );
+
   function rate(cls: string) {
     if (glow) return;
+    // "good" / "easy" = got it; "again" / "hard" = missed
+    const gotIt = cls === "good" || cls === "easy";
+    const sid = app.activeSubjectId;
+    if (sid) {
+      api.recordAttempt(sid, "flashcard", i, activeDeck[i].q, gotIt).catch((e: unknown) => {
+        app.pushToast({ kind: "error", title: "Record failed", body: String(e) });
+      });
+    }
     glow = cls;
     setTimeout(() => {
       glow = null;
-      if (i + 1 >= deck.length) { done = true; return; }
+      if (i + 1 >= activeDeck.length) { done = true; return; }
       rated += 1;
       i += 1;
       flipped = false;
@@ -31,7 +50,23 @@
   }
 
   function restart() {
-    i = 0; done = false; flipped = false; rated = 0; glow = null;
+    i = 0; done = false; flipped = false; rated = 0; glow = null; reviewKeys = null;
+  }
+
+  async function startReview() {
+    const sid = app.activeSubjectId;
+    if (!sid) { app.pushToast({ kind: "warning", title: "No subject selected" }); return; }
+    try {
+      const wrong = await api.reviewSet(sid, "flashcard");
+      if (wrong.length === 0) {
+        app.pushToast({ kind: "success", title: "No missed cards to review 🎉" });
+        return;
+      }
+      reviewKeys = wrong.map((w) => w.item_key);
+      i = 0; done = false; flipped = false; rated = 0; glow = null;
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Review load failed", body: String(e) });
+    }
   }
 
   // Claim the keyboard while the session is mounted so the global Helix engine
@@ -76,9 +111,10 @@
         <Icon name="check" size={22} color="var(--ok)" />
       </div>
       <h2 class="read">Deck complete</h2>
-      <p class="mono muted">{deck.length} cards · come back tomorrow — 3 are due then.</p>
+      <p class="mono muted">{activeDeck.length} cards · come back tomorrow — 3 are due then.</p>
       <div class="row gap-2" style="justify-content: center">
         <button class="btn btn--primary" onclick={restart}>Study again</button>
+        <button class="btn" onclick={startReview}>Review missed</button>
         {#if onExit}
           <button class="btn" onclick={onExit}>
             <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={12} /></span> Materials
@@ -94,12 +130,17 @@
         </button>
       {/if}
       <div class="fc-progress">
-        <div class="fc-bar" style:width="{(i / deck.length * 100)}%"></div>
+        <div class="fc-bar" style:width="{(i / activeDeck.length * 100)}%"></div>
       </div>
+      {#if !reviewKeys}
+        <button class="btn btn--sm" onclick={startReview} title="Review previously missed cards">
+          Review missed
+        </button>
+      {/if}
     </div>
 
     <div class="fc-meta mono">
-      <span>Card {i + 1} / {deck.length}</span>
+      <span>{reviewKeys ? "Review" : "Card"} {i + 1} / {activeDeck.length}</span>
       <span>Recursion · SRS</span>
     </div>
 
@@ -112,12 +153,12 @@
     >
       <div class="fc-face fc-front">
         <div class="fc-side mono">QUESTION</div>
-        <p class="read">{deck[i].q}</p>
+        <p class="read">{activeDeck[i].q}</p>
         <div class="fc-hint mono">click or <span class="kbd">␣</span> to flip</div>
       </div>
       <div class="fc-face fc-back">
         <div class="fc-side mono">ANSWER</div>
-        <p class="read">{deck[i].a}</p>
+        <p class="read">{activeDeck[i].a}</p>
       </div>
     </div>
 

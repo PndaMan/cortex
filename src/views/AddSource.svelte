@@ -31,25 +31,40 @@
 
   const ORDER = ["parsing", "chunking", "embedding", "storing", "done"];
 
-  const subj = $derived(app.activeSubject);
-  // Selected target topic. Empty string means "no topic" → null on the wire.
-  // Defaults to the first topic of the active subject when one exists.
-  let selectedTopic = $state("");
+  // Subject + topic selectors, seeded ONCE from the per-topic "+" token
+  // (app.addSourceTopicId) or the active subject. A single guarded effect
+  // avoids the prior two-effect cascade that reset the subject back to the
+  // active one when the picked topic lived in a different subject. The subject
+  // Picker's onChange resets the topic imperatively for later changes.
+  let selectedSubjectId = $state<string>(app.activeSubjectId ?? "");
+  let selectedTopic = $state(""); // "" = no topic → null on the wire
+  let seeded = false;
   $effect(() => {
-    // If opened via a topic's "+" button, preselect that topic (once); otherwise
-    // default to the subject's first topic.
+    if (seeded) return;
     const pending = app.addSourceTopicId;
-    if (pending && subj?.topics.some((t) => t.id === pending)) {
-      selectedTopic = pending;
-      app.addSourceTopicId = null; // consume it
+    const owning = pending
+      ? (app.subjects.find((s) => s.topics.some((t) => t.id === pending)) ?? null)
+      : null;
+    if (owning) {
+      selectedSubjectId = owning.id;
+      selectedTopic = pending!;
     } else {
-      selectedTopic = subj?.topics[0]?.id ?? "";
+      selectedSubjectId = app.activeSubjectId ?? "";
+      selectedTopic = app.subjects.find((s) => s.id === selectedSubjectId)?.topics[0]?.id ?? "";
     }
+    seeded = true;
+    if (pending) app.addSourceTopicId = null; // consume once
   });
+  const subjectOptions = $derived(
+    app.subjects.map((s) => ({ id: s.id, label: s.name }))
+  );
+  const selectedSubject = $derived(
+    app.subjects.find((s) => s.id === selectedSubjectId) ?? null
+  );
   const topicId = $derived(selectedTopic || null);
-  // Themed dropdown options: the subject's topics, plus an explicit "no topic" entry.
+  // Themed dropdown options: the selected subject's topics, plus an explicit "no topic" entry.
   const topicOptions = $derived([
-    ...(subj?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),
+    ...(selectedSubject?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),
     { id: "", label: "— no topic —" },
   ]);
 
@@ -72,8 +87,8 @@
   }
 
   function guardSubject(): boolean {
-    if (!subj) {
-      app.pushToast({ kind: "error", title: "Open a subject first", body: "Select a subject before adding a source." });
+    if (!selectedSubject) {
+      app.pushToast({ kind: "error", title: "Select a subject first", body: "Choose a subject before adding a source." });
       return false;
     }
     return true;
@@ -110,7 +125,7 @@
       lastResult = null;
 
       const result = await api.addSource({
-        subject_id: subj!.id,
+        subject_id: selectedSubjectId,
         topic_id: topicId,
         path,
         name,
@@ -134,7 +149,7 @@
       lastResult = null;
 
       const result = await api.addSource({
-        subject_id: subj!.id,
+        subject_id: selectedSubjectId,
         topic_id: topicId,
         url: value.trim(),
         name: value.trim(),
@@ -160,7 +175,7 @@
       lastResult = null;
 
       const result = await api.addSource({
-        subject_id: subj!.id,
+        subject_id: selectedSubjectId,
         topic_id: topicId,
         text: value.trim(),
         kind: "md",
@@ -195,7 +210,7 @@
       lastResult = null;
 
       const result = await api.addSource({
-        subject_id: subj!.id,
+        subject_id: selectedSubjectId,
         topic_id: topicId,
         path,
         kind: "image",
@@ -257,9 +272,9 @@
       <div>
         <div class="eyebrow">Add source</div>
         <h1 class="addpage-title read">New source</h1>
-        {#if subj}
+        {#if selectedSubject}
           <div class="mono faint" style:font-size="var(--t-xs)">
-            into {subj.name}{selectedTopic ? " › " + (subj.topics.find((t) => t.id === selectedTopic)?.name ?? "") : ""}
+            into {selectedSubject.name}{selectedTopic ? " › " + (selectedSubject.topics.find((t) => t.id === selectedTopic)?.name ?? "") : ""}
           </div>
         {/if}
       </div>
@@ -286,9 +301,18 @@
         {/each}
       </div>
 
-      <!-- Target topic -->
-      {#if subj}
-        <div class="field" style:margin-top="14px">
+      <!-- Target subject + topic -->
+      <div class="field" style:margin-top="14px">
+        <span class="onb-label mono">SUBJECT</span>
+        <Picker
+          value={selectedSubjectId}
+          onChange={(id) => { selectedSubjectId = id; selectedTopic = ""; }}
+          options={subjectOptions}
+          placeholder="— select subject —"
+        />
+      </div>
+      {#if selectedSubject}
+        <div class="field" style:margin-top="10px">
           <span class="onb-label mono">TOPIC <span class="faint">where this source lives</span></span>
           <Picker
             value={selectedTopic}
@@ -364,27 +388,27 @@
       <div class="add-foot">
         <button class="btn btn--ghost" onclick={() => app.setView("subject")}>Cancel</button>
         {#if method === "url"}
-          <button class="btn btn--primary" disabled={!value.trim() || !subj} onclick={handleBegin}>
+          <button class="btn btn--primary" disabled={!value.trim() || !selectedSubject} onclick={handleBegin}>
             Ingest source <Icon name="arrowR" size={13} />
           </button>
         {:else if method === "text"}
-          <button class="btn btn--primary" disabled={!value.trim() || !subj} onclick={handleBegin}>
+          <button class="btn btn--primary" disabled={!value.trim() || !selectedSubject} onclick={handleBegin}>
             Ingest source <Icon name="arrowR" size={13} />
           </button>
         {:else if method === "upload"}
-          <button class="btn btn--primary" disabled={!subj} onclick={beginUpload}>
+          <button class="btn btn--primary" disabled={!selectedSubject} onclick={beginUpload}>
             Pick file <Icon name="arrowR" size={13} />
           </button>
         {:else if method === "photo"}
-          <button class="btn btn--primary" disabled={!subj} onclick={beginPhoto}>
+          <button class="btn btn--primary" disabled={!selectedSubject} onclick={beginPhoto}>
             Pick image <Icon name="arrowR" size={13} />
           </button>
         {:else if method === "record"}
-          <button class="btn btn--primary" disabled={!subj} onclick={() => app.setView("recorder")}>
+          <button class="btn btn--primary" disabled={!selectedSubject} onclick={() => app.setView("recorder")}>
             Open recorder <Icon name="arrowR" size={13} />
           </button>
         {:else}
-          <button class="btn btn--primary" disabled={!method || !subj} onclick={handleBegin}>
+          <button class="btn btn--primary" disabled={!method || !selectedSubject} onclick={handleBegin}>
             Ingest source <Icon name="arrowR" size={13} />
           </button>
         {/if}

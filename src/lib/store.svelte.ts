@@ -16,6 +16,8 @@ export type View =
   | "websearch"
   | "recorder"
   | "gen-material"
+  | "notes"
+  | "calendar"
   | "settings";
 export type Mode = "NOR" | "INS" | "SEL";
 export type Toast = {
@@ -65,6 +67,7 @@ export type EditTarget =
       kind: "source";
       id: string;
       name: string;
+      subjectId: string; // the source's current subject (for cross-subject moves)
       topicId: string | null;
       tags: string[];
       topicOptions: { id: string; label: string }[];
@@ -132,6 +135,7 @@ class AppStore {
   cmdkOpen = $state(false);
   leaderOpen = $state(false);
   chatOpen = $state(true);
+  notesOpen = $state(false); // notes side-dock (can be open alongside chat)
   musicOpen = $state(false);
   diffOpen = $state(false);
   helpOpen = $state(false);
@@ -181,6 +185,29 @@ class AppStore {
     } catch {
       this.applyTheme(this.theme);
     }
+    this.startReminderPolling();
+  }
+
+  // ---- calendar reminders (in-app notifications) ----
+  #reminderTimer: ReturnType<typeof setInterval> | null = null;
+  startReminderPolling() {
+    if (this.#reminderTimer) return; // single poller
+    const tick = async () => {
+      try {
+        const due = await api.checkReminders();
+        for (const e of due) {
+          this.pushToast({
+            kind: "info",
+            title: `⏰ ${e.title}`,
+            body: e.location ? `at ${e.location}` : "Reminder",
+          });
+        }
+      } catch {
+        /* offline / no events table yet — ignore */
+      }
+    };
+    tick();
+    this.#reminderTimer = setInterval(tick, 60_000);
   }
 
   async refresh() {

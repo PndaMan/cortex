@@ -81,6 +81,7 @@
       kind: "source",
       id: src.id,
       name: src.name,
+      subjectId: src.subject_id,
       topicId: src.topic_id,
       tags: src.tags ?? [],
       topicOptions: (app.activeSubject?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),

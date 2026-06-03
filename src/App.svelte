@@ -23,6 +23,8 @@
   import WebSearch from "./views/WebSearch.svelte";
   import Recorder from "./views/Recorder.svelte";
   import GenerateMaterial from "./views/GenerateMaterial.svelte";
+  import NotesView from "./views/NotesView.svelte";
+  import CalendarView from "./views/CalendarView.svelte";
   import Settings from "./views/Settings.svelte";
   import Onboarding from "./views/Onboarding.svelte";
 
@@ -131,10 +133,24 @@
           <Recorder />
         {:else if app.view === "gen-material"}
           <GenerateMaterial />
+        {:else if app.view === "notes"}
+          <NotesView />
+        {:else if app.view === "calendar"}
+          <CalendarView />
         {:else if app.view === "settings"}
           <Settings />
         {/if}
       </div>
+
+      {#if app.notesOpen && app.view !== "notes"}
+        <div class="notesdock">
+          <div class="notesdock-head">
+            <span>Notes</span>
+            <button class="notesdock-x" title="Close notes" aria-label="Close notes" onclick={() => (app.notesOpen = false)}>×</button>
+          </div>
+          <NotesView embedded />
+        </div>
+      {/if}
 
       {#if showChatDock}
         <div class="chatdock">
@@ -145,6 +161,12 @@
       {#if app.view === "subject" && app.subjectTab !== "chats" && !app.chatOpen}
         <button class="chat-fab" onclick={() => (app.chatOpen = true)} title="Open chat (c)">
           Ask <span class="kbd">c</span>
+        </button>
+      {/if}
+
+      {#if !app.notesOpen && app.view !== "notes"}
+        <button class="notes-fab" onclick={() => (app.notesOpen = true)} title="Open notes alongside">
+          Notes
         </button>
       {/if}
     </div>
@@ -171,4 +193,37 @@
     color: var(--fg-bright); font-family: var(--font-mono); font-size: var(--t-md);
     background: var(--bg);
   }
+
+  /* Notes side-dock — sits beside the workspace, can be open with chat */
+  .notesdock {
+    width: min(420px, 38vw);
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--border-strong);
+    background: var(--surface);
+    min-height: 0;
+    overflow: hidden;
+  }
+  .notesdock-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono); font-size: var(--t-2xs);
+    text-transform: uppercase; letter-spacing: 0.12em; color: var(--fg-faint);
+  }
+  .notesdock-x {
+    border: none; background: none; color: var(--fg-muted); cursor: pointer;
+    font-size: 18px; line-height: 1; padding: 0 4px; border-radius: 6px;
+  }
+  .notesdock-x:hover { color: var(--fg-bright); background: var(--surface-2); }
+
+  .notes-fab {
+    position: absolute; right: 18px; bottom: 64px;
+    background: var(--surface-2); color: var(--fg-bright);
+    border: 1px solid var(--border-strong); border-radius: 999px;
+    padding: 7px 14px; font-size: var(--t-xs); cursor: pointer;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+  }
+  .notes-fab:hover { border-color: var(--accent); }
 </style>

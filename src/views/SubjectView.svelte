@@ -56,6 +56,7 @@
       kind: "source",
       id: src.id,
       name: src.name,
+      subjectId: src.subject_id,
       topicId: src.topic_id,
       tags: src.tags ?? [],
       topicOptions: (subj?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),
@@ -81,7 +82,7 @@
   }
 
   async function deleteTopicGroup(topicId: string, name: string) {
-    if (!(await app.confirm({ title: "Delete topic? Sources in it will be ungrouped.", danger: true, okLabel: "Delete" }))) return;
+    if (!(await app.confirm({ title: `Delete topic "${name}"?`, body: "This empty topic will be removed.", danger: true, okLabel: "Delete" }))) return;
     await app.deleteTopic(topicId); // toasts + refreshes store internally
     loadSources();
   }
@@ -169,13 +170,15 @@
                     >
                       <Icon name="pencil" size={12} />
                     </button>
-                    <button
-                      class="btn btn--icon btn--sm btn--ghost"
-                      title="Delete topic"
-                      onclick={() => deleteTopicGroup(g.key, g.name)}
-                    >
-                      <Icon name="x" size={12} />
-                    </button>
+                    {#if g.items.length === 0}
+                      <button
+                        class="btn btn--icon btn--sm btn--ghost"
+                        title="Delete empty topic"
+                        onclick={() => deleteTopicGroup(g.key, g.name)}
+                      >
+                        <Icon name="x" size={12} />
+                      </button>
+                    {/if}
                   {/if}
                 </div>
                 <div class="src-grid">
