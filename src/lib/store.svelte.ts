@@ -91,9 +91,11 @@ class AppStore {
   // navigation
   view = $state<View>("subject");
   subjectTab = $state<string>("cheatsheet"); // cheatsheet is the default page
-  dashFocus = $state(0);
+  dashFocus = $state(-1); // -1 = nothing focused on load (no stray focus ring)
   // Current chat scope (set by ChatPanel) so the status-bar PWD reflects it.
   chatScope = $state<{ topicName?: string; sourceName?: string } | null>(null);
+  // When set, AddSource preselects this topic (used by the per-topic + button).
+  addSourceTopicId = $state<string | null>(null);
 
   // chrome / modal state
   mode = $state<Mode>("NOR");
@@ -166,6 +168,11 @@ class AppStore {
   openSource(src: Source) {
     this.activeSource = src;
     this.view = "source";
+  }
+  // Open the add-source view with a topic preselected (per-topic + button).
+  newSourceInTopic(topicId: string) {
+    this.addSourceTopicId = topicId;
+    this.view = "add-source";
   }
   closeSource() {
     this.view = "subject";

@@ -54,11 +54,6 @@
     app.openEdit({ kind: "topic", id: t.id, name: t.name });
   }
 
-  async function removeTopic(t: { id: string }, e: Event) {
-    e.stopPropagation();
-    if (await app.confirm({ title: "Delete topic? Sources will be ungrouped.", danger: true, okLabel: "Delete" })) app.deleteTopic(t.id);
-  }
-
   // Sources directly under a subject that belong to no topic (topic_id null).
   function ungroupedSources(s: { topics: { sources: import("../lib/api").Source[] }[] }) {
     return s.topics.flatMap((t) => t.sources).filter((src) => src.topic_id == null);
@@ -204,13 +199,13 @@
                     <Icon name="pencil" size={11} />
                   </button>
                   <button
-                    class="s-act s-act--danger"
+                    class="s-act"
                     type="button"
-                    title="Delete topic"
-                    aria-label="Delete {t.name}"
-                    onclick={(e) => removeTopic(t, e)}
+                    title="Add a source to {t.name}"
+                    aria-label="Add source to {t.name}"
+                    onclick={(e) => { e.stopPropagation(); app.newSourceInTopic(t.id); }}
                   >
-                    <Icon name="x" size={11} />
+                    <Icon name="plus" size={11} />
                   </button>
                 </span>
               </div>

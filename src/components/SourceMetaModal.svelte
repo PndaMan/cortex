@@ -111,9 +111,9 @@
 
 {#if app.metaModal !== null}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="overlay" onmousedown={close}>
+  <div class="overlay" role="presentation" onmousedown={close}>
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="meta-modal" onmousedown={e => e.stopPropagation()}>
+    <div class="meta-modal" role="presentation" onmousedown={e => e.stopPropagation()}>
       <header class="meta-head">
         <div>
           <div class="eyebrow">{isRecord ? "Save recording" : "Edit source"}</div>
@@ -134,11 +134,13 @@
 
         <!-- Title field -->
         <div class="field">
+          <!-- svelte-ignore a11y_label_has_associated_control -->
           <label class="onb-label mono">SOURCE TITLE</label>
           <div class="meta-title-row">
             <span class={"badge badge--" + (type === "audio" ? "audio" : type)}>
               <span class="dot"></span>{typeLabel}
             </span>
+            <!-- svelte-ignore a11y_autofocus -->
             <input
               class="input"
               autofocus
@@ -151,6 +153,7 @@
         <!-- Topic field (simple input, no full picker needed without backend subjects here) -->
         <div class="meta-grid">
           <div class="field">
+            <!-- svelte-ignore a11y_label_has_associated_control -->
             <label class="onb-label mono">SUBJECT</label>
             <div class="picker">
               <button type="button" class="picker-btn">
@@ -161,6 +164,7 @@
             </div>
           </div>
           <div class="field">
+            <!-- svelte-ignore a11y_label_has_associated_control -->
             <label class="onb-label mono">TOPIC</label>
             <div class="picker">
               <button type="button" class="picker-btn">
@@ -174,6 +178,7 @@
 
         <!-- Tags -->
         <div class="field">
+          <!-- svelte-ignore a11y_label_has_associated_control -->
           <label class="onb-label mono">TAGS</label>
           <div class="tag-editor">
             {#each tags as t}

@@ -143,6 +143,7 @@
     role="dialog"
     aria-modal="true"
     aria-label="Approve diff"
+    tabindex="-1"
   >
     <!-- Modal panel — stop propagation so backdrop click doesn't close when clicking inside -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->

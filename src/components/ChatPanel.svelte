@@ -249,7 +249,11 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="chatdock-inner" onkeydown={panelKey}>
+<!-- Window-level so "s" works without the panel div holding focus (a plain div
+     never receives keydown unless focused). panelKey ignores it while typing. -->
+<svelte:window onkeydown={panelKey} />
+
+<div class="chatdock-inner">
   <!-- ── header ─────────────────────────────────────────────────────────── -->
   <div class="chat-head">
     {#if app.activeSubject}
@@ -333,6 +337,14 @@
         Answers limited to <b>{activeScopeLabel[level]}</b>
       </div>
 
+      {#if messages.length === 0 && streaming === null}
+        <div class="chat-empty-state" style="min-height:48vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;">
+          <div class="ces-ico"><Icon name="chat" size={22} color="var(--fg3)" /></div>
+          <div class="ces-title">Ask anything about {activeScopeLabel[level]}</div>
+          <div class="ces-sub">Press <span class="kbd">i</span> to start · <span class="kbd">s</span> to change scope</div>
+        </div>
+      {/if}
+
       {#each messages as m, i (i)}
         {#if m.role === "system"}
           <div class="bubble system">— {m.text} —</div>
@@ -382,12 +394,11 @@
       <span><span class="kbd">⏎</span> send</span>
       <span><span class="kbd">⎋</span> normal</span>
       <span><span class="kbd">s</span> scope</span>
-      <span style="margin-left:auto" class="faint">
-        {#if modelLabel}
-          <span class="model-tag">{modelLabel}</span> ·
-        {/if}
-        ▾ scope to switch · ◆ to widen
-      </span>
+      {#if modelLabel}
+        <span style="margin-left:auto" class="faint">
+          <span class="model-tag">{modelLabel}</span>
+        </span>
+      {/if}
     </div>
   </div>
 

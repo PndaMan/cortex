@@ -37,7 +37,7 @@
 
 {#if app.helpOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="overlay" onmousedown={close}>
+  <div class="overlay" role="presentation" onmousedown={close}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="help-pane" style:margin-top="12vh" onmousedown={(e) => e.stopPropagation()}>
       <div class="help-head">

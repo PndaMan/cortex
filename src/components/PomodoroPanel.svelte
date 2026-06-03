@@ -446,9 +446,9 @@
 
 {#if app.pomodoroOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="overlay pom-overlay" onmousedown={close}>
+  <div class="overlay pom-overlay" role="presentation" onmousedown={close}>
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="pom-modal" onmousedown={(e) => e.stopPropagation()}>
+    <div class="pom-modal" role="presentation" onmousedown={(e) => e.stopPropagation()}>
       <header class="pom-head">
         <div>
           <div class="eyebrow">Focus ritual</div>

@@ -35,7 +35,7 @@
     <Icon name="chevron" size={11} style="transform:rotate(90deg);color:var(--fg-faint)" />
   </button>
   {#if open}
-    <div class="picker-back" onclick={() => (open = false)}></div>
+    <div class="picker-back" role="presentation" onclick={() => (open = false)}></div>
     <div class="picker-menu">
       {#each options as o}
         <button

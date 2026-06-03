@@ -23,9 +23,9 @@
 
 {#if app.musicOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="overlay music-overlay" onmousedown={() => (app.musicOpen = false)}>
+  <div class="overlay music-overlay" role="presentation" onmousedown={() => (app.musicOpen = false)}>
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="music-modal" onmousedown={e => e.stopPropagation()}>
+    <div class="music-modal" role="presentation" onmousedown={e => e.stopPropagation()}>
       <header class="music-head">
         <div>
           <div class="eyebrow">Study sound</div>
@@ -74,10 +74,12 @@
         {#each Object.entries(cats) as [cat, items]}
           <div class="music-cat">{cat}</div>
           {#each items as s}
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
             <div
               class={"station" + (s.id === app.music.current ? " on" : "")}
+              role="button"
+              tabindex="0"
               onclick={() => app.pickStation(s.id)}
+              onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); app.pickStation(s.id); } }}
             >
               <span class="st-art">
                 <Icon
