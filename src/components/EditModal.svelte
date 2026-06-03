@@ -65,7 +65,7 @@
 {#if app.editing}
   {@const t = app.editing}
   <div class="edit-back" role="presentation" onmousedown={() => app.closeEdit()}>
-    <div class="edit" role="dialog" aria-modal="true" onmousedown={(e) => e.stopPropagation()}>
+    <div class="edit" role="dialog" aria-modal="true" tabindex="-1" onmousedown={(e) => e.stopPropagation()}>
       <div class="edit-title">{title}</div>
 
       <label class="edit-field">

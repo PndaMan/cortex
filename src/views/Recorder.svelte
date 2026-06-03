@@ -2,6 +2,7 @@
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import Icon from "../components/Icon.svelte";
+  import Picker from "../components/Picker.svelte";
   import type { UnlistenFn } from "@tauri-apps/api/event";
 
   // ---- state ----
@@ -9,10 +10,28 @@
   let paused = $state(false);
   let secs = $state(0);
   let bars = $state<number[]>(Array.from({ length: 72 }, () => 0.06));
-  let status = $state<"ready" | "recording" | "transcribing" | "done">("ready");
+  // "review" sits between stopping and committing: the user names the recording,
+  // picks a topic, and confirms before we transcribe + save.
+  let status = $state<"ready" | "recording" | "review" | "transcribing" | "done">("ready");
   let note = $state<string>("");
   let errorMsg = $state<string | null>(null);
   let tags = $state<{ at: string }[]>([]);
+
+  // ---- review & save step ----
+  // Captured between stop and save so the user can review before committing.
+  let reviewBytes = $state<number[]>([]);     // the assembled audio (number[] for the IPC contract)
+  let reviewName = $state("");                // editable file/source name
+  let reviewTopicId = $state("");             // chosen topic ("" → no topic)
+  let reviewDuration = $state("00:00");       // captured length, mm:ss
+  let reviewTranscript = $state("");          // live transcript preview (if any was produced)
+  let reviewSourceLabel = $state("");         // "captured" vs "Uploaded audio" — for the success toast
+
+  // Topic options for the review Picker: the active subject's topics + a "no topic" sentinel.
+  const NO_TOPIC = "__none__";
+  const topicOptions = $derived([
+    { id: NO_TOPIC, label: "— no topic —" },
+    ...(app.activeSubject?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),
+  ]);
 
   // ---- live (interim) transcription, where the platform supports SpeechRecognition ----
   // Feature-detected once at module init so the UI can be honest about availability.
@@ -260,12 +279,56 @@
 
     const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
     const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
-    const name = `lecture-${new Date().toISOString().slice(0, 16).replace("T", "-").replace(":", "")}.webm`;
-    await saveAudio(bytes, name, `${mm}:${ss} captured`);
+    // A friendly default name, e.g. "Lecture Jun 3, 2:07 PM".
+    const stamp = new Date().toLocaleString(undefined, {
+      month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+    });
+    // Whatever the live transcript captured (SpeechRecognition or backend fallback).
+    const transcript = (liveFinal.trim() || liveBackendText.trim());
+    enterReview(bytes, `Lecture ${stamp}`, `${mm}:${ss}`, "captured", transcript);
+  }
+
+  // Move into the review & save step: stash the audio + sensible defaults and let the user edit.
+  function enterReview(bytes: number[], name: string, duration: string, sourceLabel: string, transcript = "") {
+    const subj = app.activeSubject;
+    if (!subj) { status = "ready"; return; }
+    reviewBytes = bytes;
+    reviewName = name;
+    reviewDuration = duration;
+    reviewSourceLabel = sourceLabel;
+    reviewTranscript = transcript;
+    // Default to the first topic when the subject has any, otherwise "no topic".
+    reviewTopicId = subj.topics[0]?.id ?? NO_TOPIC;
+    errorMsg = null;
+    status = "review";
+  }
+
+  // Commit the reviewed recording: transcribe + save, then navigate as the old finalize did.
+  async function confirmSave() {
+    const subj = app.activeSubject;
+    if (!subj) { status = "ready"; return; }
+    const name = reviewName.trim() || "Untitled recording";
+    const topicId = reviewTopicId && reviewTopicId !== NO_TOPIC ? reviewTopicId : undefined;
+    const capturedLabel = `${reviewDuration} ${reviewSourceLabel}`;
+    await saveAudio(reviewBytes, name, capturedLabel, topicId);
+  }
+
+  // Discard the reviewed audio and reset the recorder to idle.
+  function discardReview() {
+    reviewBytes = [];
+    reviewName = "";
+    reviewTopicId = "";
+    reviewTranscript = "";
+    reviewDuration = "00:00";
+    secs = 0;
+    tags = [];
+    liveFinal = ""; liveInterim = ""; liveBackendText = ""; whisperMissing = false;
+    bars = Array.from({ length: 72 }, () => 0.06);
+    status = "ready";
   }
 
   // Shared save/transcribe pipeline for both live recordings and uploaded files.
-  async function saveAudio(bytes: number[], name: string, capturedLabel: string) {
+  async function saveAudio(bytes: number[], name: string, capturedLabel: string, topicId?: string) {
     const subj = app.activeSubject;
     if (!subj) { status = "ready"; return; }
 
@@ -273,7 +336,7 @@
     errorMsg = null;
     unlisten = await api.onIngestProgress((p) => { note = p.detail; });
     try {
-      const res = await api.saveRecording(subj.id, name, bytes, subj.topics[0]?.id);
+      const res = await api.saveRecording(subj.id, name, bytes, topicId);
       await app.refresh();
       status = "done";
       if (res.warning) {
@@ -289,7 +352,7 @@
       app.setTab("sources");
     } catch (e) {
       errorMsg = String(e);
-      status = "ready";
+      status = "review"; // back to review so the user can retry without losing the audio
     } finally {
       if (unlisten) { unlisten(); unlisten = null; }
     }
@@ -307,7 +370,8 @@
     }
     try {
       const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-      await saveAudio(bytes, file.name, "Uploaded audio");
+      // Route uploads through the same review step so they can be named/topic-tagged too.
+      enterReview(bytes, file.name, "—:—", "uploaded");
     } catch (err) {
       errorMsg = String(err);
       status = "ready";
@@ -329,6 +393,11 @@
     function onKey(e: KeyboardEvent) {
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
+      if (status === "review") {
+        if (e.key === "Enter") { e.preventDefault(); void confirmSave(); }
+        else if (e.key === "Escape") { e.preventDefault(); discardReview(); }
+        return;
+      }
       if (e.key === " ") { e.preventDefault(); recording ? togglePause() : start(); }
       else if (e.key === "Enter" && recording) { e.preventDefault(); stop(); }
       else if (e.key === "m") { e.preventDefault(); tagMoment(); }
@@ -339,6 +408,71 @@
   });
 </script>
 
+{#if status === "review"}
+  <!-- ─────────── REVIEW & SAVE ───────────
+       Centered, monospace-chrome step between stopping and committing. -->
+  <div class="rev-wrap">
+    <div class="rev-card">
+      <div class="rev-chrome mono">
+        <span class="rev-led"></span>
+        REVIEW &amp; SAVE
+        <span class="grow"></span>
+        <span class="rev-dur">{reviewSourceLabel === "uploaded" ? "FILE" : reviewDuration}</span>
+      </div>
+
+      <div class="rev-body">
+        <div class="field">
+          <span class="onb-label mono">NAME <span class="faint">how this source is titled</span></span>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="input"
+            autofocus
+            bind:value={reviewName}
+            placeholder="Untitled recording"
+          />
+        </div>
+
+        <div class="field" style:margin-top="16px">
+          <span class="onb-label mono">TOPIC <span class="faint">where this recording lives</span></span>
+          <Picker
+            value={reviewTopicId}
+            onChange={(id) => (reviewTopicId = id)}
+            options={topicOptions}
+            placeholder="— no topic —"
+          />
+        </div>
+
+        <div class="rev-meta mono faint">
+          <span class="rev-meta-item"><Icon name="bolt" size={11} color="var(--fg-faint)" />{reviewSourceLabel === "uploaded" ? "Uploaded audio file" : `Captured ${reviewDuration}`}</span>
+          {#if reviewTranscript.trim()}
+            <span class="rev-meta-item"><Icon name="doc" size={11} color="var(--fg-faint)" />Live transcript captured</span>
+          {/if}
+        </div>
+
+        {#if reviewTranscript.trim()}
+          <div class="field" style:margin-top="14px">
+            <span class="onb-label mono">TRANSCRIPT PREVIEW <span class="faint">re-transcribed precisely on save</span></span>
+            <div class="rev-transcript read">{reviewTranscript}</div>
+          </div>
+        {/if}
+
+        {#if errorMsg}
+          <div class="rev-error">{errorMsg}</div>
+        {/if}
+      </div>
+
+      <div class="rev-actions">
+        <button class="btn btn--ghost rev-discard" onclick={discardReview}>Discard</button>
+        <span class="grow"></span>
+        <button class="btn btn--primary" onclick={confirmSave}>Save recording</button>
+      </div>
+
+      <div class="rev-hint mono faint">
+        <span class="kbd">⏎</span> save · <span class="kbd">esc</span> discard
+      </div>
+    </div>
+  </div>
+{:else}
 <div class="recorder">
   <!-- Left: stage -->
   <div class="rec-stage">
@@ -482,6 +616,7 @@
     <button class="btn btn--ghost btn--sm rt-close" onclick={cancel}>Cancel</button>
   </aside>
 </div>
+{/if}
 
 <style>
   /* ---- compact, secondary waveform (the small mm:ss in .rec-status is the timer) ---- */
@@ -564,5 +699,91 @@
   .rt-toggle.is-on .rt-toggle-knob {
     transform: translateX(13px);
     background: var(--accent);
+  }
+
+  /* ─────────── review & save step ─────────── */
+  .rev-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100%;
+    width: 100%;
+    padding: 32px 20px;
+  }
+  .rev-card {
+    width: 100%;
+    max-width: 480px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--rad-4);
+    box-shadow: var(--shadow-pop);
+    overflow: hidden;
+    animation: popIn var(--dur) var(--ease);
+  }
+  /* monospace chrome bar */
+  .rev-chrome {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 16px;
+    font-size: var(--t-xs);
+    letter-spacing: 0.08em;
+    color: var(--fg-muted);
+    background: var(--surface-3);
+    border-bottom: 1px solid var(--border-strong);
+  }
+  .rev-led {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 25%, transparent);
+    flex: none;
+  }
+  .rev-dur { color: var(--fg-faint); letter-spacing: 0.06em; }
+  .rev-body { padding: 22px 20px 18px; }
+  .rev-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 16px;
+    font-size: var(--t-xs);
+  }
+  .rev-meta-item { display: inline-flex; align-items: center; gap: 6px; }
+  .rev-transcript {
+    margin-top: 8px;
+    max-height: 160px;
+    overflow-y: auto;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--rad-3);
+    background: color-mix(in oklab, var(--surface-2) 60%, transparent);
+    font-size: var(--t-sm);
+    line-height: 1.7;
+    color: var(--fg-muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .rev-error {
+    margin-top: 16px;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in oklab, var(--err) 50%, var(--border));
+    border-radius: var(--rad-3);
+    background: color-mix(in oklab, var(--err) 12%, transparent);
+    color: var(--err);
+    font-size: var(--t-sm);
+  }
+  .rev-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+  }
+  .rev-discard { color: var(--err); }
+  .rev-hint {
+    padding: 0 20px 16px;
+    text-align: center;
+    font-size: var(--t-xs);
   }
 </style>

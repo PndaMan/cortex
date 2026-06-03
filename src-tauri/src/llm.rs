@@ -171,8 +171,11 @@ fn nonempty(o: &Option<String>) -> Option<&str> {
 /// `None` when no usable provider/key is configured — callers turn that into a
 /// clear "add an API key" error instead of silently producing fake output.
 pub fn from_spec(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
+    // Trim — a stored spec with stray whitespace/newline would otherwise produce
+    // an invalid model id (and thus a provider error).
+    let spec = spec.trim();
     let (provider, model) = spec.split_once(':').unwrap_or(("gemini", spec));
-    let model = model.to_string();
+    let model = model.trim().to_string();
     match provider {
         "gemini" => nonempty(&keys.gemini).map(|k| {
             Box::new(GeminiLlm { api_key: k.to_string(), model }) as Box<dyn Llm>

@@ -38,9 +38,10 @@
         <button
           class="subj-card{i === app.dashFocus ? ' kb-focus' : ''}"
           onclick={() => app.openSubject(s.id)}
+          style:box-shadow="inset 3px 0 0 {app.subjectColor(s)}"
         >
           <div class="sc-top">
-            <span class="subj-glyph"><Icon name="diamond" size={15} color="var(--accent)" /></span>
+            <span class="subj-glyph"><Icon name="diamond" size={15} color={app.subjectColor(s)} /></span>
             <span class="subj-code mono">{s.code ?? ""}</span>
             <div class="grow"></div>
             {#if s.streak > 0}

@@ -32,10 +32,28 @@
 
   // ---- providers ----
   const PROVIDERS = [
-    { id: "openrouter", label: "OpenRouter",          models: ["google/gemini-2.5-flash","anthropic/claude-sonnet-4.5","openai/gpt-5-mini","meta-llama/llama-3.3-70b-instruct","deepseek/deepseek-chat"] },
-    { id: "gemini",     label: "Gemini",              models: ["gemini-2.5-pro","gemini-2.5-flash","gemini-2.0-flash"] },
-    { id: "claude",     label: "Claude",              models: ["claude-opus-4.5","claude-sonnet-4.5","claude-haiku-4.5"] },
-    { id: "openai",     label: "OpenAI",              models: ["gpt-5.1","gpt-5-mini","o4-mini"] },
+    { id: "gemini",     label: "Gemini",              models: ["gemini-2.5-flash","gemini-2.5-pro","gemini-2.0-flash-001"] },
+    { id: "openrouter", label: "OpenRouter",          models: [
+      "google/gemini-2.5-flash",
+      "anthropic/claude-sonnet-4.5",
+      "openai/gpt-5-mini",
+      "openai/gpt-4o",
+      "openai/gpt-4o-mini",
+      "openai/o3-mini",
+      "anthropic/claude-3.7-sonnet",
+      "anthropic/claude-3.5-sonnet",
+      "anthropic/claude-3.5-haiku",
+      "google/gemini-2.0-flash-001",
+      "google/gemini-2.5-pro",
+      "deepseek/deepseek-chat",
+      "deepseek/deepseek-r1",
+      "meta-llama/llama-3.3-70b-instruct",
+      "qwen/qwen-2.5-72b-instruct",
+      "mistralai/mistral-large",
+      "x-ai/grok-2-1212",
+    ] },
+    { id: "openai",     label: "OpenAI",              models: ["gpt-4o","gpt-4o-mini","o3-mini"] },
+    { id: "claude",     label: "Claude",              models: ["claude-3-7-sonnet-20250219","claude-3-5-sonnet-20241022","claude-3-5-haiku-20241022"] },
     { id: "ollama",     label: "Ollama (local)",      models: ["llama3.3:70b","qwen2.5:32b","mistral-small"] },
     { id: "custom",     label: "Custom endpoint",     models: ["custom-model"] },
   ];
@@ -98,12 +116,12 @@
   // ---- models state ----
   type TaskAssign = { provider: string; model: string; budget: string };
   let assign = $state<Record<TaskId, TaskAssign>>({
-    chat:       { provider: "claude",  model: "claude-sonnet-4.5",  budget: "8000" },
-    cheatsheet: { provider: "gemini",  model: "gemini-2.5-pro",     budget: "32000" },
-    audio:      { provider: "gemini",  model: "gemini-2.5-flash",   budget: "16000" },
-    quiz:       { provider: "openai",  model: "gpt-5-mini",         budget: "8000" },
-    flashcard:  { provider: "claude",  model: "claude-haiku-4.5",   budget: "6000" },
-    embedding:  { provider: "gemini",  model: "text-embedding-004", budget: "—" },
+    chat:       { provider: "claude",  model: "claude-3-5-sonnet-20241022", budget: "8000" },
+    cheatsheet: { provider: "gemini",  model: "gemini-2.5-pro",             budget: "32000" },
+    audio:      { provider: "gemini",  model: "gemini-2.5-flash",           budget: "16000" },
+    quiz:       { provider: "openai",  model: "gpt-4o-mini",                budget: "8000" },
+    flashcard:  { provider: "claude",  model: "claude-3-5-haiku-20241022",  budget: "6000" },
+    embedding:  { provider: "gemini",  model: "text-embedding-004",         budget: "—" },
   });
 
   function setTask(id: TaskId, patch: Partial<TaskAssign>) {

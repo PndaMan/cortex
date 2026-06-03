@@ -44,7 +44,7 @@
 
 {#if app.dialog}
   <div class="dlg-back" onmousedown={cancel} role="presentation">
-    <div class="dlg" role="dialog" aria-modal="true" onmousedown={(e) => e.stopPropagation()}>
+    <div class="dlg" role="dialog" aria-modal="true" tabindex="-1" onmousedown={(e) => e.stopPropagation()}>
       <div class="dlg-title">{app.dialog.title}</div>
       {#if app.dialog.body}
         <div class="dlg-body">{app.dialog.body}</div>

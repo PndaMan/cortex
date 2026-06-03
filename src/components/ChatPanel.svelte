@@ -208,28 +208,16 @@
   }
 
   function handleKey(e: KeyboardEvent) {
-    // Open the source switcher with Cmd/Ctrl+J even while typing.
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
-      e.preventDefault();
-      openSwitcher();
-      return;
-    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
     }
   }
 
-  // Root-level keybind for the whole panel: while the chat is focused, "s"
-  // (in normal / non-typing mode) or Cmd/Ctrl+J opens the source switcher.
+  // Root-level keybind for the whole panel: while the chat is focused and not
+  // typing in the composer, "s" opens the source switcher.
   function panelKey(e: KeyboardEvent) {
     if (switcherOpen) return; // overlay owns the keys while open
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
-      e.preventDefault();
-      openSwitcher();
-      return;
-    }
-    // "s" opens the switcher only when not typing in the composer.
     const typing =
       app.mode === "INS" ||
       (e.target instanceof HTMLElement &&
@@ -303,7 +291,7 @@
               class="scope-seg scope-seg--src{level === 'source' ? ' is-active' : ''}"
               role="button"
               tabindex="0"
-              title="Switch scope — {curSrcObj.name} (s or ⌘J)"
+              title="Switch scope — {curSrcObj.name} (s)"
               onclick={openSwitcher}
               onkeydown={(e) => { if (e.key === "Enter") openSwitcher(); }}
             >
@@ -393,7 +381,7 @@
       <span><span class="kbd">i</span> insert</span>
       <span><span class="kbd">⏎</span> send</span>
       <span><span class="kbd">⎋</span> normal</span>
-      <span><span class="kbd">s</span> / <span class="kbd">⌘J</span> scope</span>
+      <span><span class="kbd">s</span> scope</span>
       <span style="margin-left:auto" class="faint">
         {#if modelLabel}
           <span class="model-tag">{modelLabel}</span> ·

@@ -32,12 +32,19 @@ pub fn http_client(timeout_secs: u64) -> reqwest::blocking::Client {
 
 /// Read all configured provider keys from settings.
 fn read_keys(c: &Connection) -> Result<llm::Keys> {
+    // Trim keys — a pasted key with a trailing newline/space produces an invalid
+    // HTTP header value (reqwest drops it → "Missing Authentication header" 401).
+    let key = |k: &str| -> Result<Option<String>> {
+        Ok(repo::get_setting(c, k)?
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()))
+    };
     Ok(llm::Keys {
-        gemini: repo::get_setting(c, "gemini_api_key")?,
-        openrouter: repo::get_setting(c, "openrouter_api_key")?,
-        openai: repo::get_setting(c, "openai_api_key")?,
-        claude: repo::get_setting(c, "claude_api_key")?,
-        custom_endpoint: repo::get_setting(c, "custom_endpoint")?,
+        gemini: key("gemini_api_key")?,
+        openrouter: key("openrouter_api_key")?,
+        openai: key("openai_api_key")?,
+        claude: key("claude_api_key")?,
+        custom_endpoint: key("custom_endpoint")?,
     })
 }
 
@@ -897,8 +904,16 @@ fn transcribe(file: &Path) -> (String, Option<String>) {
     let outdir = std::env::temp_dir().join(format!("cortex-asr-{}", crate::db::new_id()));
     let _ = std::fs::create_dir_all(&outdir);
 
-    // openai-whisper
-    if let Some(bin) = ingest::which("whisper") {
+    // openai-whisper. Fall back to ~/.local/bin/whisper (pip --user install dir)
+    // in case the app was launched without it on PATH (desktop launchers often
+    // don't inherit the user's shell PATH).
+    let whisper_bin = ingest::which("whisper").or_else(|| {
+        std::env::var("HOME").ok().and_then(|h| {
+            let p = std::path::Path::new(&h).join(".local/bin/whisper");
+            if p.exists() { Some(p.to_string_lossy().into_owned()) } else { None }
+        })
+    });
+    if let Some(bin) = whisper_bin {
         let out = Command::new(&bin)
             .arg(file)
             .args(["--model", "base", "--language", "en", "--output_format", "txt", "--output_dir"])
