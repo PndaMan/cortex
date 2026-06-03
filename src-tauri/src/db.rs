@@ -7,6 +7,7 @@ use std::sync::Mutex;
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
     include_str!("../migrations/0002_preview_and_memory.sql"),
+    include_str!("../migrations/0003_subject_color.sql"),
 ];
 
 /// Shared application state: a single SQLite connection behind a Mutex.

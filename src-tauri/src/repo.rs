@@ -14,6 +14,7 @@ pub fn insert_subject(
     name: &str,
     code: Option<&str>,
     glyph: Option<&str>,
+    color: Option<&str>,
 ) -> Result<String> {
     let id = new_id();
     let ts = now_ms();
@@ -23,17 +24,30 @@ pub fn insert_subject(
         })
         .unwrap_or(0);
     conn.execute(
-        "INSERT INTO subjects (id, name, code, glyph, status, streak, position, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, 'ready', 0, ?5, ?6, ?6)",
-        params![id, name, code, glyph.unwrap_or("◆"), pos, ts],
+        "INSERT INTO subjects (id, name, code, glyph, color, status, streak, position, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'ready', 0, ?6, ?7, ?7)",
+        params![id, name, code, glyph.unwrap_or("◆"), color, pos, ts],
     )?;
     Ok(id)
 }
 
-pub fn update_subject(conn: &Connection, id: &str, name: &str, code: Option<&str>) -> Result<()> {
+pub fn update_subject(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    code: Option<&str>,
+    glyph: Option<&str>,
+    color: Option<&str>,
+) -> Result<()> {
     let n = conn.execute(
-        "UPDATE subjects SET name=?2, code=?3, updated_at=?4 WHERE id=?1",
-        params![id, name, code, now_ms()],
+        "UPDATE subjects SET
+            name=?2,
+            code=?3,
+            glyph=COALESCE(?4, glyph),
+            color=CASE WHEN ?5 IS NULL THEN color ELSE ?5 END,
+            updated_at=?6
+         WHERE id=?1",
+        params![id, name, code, glyph, color, now_ms()],
     )?;
     if n == 0 {
         return Err(Error::NotFound(format!("subject {id}")));
@@ -49,7 +63,7 @@ pub fn delete_subject(conn: &Connection, id: &str) -> Result<()> {
 /// Full Subjects → Topics → Sources tree (what the sidebar + dashboard render).
 pub fn list_subjects(conn: &Connection) -> Result<Vec<Subject>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, code, glyph, status, streak, position, created_at, updated_at
+        "SELECT id, name, code, glyph, color, status, streak, position, created_at, updated_at
          FROM subjects ORDER BY position, created_at",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -58,13 +72,14 @@ pub fn list_subjects(conn: &Connection) -> Result<Vec<Subject>> {
             name: r.get(1)?,
             code: r.get(2)?,
             glyph: r.get(3)?,
-            status: r.get(4)?,
-            streak: r.get(5)?,
-            position: r.get(6)?,
+            color: r.get(4)?,
+            status: r.get(5)?,
+            streak: r.get(6)?,
+            position: r.get(7)?,
             source_count: 0,
             topics: Vec::new(),
-            created_at: r.get(7)?,
-            updated_at: r.get(8)?,
+            created_at: r.get(8)?,
+            updated_at: r.get(9)?,
         })
     })?;
     let mut subjects: Vec<Subject> = rows.collect::<rusqlite::Result<_>>()?;
@@ -104,6 +119,17 @@ pub fn insert_topic(conn: &Connection, subject_id: &str, name: &str) -> Result<S
         params![id, subject_id, name, pos, ts],
     )?;
     Ok(id)
+}
+
+pub fn update_topic(conn: &Connection, id: &str, name: &str) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE topics SET name=?2, updated_at=?3 WHERE id=?1",
+        params![id, name, now_ms()],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound(format!("topic {id}")));
+    }
+    Ok(())
 }
 
 pub fn delete_topic(conn: &Connection, id: &str) -> Result<()> {
@@ -232,6 +258,28 @@ fn list_sources_for_topic(conn: &Connection, topic_id: &str) -> Result<Vec<Sourc
         s.tags = source_tags(conn, &s.id)?;
     }
     Ok(out)
+}
+
+/// Rename/re-file a source and replace its tag set. Tags live in the
+/// `source_tags` join table (same as `attach_tags`), so we clear the existing
+/// links and re-attach the provided list.
+pub fn update_source(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    topic_id: Option<&str>,
+    tags: &[String],
+) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE sources SET name=?2, topic_id=?3, updated_at=?4 WHERE id=?1",
+        params![id, name, topic_id, now_ms()],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound(format!("source {id}")));
+    }
+    conn.execute("DELETE FROM source_tags WHERE source_id=?1", params![id])?;
+    attach_tags(conn, id, tags)?;
+    Ok(())
 }
 
 pub fn delete_source(conn: &Connection, id: &str) -> Result<()> {
@@ -630,7 +678,7 @@ mod tests {
     fn subject_topic_source_tree_roundtrips() {
         let st = AppState::in_memory().unwrap();
         let c = st.db.lock().unwrap();
-        let sid = insert_subject(&c, "Algorithms", Some("CS-3490"), None).unwrap();
+        let sid = insert_subject(&c, "Algorithms", Some("CS-3490"), None, None).unwrap();
         let tid = insert_topic(&c, &sid, "Recursion").unwrap();
         let srcid = insert_source(&c, &sid, Some(&tid), "lec3.md", "md", None).unwrap();
         finalize_source(&c, &srcid, "ready", Some("3 pages"), Some("body"), None).unwrap();

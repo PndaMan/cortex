@@ -7,6 +7,7 @@ pub struct Subject {
     pub name: String,
     pub code: Option<String>,
     pub glyph: String,
+    pub color: Option<String>,
     pub status: String,
     pub streak: i64,
     pub position: i64,

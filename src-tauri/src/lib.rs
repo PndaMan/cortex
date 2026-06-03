@@ -63,9 +63,11 @@ pub fn run() {
             commands::update_subject,
             commands::delete_subject,
             commands::create_topic,
+            commands::update_topic,
             commands::delete_topic,
             commands::list_sources,
             commands::get_source,
+            commands::update_source,
             commands::delete_source,
             commands::list_chunks,
             commands::get_setting,
@@ -82,6 +84,7 @@ pub fn run() {
             commands::get_all_settings,
             commands::set_settings,
             commands::save_recording,
+            commands::transcribe_partial,
             commands::web_search,
             commands::add_memory,
             commands::list_memory,
@@ -106,7 +109,7 @@ mod pipeline_tests {
         let st = AppState::in_memory().unwrap();
         let c = st.db.lock().unwrap();
 
-        let sid = repo::insert_subject(&c, "Algorithms", Some("CS-3490"), None).unwrap();
+        let sid = repo::insert_subject(&c, "Algorithms", Some("CS-3490"), None, None).unwrap();
         let tid = repo::insert_topic(&c, &sid, "Dynamic programming").unwrap();
         let srcid = repo::insert_source(&c, &sid, Some(&tid), "dp.md", "md", None).unwrap();
 

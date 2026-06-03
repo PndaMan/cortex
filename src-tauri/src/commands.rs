@@ -129,9 +129,10 @@ pub fn create_subject(
     name: String,
     code: Option<String>,
     glyph: Option<String>,
+    color: Option<String>,
 ) -> Result<Subject> {
     let c = state.db.lock().unwrap();
-    let id = repo::insert_subject(&c, &name, code.as_deref(), glyph.as_deref())?;
+    let id = repo::insert_subject(&c, &name, code.as_deref(), glyph.as_deref(), color.as_deref())?;
     repo::get_subject(&c, &id)
 }
 
@@ -141,9 +142,18 @@ pub fn update_subject(
     id: String,
     name: String,
     code: Option<String>,
+    glyph: Option<String>,
+    color: Option<String>,
 ) -> Result<Subject> {
     let c = state.db.lock().unwrap();
-    repo::update_subject(&c, &id, &name, code.as_deref())?;
+    repo::update_subject(
+        &c,
+        &id,
+        &name,
+        code.as_deref(),
+        glyph.as_deref(),
+        color.as_deref(),
+    )?;
     repo::get_subject(&c, &id)
 }
 
@@ -159,6 +169,18 @@ pub fn delete_subject(state: State<AppState>, id: String) -> Result<()> {
 pub fn create_topic(state: State<AppState>, subject_id: String, name: String) -> Result<Subject> {
     let c = state.db.lock().unwrap();
     repo::insert_topic(&c, &subject_id, &name)?;
+    repo::get_subject(&c, &subject_id)
+}
+
+#[tauri::command]
+pub fn update_topic(
+    state: State<AppState>,
+    id: String,
+    name: String,
+    subject_id: String,
+) -> Result<Subject> {
+    let c = state.db.lock().unwrap();
+    repo::update_topic(&c, &id, &name)?;
     repo::get_subject(&c, &subject_id)
 }
 
@@ -180,6 +202,26 @@ pub fn list_sources(state: State<AppState>, subject_id: String) -> Result<Vec<So
 #[tauri::command]
 pub fn get_source(state: State<AppState>, id: String) -> Result<Source> {
     let c = state.db.lock().unwrap();
+    repo::get_source(&c, &id)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn update_source(
+    state: State<AppState>,
+    id: String,
+    name: String,
+    topicId: Option<String>,
+    tags: Option<Vec<String>>,
+) -> Result<Source> {
+    let c = state.db.lock().unwrap();
+    repo::update_source(
+        &c,
+        &id,
+        &name,
+        topicId.as_deref(),
+        &tags.unwrap_or_default(),
+    )?;
     repo::get_source(&c, &id)
 }
 
@@ -470,7 +512,7 @@ pub fn seed_demo(state: State<AppState>) -> Result<Vec<Subject>> {
         ),
     ];
     for (name, code, topics) in demo {
-        let sid = repo::insert_subject(&c, name, Some(code), None)?;
+        let sid = repo::insert_subject(&c, name, Some(code), None, None)?;
         for (tname, sources) in *topics {
             let tid = repo::insert_topic(&c, &sid, tname)?;
             for (sname, kind) in *sources {
@@ -904,6 +946,28 @@ fn transcribe(file: &Path) -> (String, Option<String>) {
                 .into(),
         ),
     )
+}
+
+/// Transcribe a short rolling audio buffer for the live-recording transcript
+/// pane. Writes the bytes to a temp `.webm`, runs the same local Whisper helper
+/// `save_recording` uses, deletes the temp file, and returns the text. When no
+/// transcriber is installed this returns an empty string (the frontend shows an
+/// install note) rather than hard-erroring.
+#[tauri::command]
+pub fn transcribe_partial(app: AppHandle, _state: State<AppState>, audio: Vec<u8>) -> Result<String> {
+    // Prefer the app data dir's recordings folder; fall back to the OS temp dir.
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map(|d| d.join("recordings"))
+        .unwrap_or_else(|_| std::env::temp_dir());
+    std::fs::create_dir_all(&dir)?;
+    let file = dir.join(format!("partial-{}.webm", crate::db::new_id()));
+    std::fs::write(&file, &audio)?;
+
+    let (transcript, _warning) = transcribe(&file);
+    let _ = std::fs::remove_file(&file);
+    Ok(transcript)
 }
 
 /// Save a captured lecture recording: write the audio, create an audio source,
