@@ -54,6 +54,9 @@
         app.setMode("NOR");
         return;
       }
+      // Never act on a standalone modifier press (so Ctrl/Cmd for copy etc. work,
+      // and a stray "Control" keybind can't open the palette).
+      if (["Control", "Shift", "Alt", "Meta", "AltGraph", "CapsLock", "ContextMenu"].includes(e.key)) return;
       if (typing) return;
       if ((window as any).__cortexModalOpen) return; // diff/flashcards/quiz own the keyboard
       if (app.cmdkOpen) return;

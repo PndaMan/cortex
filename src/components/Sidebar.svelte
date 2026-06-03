@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
+  import { topicGlyph } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
   import { stations } from "../lib/mock";
 
@@ -188,6 +189,7 @@
                 onkeydown={(e) => (e.key === "Enter" || e.key === " ") && toggleTopic(t.id, e)}
               >
                 <span class="t-tw{tOpen ? ' open' : ''}"><Icon name="chevron" size={10} /></span>
+                <span class="t-glyph" style="flex:none;color:var(--fg-faint);font-size:11px;margin-right:5px">{topicGlyph(t.id)}</span>
                 <span class="t-name">{t.name}</span>
                 <span class="t-actions">
                   <button

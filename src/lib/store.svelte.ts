@@ -85,6 +85,19 @@ export const GLYPHS = [
   "🔭", "🪐", "📜", "✍️", "🧩", "💡", "🎭", "⚙️", "🔢", "🌐",
 ];
 
+// Monochrome topic glyphs — rendered grey (in the current muted text color),
+// assigned deterministically per topic so each topic has a stable little symbol.
+export const TOPIC_GLYPHS = [
+  "◆", "●", "▲", "■", "◈", "✦", "◇", "▼", "◐", "✸",
+  "⬡", "◭", "❂", "✺", "⟐", "▣", "◎", "✚", "◢", "❉",
+  "✤", "❖", "⬢", "◫", "⊚", "⊛", "✱", "❍", "⬠", "◤",
+];
+export function topicGlyph(id: string): string {
+  let h = 0;
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return TOPIC_GLYPHS[h % TOPIC_GLYPHS.length];
+}
+
 function uid() {
   return Math.random().toString(36).slice(2);
 }

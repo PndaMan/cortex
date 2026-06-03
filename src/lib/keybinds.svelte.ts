@@ -64,6 +64,9 @@ export const VIM_BINDS: Record<Action, string> = {
 export const PRESETS = { helix: HELIX_BINDS, vim: VIM_BINDS } as const;
 export type Preset = keyof typeof PRESETS;
 
+const MODIFIER_KEYS = ["Control", "Shift", "Alt", "Meta", "AltGraph", "CapsLock", "ContextMenu"];
+const isModifier = (k: string) => MODIFIER_KEYS.includes(k);
+
 class Keybinds {
   map = $state<Record<Action, string>>({ ...HELIX_BINDS });
   preset = $state<Preset | "custom">("helix");
@@ -75,7 +78,9 @@ class Keybinds {
     let anyCustom = false;
     for (const a of ACTION_ORDER) {
       const v = all["keybind_" + a];
-      if (v) {
+      // Ignore corrupt binds (empty or a bare modifier — these would hijack
+      // Ctrl/Shift/etc.); fall back to the Helix default for that action.
+      if (v && !isModifier(v)) {
         this.map[a] = v;
         if (v !== HELIX_BINDS[a]) anyCustom = true;
       }
@@ -84,8 +89,9 @@ class Keybinds {
     this.preset = savedPreset ?? (anyCustom ? "custom" : "helix");
   }
 
-  /** Rebind a single action and persist it. */
+  /** Rebind a single action and persist it. Modifier-only keys are rejected. */
   set(a: Action, key: string) {
+    if (!key || isModifier(key)) return;
     this.map[a] = key;
     this.preset = "custom";
     api.setSettings({ ["keybind_" + a]: key, keybind_preset: "custom" }).catch(() => {});
