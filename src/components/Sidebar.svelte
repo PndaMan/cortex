@@ -45,9 +45,9 @@
     });
   }
 
-  function editTopic(t: { id: string; name: string }, e: Event) {
+  function editTopic(t: { id: string; name: string }, subjectId: string, e: Event) {
     e.stopPropagation();
-    app.openEdit({ kind: "topic", id: t.id, name: t.name });
+    app.openEdit({ kind: "topic", id: t.id, name: t.name, subjectId });
   }
 
   // Sources directly under a subject that belong to no topic (topic_id null).
@@ -197,7 +197,7 @@
                     type="button"
                     title="Rename topic"
                     aria-label="Rename {t.name}"
-                    onclick={(e) => editTopic(t, e)}
+                    onclick={(e) => editTopic(t, s.id, e)}
                   >
                     <Icon name="pencil" size={11} />
                   </button>

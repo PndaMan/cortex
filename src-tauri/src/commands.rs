@@ -569,7 +569,7 @@ pub async fn chat_answer(
         )
     };
     // Require a real model before doing any work.
-    let model = llm::from_spec(&chat_spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    let model = llm::from_spec_or_any(&chat_spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
 
     // Scope: source-level chats are restricted to a single source's chunks; the
     // keyword path applies this in SQL, the vector path filters its results.
@@ -723,7 +723,7 @@ pub async fn generate_cheatsheet(
             repo::get_setting(&c, "model_cheatsheet")?.unwrap_or_else(|| "gemini:gemini-2.5-pro".into());
         (ctx, n, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c))
     };
-    let model = llm::from_spec(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
     if context.trim().is_empty() {
         return Err(Error::Other(
             "No source text to synthesize from — add and ingest a source first.".into(),
@@ -833,7 +833,7 @@ pub async fn generate_material(
             .unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
         (ctx, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c))
     };
-    let model = llm::from_spec(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
     if context.trim().is_empty() {
         return Err(Error::Other(
             "No source text to generate from — add and ingest a source first.".into(),

@@ -60,7 +60,7 @@ export type DialogSpec = {
 // Rich edit-modal targets — carry the current field values to seed the form.
 export type EditTarget =
   | { kind: "subject"; id: string; name: string; code: string; glyph: string; color: string }
-  | { kind: "topic"; id: string; name: string }
+  | { kind: "topic"; id: string; name: string; subjectId: string }
   | {
       kind: "source";
       id: string;
@@ -252,8 +252,8 @@ class AppStore {
     }
   }
 
-  async updateTopic(id: string, name: string) {
-    const sid = this.activeSubjectId;
+  async updateTopic(id: string, name: string, subjectId?: string) {
+    const sid = subjectId ?? this.activeSubjectId;
     if (!sid || !name.trim()) return;
     try {
       await api.updateTopic(id, name.trim(), sid);
@@ -301,8 +301,8 @@ class AppStore {
     }
   }
 
-  async deleteTopic(id: string) {
-    const sid = this.activeSubjectId;
+  async deleteTopic(id: string, subjectId?: string) {
+    const sid = subjectId ?? this.activeSubjectId;
     if (!sid) return;
     try {
       await api.deleteTopic(id, sid);

@@ -38,7 +38,7 @@
     if (t.kind === "subject") {
       app.updateSubject(t.id, name.trim(), code.trim() || undefined, glyph.trim() || undefined, color);
     } else if (t.kind === "topic") {
-      app.updateTopic(t.id, name.trim());
+      app.updateTopic(t.id, name.trim(), t.subjectId);
     } else {
       const tags = tagsText.split(",").map((s) => s.trim()).filter(Boolean);
       app.updateSource(t.id, name.trim(), topicId || null, tags);
@@ -52,7 +52,7 @@
     const ok = await app.confirm({ title: `Delete this ${t.kind}?`, danger: true, okLabel: "Delete" });
     if (!ok) return;
     if (t.kind === "subject") app.deleteSubject(t.id);
-    else if (t.kind === "topic") app.deleteTopic(t.id);
+    else if (t.kind === "topic") app.deleteTopic(t.id, t.subjectId);
     else app.deleteSource(t.id);
     app.closeEdit();
   }

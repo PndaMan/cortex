@@ -224,6 +224,31 @@ pub fn from_spec(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
     }
 }
 
+/// Like `from_spec`, but if the configured spec's provider has no key, fall back
+/// to whichever provider DOES have a key. This lets generation work as soon as
+/// ANY API key is set, even if a per-task model still points at an unkeyed
+/// provider (the common "I added my OpenRouter key but cheatsheet still says no
+/// model" case — cheatsheet defaulted to gemini).
+pub fn from_spec_or_any(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
+    if let Some(m) = from_spec(spec, keys) {
+        return Some(m);
+    }
+    let fallback = if nonempty(&keys.openrouter).is_some() {
+        "openrouter:openai/gpt-4o-mini"
+    } else if nonempty(&keys.gemini).is_some() {
+        "gemini:gemini-2.5-flash"
+    } else if nonempty(&keys.openai).is_some() {
+        "openai:gpt-4o-mini"
+    } else if nonempty(&keys.claude).is_some() {
+        "claude:claude-3-5-sonnet-20241022"
+    } else if nonempty(&keys.custom_endpoint).is_some() {
+        "custom:default"
+    } else {
+        return None;
+    };
+    from_spec(fallback, keys)
+}
+
 /// Extract the first JSON value (object or array) from an LLM reply that may be
 /// wrapped in prose or ```json fences.
 pub fn extract_json(text: &str) -> Result<serde_json::Value> {
