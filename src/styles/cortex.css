@@ -120,6 +120,223 @@
   --search-hl:    rgba(249,226,175,0.28);
 }
 
+/* ---- GRUVBOX (dark medium) ---- */
+[data-theme="gruvbox"] {
+  --bg:           #282828;
+  --bg-sunken:    #1d2021;
+  --surface:      #32302f;
+  --surface-2:    #3c3836;
+  --surface-3:    #504945;
+  --border:       #3c3836;
+  --border-strong:#504945;
+  --fg:           #ebdbb2;
+  --fg-bright:    #fbf1c7;
+  --fg-muted:     #a89984;
+  --fg-faint:     #7c6f64;
+  --accent:       #fabd2f;
+  --accent-dim:   #d79921;
+  --accent-fg:    #1d2021;
+  --mode-normal:  #fabd2f;
+  --mode-insert:  #b8bb26;
+  --mode-select:  #d3869b;
+  --ok:           #b8bb26;
+  --warn:         #fabd2f;
+  --err:          #fb4934;
+  --info:         #83a598;
+  --diff-add-bg:  rgba(184,187,38,0.13);
+  --diff-add-bd:  rgba(184,187,38,0.45);
+  --diff-del-bg:  rgba(251,73,52,0.11);
+  --diff-del-bd:  rgba(251,73,52,0.42);
+  --sel-bg:       rgba(211,134,155,0.20);
+  --search-hl:    rgba(250,189,47,0.28);
+}
+
+/* ---- NORD ---- */
+[data-theme="nord"] {
+  --bg:           #2e3440;
+  --bg-sunken:    #272c36;
+  --surface:      #3b4252;
+  --surface-2:    #434c5e;
+  --surface-3:    #4c566a;
+  --border:       #3b4252;
+  --border-strong:#4c566a;
+  --fg:           #d8dee9;
+  --fg-bright:    #eceff4;
+  --fg-muted:     #8893a8;
+  --fg-faint:     #616e88;
+  --accent:       #88c0d0;
+  --accent-dim:   #6a9aaa;
+  --accent-fg:    #2e3440;
+  --mode-normal:  #88c0d0;
+  --mode-insert:  #a3be8c;
+  --mode-select:  #b48ead;
+  --ok:           #a3be8c;
+  --warn:         #ebcb8b;
+  --err:          #bf616a;
+  --info:         #81a1c1;
+  --diff-add-bg:  rgba(163,190,140,0.13);
+  --diff-add-bd:  rgba(163,190,140,0.45);
+  --diff-del-bg:  rgba(191,97,106,0.11);
+  --diff-del-bd:  rgba(191,97,106,0.42);
+  --sel-bg:       rgba(180,142,173,0.20);
+  --search-hl:    rgba(235,203,139,0.28);
+}
+
+/* ---- DRACULA ---- */
+[data-theme="dracula"] {
+  --bg:           #282a36;
+  --bg-sunken:    #21222c;
+  --surface:      #343746;
+  --surface-2:    #3c3f51;
+  --surface-3:    #44475a;
+  --border:       #3a3d4d;
+  --border-strong:#44475a;
+  --fg:           #f8f8f2;
+  --fg-bright:    #ffffff;
+  --fg-muted:     #b9bcca;
+  --fg-faint:     #6272a4;
+  --accent:       #bd93f9;
+  --accent-dim:   #9a73d6;
+  --accent-fg:    #21222c;
+  --mode-normal:  #bd93f9;
+  --mode-insert:  #50fa7b;
+  --mode-select:  #ff79c6;
+  --ok:           #50fa7b;
+  --warn:         #f1fa8c;
+  --err:          #ff5555;
+  --info:         #8be9fd;
+  --diff-add-bg:  rgba(80,250,123,0.13);
+  --diff-add-bd:  rgba(80,250,123,0.45);
+  --diff-del-bg:  rgba(255,85,85,0.11);
+  --diff-del-bd:  rgba(255,85,85,0.42);
+  --sel-bg:       rgba(255,121,198,0.20);
+  --search-hl:    rgba(241,250,140,0.28);
+}
+
+/* ---- ROSE PINE ---- */
+[data-theme="rose-pine"] {
+  --bg:           #191724;
+  --bg-sunken:    #14121f;
+  --surface:      #1f1d2e;
+  --surface-2:    #26233a;
+  --surface-3:    #2a2739;
+  --border:       #26233a;
+  --border-strong:#403d52;
+  --fg:           #e0def4;
+  --fg-bright:    #ffffff;
+  --fg-muted:     #908caa;
+  --fg-faint:     #6e6a86;
+  --accent:       #ebbcba;
+  --accent-dim:   #d7827e;
+  --accent-fg:    #191724;
+  --mode-normal:  #9ccfd8;
+  --mode-insert:  #31748f;
+  --mode-select:  #c4a7e7;
+  --ok:           #9ccfd8;
+  --warn:         #f6c177;
+  --err:          #eb6f92;
+  --info:         #c4a7e7;
+  --diff-add-bg:  rgba(156,207,216,0.13);
+  --diff-add-bd:  rgba(156,207,216,0.45);
+  --diff-del-bg:  rgba(235,111,146,0.11);
+  --diff-del-bd:  rgba(235,111,146,0.42);
+  --sel-bg:       rgba(196,167,231,0.20);
+  --search-hl:    rgba(246,193,119,0.28);
+}
+
+/* ---- EVERFOREST (dark medium) ---- */
+[data-theme="everforest"] {
+  --bg:           #2d353b;
+  --bg-sunken:    #272e33;
+  --surface:      #343f44;
+  --surface-2:    #3d484d;
+  --surface-3:    #475258;
+  --border:       #3d484d;
+  --border-strong:#475258;
+  --fg:           #d3c6aa;
+  --fg-bright:    #e6e2cc;
+  --fg-muted:     #9da9a0;
+  --fg-faint:     #7a8478;
+  --accent:       #a7c080;
+  --accent-dim:   #83a06a;
+  --accent-fg:    #2d353b;
+  --mode-normal:  #a7c080;
+  --mode-insert:  #83c092;
+  --mode-select:  #d699b6;
+  --ok:           #a7c080;
+  --warn:         #dbbc7f;
+  --err:          #e67e80;
+  --info:         #7fbbb3;
+  --diff-add-bg:  rgba(167,192,128,0.13);
+  --diff-add-bd:  rgba(167,192,128,0.45);
+  --diff-del-bg:  rgba(230,126,128,0.11);
+  --diff-del-bd:  rgba(230,126,128,0.42);
+  --sel-bg:       rgba(214,153,182,0.20);
+  --search-hl:    rgba(219,188,127,0.28);
+}
+
+/* ---- SOLARIZED (dark) ---- */
+[data-theme="solarized"] {
+  --bg:           #002b36;
+  --bg-sunken:    #00252e;
+  --surface:      #073642;
+  --surface-2:    #0a4250;
+  --surface-3:    #0e4b5a;
+  --border:       #0a4250;
+  --border-strong:#0e4b5a;
+  --fg:           #839496;
+  --fg-bright:    #93a1a1;
+  --fg-muted:     #657b83;
+  --fg-faint:     #586e75;
+  --accent:       #268bd2;
+  --accent-dim:   #1e6fa8;
+  --accent-fg:    #002b36;
+  --mode-normal:  #268bd2;
+  --mode-insert:  #859900;
+  --mode-select:  #6c71c4;
+  --ok:           #859900;
+  --warn:         #b58900;
+  --err:          #dc322f;
+  --info:         #2aa198;
+  --diff-add-bg:  rgba(133,153,0,0.13);
+  --diff-add-bd:  rgba(133,153,0,0.45);
+  --diff-del-bg:  rgba(220,50,47,0.11);
+  --diff-del-bd:  rgba(220,50,47,0.42);
+  --sel-bg:       rgba(108,113,196,0.20);
+  --search-hl:    rgba(181,137,0,0.28);
+}
+
+/* ---- KANAGAWA (wave) ---- */
+[data-theme="kanagawa"] {
+  --bg:           #1f1f28;
+  --bg-sunken:    #16161d;
+  --surface:      #2a2a37;
+  --surface-2:    #363646;
+  --surface-3:    #3a3a4a;
+  --border:       #2d2d3d;
+  --border-strong:#54546d;
+  --fg:           #dcd7ba;
+  --fg-bright:    #f2f1ef;
+  --fg-muted:     #a6a08c;
+  --fg-faint:     #727169;
+  --accent:       #7e9cd8;
+  --accent-dim:   #6080c0;
+  --accent-fg:    #1f1f28;
+  --mode-normal:  #7e9cd8;
+  --mode-insert:  #98bb6c;
+  --mode-select:  #957fb8;
+  --ok:           #98bb6c;
+  --warn:         #e6c384;
+  --err:          #c34043;
+  --info:         #7fb4ca;
+  --diff-add-bg:  rgba(152,187,108,0.13);
+  --diff-add-bd:  rgba(152,187,108,0.45);
+  --diff-del-bg:  rgba(195,64,67,0.11);
+  --diff-del-bd:  rgba(195,64,67,0.42);
+  --sel-bg:       rgba(149,127,184,0.20);
+  --search-hl:    rgba(230,195,132,0.28);
+}
+
 /* ============================================================
    NON-THEMED TOKENS (constant across palettes)
    ============================================================ */

@@ -1,6 +1,10 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
+  import { keybinds } from "../lib/keybinds.svelte";
   import Icon from "./Icon.svelte";
+
+  // Render a key for hints: Space shown as ␣.
+  const kh = (s: string) => (s === " " ? "␣" : s);
 
   let q = $state("");
   let sel = $state(0);
@@ -26,17 +30,18 @@
       icon: "diamond",
       run: () => app.openSubject(s.id),
     })),
-    { id: "a-record", group: "Actions", label: "Record lecture", kind: "command", icon: "record", hint: "␣ r", run: () => app.setView("recorder") },
-    { id: "a-source", group: "Actions", label: "Add source", kind: "command", icon: "plus", hint: "␣ s", run: () => app.setView("add-source") },
-    { id: "a-diff", group: "Actions", label: "Review cheatsheet diff", kind: "command", icon: "book", hint: app.pending ? app.pending + " pending" : "", run: () => app.reviewDiff() },
+    { id: "a-record", group: "Actions", label: "Record lecture", kind: "command", icon: "record", hint: kh(keybinds.map.recorder), run: () => app.setView("recorder") },
+    { id: "a-source", group: "Actions", label: "Add source", kind: "command", icon: "plus", hint: kh(keybinds.map.leader) + " s", run: () => app.setView("add-source") },
+    { id: "a-diff", group: "Actions", label: "Review cheatsheet diff", kind: "command", icon: "book", hint: app.pending ? app.pending + " pending" : kh(keybinds.map.leader) + " d", run: () => app.reviewDiff() },
     { id: "a-regen", group: "Actions", label: "Regenerate cheatsheet", kind: "command", icon: "refresh", run: () => app.pushToast({ kind: "info", title: "Regenerating…", body: "Re-synthesizing the cheatsheet from your sources." }) },
     { id: "a-flash", group: "Actions", label: "Study flashcards", kind: "command", icon: "cards", run: () => { app.setView("subject"); app.setTab("materials"); } },
     { id: "a-quiz", group: "Actions", label: "Generate quiz", kind: "command", icon: "check", run: () => { app.setView("subject"); app.setTab("materials"); } },
-    { id: "a-web", group: "Actions", label: "Search the web (SearXNG)", kind: "command", icon: "search", hint: "␣ w", run: () => app.setView("websearch") },
-    { id: "a-chat", group: "Actions", label: app.chatOpen ? "Hide chat panel" : "Show chat panel", kind: "command", icon: "chat", run: () => app.toggleChat() },
-    { id: "a-music", group: "Actions", label: "Study sound…", kind: "command", icon: "music", hint: "m", run: () => (app.musicOpen = true) },
-    { id: "a-newsubj", group: "Actions", label: "New subject", kind: "command", icon: "plus", hint: "n", run: () => app.setView("add-subject") },
-    { id: "v-dash", group: "Go to", label: "Dashboard", kind: "view", icon: "home", hint: "␣ g", run: () => app.setView("dashboard") },
+    { id: "a-web", group: "Actions", label: "Search the web (SearXNG)", kind: "command", icon: "search", hint: kh(keybinds.map.websearch), run: () => app.setView("websearch") },
+    { id: "a-chat", group: "Actions", label: app.chatOpen ? "Hide chat panel" : "Show chat panel", kind: "command", icon: "chat", hint: kh(keybinds.map.toggleChat), run: () => app.toggleChat() },
+    { id: "a-music", group: "Actions", label: "Study sound…", kind: "command", icon: "music", hint: kh(keybinds.map.music), run: () => (app.musicOpen = true) },
+    { id: "a-pomo", group: "Actions", label: "Pomodoro timer", kind: "command", icon: "record", hint: "␣ p", run: () => (app.pomodoroOpen = true) },
+    { id: "a-newsubj", group: "Actions", label: "New subject", kind: "command", icon: "plus", hint: kh(keybinds.map.newSubject), run: () => app.setView("add-subject") },
+    { id: "v-dash", group: "Go to", label: "Dashboard", kind: "view", icon: "home", hint: "g " + kh(keybinds.map.dashboard), run: () => app.setView("dashboard") },
     { id: "s-settings", group: "Settings", label: "Open settings", kind: "setting", icon: "settings", run: () => app.setView("settings") },
     { id: "s-keys", group: "Settings", label: "API keys & models", kind: "setting", icon: "lock", run: () => app.setView("settings") },
     { id: "s-profile", group: "Settings", label: "Edit your profile", kind: "setting", icon: "diamond", run: () => app.setView("settings") },

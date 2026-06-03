@@ -34,6 +34,7 @@ export interface Subject {
   name: string;
   code: string | null;
   glyph: string;
+  color: string | null;
   status: string; // ready | review
   streak: number;
   position: number;
@@ -116,15 +117,22 @@ export interface AddSourceInput {
 // ---- subjects ----
 export const listSubjects = () => invoke<Subject[]>("list_subjects");
 export const getSubject = (id: string) => invoke<Subject>("get_subject", { id });
-export const createSubject = (name: string, code?: string, glyph?: string) =>
-  invoke<Subject>("create_subject", { name, code, glyph });
-export const updateSubject = (id: string, name: string, code?: string) =>
-  invoke<Subject>("update_subject", { id, name, code });
+export const createSubject = (name: string, code?: string, glyph?: string, color?: string) =>
+  invoke<Subject>("create_subject", { name, code, glyph, color });
+export const updateSubject = (
+  id: string,
+  name: string,
+  code?: string,
+  glyph?: string,
+  color?: string
+) => invoke<Subject>("update_subject", { id, name, code, glyph, color });
 export const deleteSubject = (id: string) => invoke<void>("delete_subject", { id });
 
 // ---- topics ----
 export const createTopic = (subjectId: string, name: string) =>
   invoke<Subject>("create_topic", { subjectId, name });
+export const updateTopic = (id: string, name: string, subjectId: string) =>
+  invoke<Subject>("update_topic", { id, name, subjectId });
 export const deleteTopic = (id: string, subjectId: string) =>
   invoke<Subject>("delete_topic", { id, subjectId });
 
@@ -132,6 +140,12 @@ export const deleteTopic = (id: string, subjectId: string) =>
 export const listSources = (subjectId: string) =>
   invoke<Source[]>("list_sources", { subjectId });
 export const getSource = (id: string) => invoke<Source>("get_source", { id });
+export const updateSource = (
+  id: string,
+  name: string,
+  topicId?: string | null,
+  tags?: string[]
+) => invoke<Source>("update_source", { id, name, topicId, tags });
 export const deleteSource = (id: string) => invoke<void>("delete_source", { id });
 export const listChunks = (sourceId: string) =>
   invoke<ChunkInfo[]>("list_chunks", { sourceId });
@@ -174,6 +188,11 @@ export const saveRecording = (
   audio: number[],
   topicId?: string
 ) => invoke<IngestResult>("save_recording", { subjectId, name, audio, topicId });
+
+// Near-live transcription: transcribe an audio slice and return its text (or ""
+// if no Whisper transcriber is installed). Used by the recorder's live panel.
+export const transcribePartial = (audio: number[]) =>
+  invoke<string>("transcribe_partial", { audio });
 
 // ---- settings (bulk) ----
 export const getAllSettings = () => invoke<Record<string, string>>("get_all_settings");

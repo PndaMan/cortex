@@ -26,12 +26,22 @@ export type Toast = {
   action?: { label: string; run: () => void };
 };
 
-export const THEMES = ["osaka-jade", "tokyo-night", "catppuccin"] as const;
+export const THEMES = [
+  "osaka-jade", "tokyo-night", "catppuccin",
+  "gruvbox", "nord", "dracula", "rose-pine", "everforest", "solarized", "kanagawa",
+] as const;
 export type Theme = (typeof THEMES)[number];
-const THEME_LABELS: Record<Theme, string> = {
+export const THEME_LABELS: Record<Theme, string> = {
   "osaka-jade": "Osaka Jade",
   "tokyo-night": "Tokyo Night",
   catppuccin: "Catppuccin Mocha",
+  gruvbox: "Gruvbox",
+  nord: "Nord",
+  dracula: "Dracula",
+  "rose-pine": "Rosé Pine",
+  everforest: "Everforest",
+  solarized: "Solarized",
+  kanagawa: "Kanagawa",
 };
 
 export type Music = { current: string; playing: boolean; volume: number };
@@ -46,6 +56,26 @@ export type DialogSpec = {
   danger?: boolean;
   okLabel?: string;
 };
+
+// Rich edit-modal targets — carry the current field values to seed the form.
+export type EditTarget =
+  | { kind: "subject"; id: string; name: string; code: string; glyph: string; color: string }
+  | { kind: "topic"; id: string; name: string }
+  | {
+      kind: "source";
+      id: string;
+      name: string;
+      topicId: string | null;
+      tags: string[];
+      topicOptions: { id: string; label: string }[];
+    };
+
+// Stable default subject colors (drawn from the shipped theme accents) used when
+// a subject has no explicit color set.
+export const SUBJECT_COLORS = [
+  "#2dd5b7", "#7aa2f7", "#f7768e", "#e0af68",
+  "#9ece6a", "#bb9af7", "#7dcfff", "#ff9e64",
+];
 
 function uid() {
   return Math.random().toString(36).slice(2);
@@ -62,6 +92,8 @@ class AppStore {
   view = $state<View>("subject");
   subjectTab = $state<string>("cheatsheet"); // cheatsheet is the default page
   dashFocus = $state(0);
+  // Current chat scope (set by ChatPanel) so the status-bar PWD reflects it.
+  chatScope = $state<{ topicName?: string; sourceName?: string } | null>(null);
 
   // chrome / modal state
   mode = $state<Mode>("NOR");
@@ -72,11 +104,14 @@ class AppStore {
   musicOpen = $state(false);
   diffOpen = $state(false);
   helpOpen = $state(false);
+  pomodoroOpen = $state(false);
   onboarding = $state(false);
   metaModal = $state<any | null>(null);
   toasts = $state<Toast[]>([]);
   // themed confirm/prompt dialog (replaces native window.confirm / window.prompt)
   dialog = $state<DialogSpec | null>(null);
+  // rich multi-field edit modal (subjects/topics/sources fully editable)
+  editing = $state<EditTarget | null>(null);
   pending = $state(0); // cheatsheet draft sections awaiting review (real count set by Cheatsheet view)
   // playing starts false — browsers block autoplay until a user gesture.
   music = $state<Music>({ current: "lofi", playing: false, volume: 60 });
@@ -178,11 +213,34 @@ class AppStore {
     }
   }
 
-  async updateSubject(id: string, name: string, code?: string) {
+  async updateSubject(id: string, name: string, code?: string, glyph?: string, color?: string) {
     try {
-      await api.updateSubject(id, name, code);
+      await api.updateSubject(id, name, code, glyph, color);
       this.subjects = await api.listSubjects();
       this.pushToast({ kind: "success", title: "Subject updated" });
+    } catch (e) {
+      this.pushToast({ kind: "error", title: "Update failed", body: String(e) });
+    }
+  }
+
+  async updateTopic(id: string, name: string) {
+    const sid = this.activeSubjectId;
+    if (!sid || !name.trim()) return;
+    try {
+      await api.updateTopic(id, name.trim(), sid);
+      await this.refresh();
+      this.pushToast({ kind: "success", title: "Topic renamed" });
+    } catch (e) {
+      this.pushToast({ kind: "error", title: "Rename failed", body: String(e) });
+    }
+  }
+
+  async updateSource(id: string, name: string, topicId?: string | null, tags?: string[]) {
+    try {
+      const updated = await api.updateSource(id, name, topicId ?? null, tags);
+      if (this.activeSource?.id === id) this.activeSource = updated;
+      await this.refresh();
+      this.pushToast({ kind: "success", title: "Source updated" });
     } catch (e) {
       this.pushToast({ kind: "error", title: "Update failed", body: String(e) });
     }
@@ -259,6 +317,24 @@ class AppStore {
   setVolume(v: number) {
     this.music = { ...this.music, volume: v };
     music.setVolume(v / 100);
+  }
+
+  // ---- rich edit modal ----
+  openEdit(t: EditTarget) {
+    this.editing = t;
+  }
+  closeEdit() {
+    this.editing = null;
+  }
+
+  /** A subject's display color: its own color, or a stable default from the palette. */
+  subjectColor(s: { id: string; color?: string | null; position?: number } | null | undefined): string {
+    if (!s) return "var(--accent)";
+    if (s.color) return s.color;
+    const i = typeof s.position === "number"
+      ? s.position
+      : [...s.id].reduce((a, c) => a + c.charCodeAt(0), 0);
+    return SUBJECT_COLORS[((i % SUBJECT_COLORS.length) + SUBJECT_COLORS.length) % SUBJECT_COLORS.length];
   }
 
   // ---- themed dialogs (confirm / prompt) ----

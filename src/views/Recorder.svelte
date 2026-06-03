@@ -9,7 +9,6 @@
   let paused = $state(false);
   let secs = $state(0);
   let bars = $state<number[]>(Array.from({ length: 72 }, () => 0.06));
-  let level = $state(0); // smoothed overall mic level 0..1 (drives the glow ring)
   let status = $state<"ready" | "recording" | "transcribing" | "done">("ready");
   let note = $state<string>("");
   let errorMsg = $state<string | null>(null);
@@ -22,8 +21,15 @@
       ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
       : undefined;
   const liveTranscriptSupported = !!SR;
+  let liveTranscriptOn = $state(true); // user-facing toggle for the live transcript panel (default on)
   let liveFinal = $state(""); // accumulated final results
   let liveInterim = $state(""); // current in-flight (unstable) chunk
+
+  // ---- backend chunked fallback (WebKitGTK / Tauri Linux, no SpeechRecognition) ----
+  // Periodically ships the audio recorded so far to backend Whisper and shows the text.
+  let liveBackendText = $state(""); // latest backend partial transcript
+  let liveUpdating = $state(false); // true while a transcribePartial call is in flight
+  let whisperMissing = $state(false); // backend returned "" → no Whisper installed; stop polling
 
   // ---- real recording machinery (not reactive) ----
   let mediaRecorder: MediaRecorder | null = null;
@@ -34,6 +40,8 @@
   let recognitionWantsRun = false; // keep-alive flag so onend can restart it
   let chunks: Blob[] = [];
   let unlisten: UnlistenFn | null = null;
+  let backendPoll: ReturnType<typeof setInterval> | null = null; // chunked-fallback poll timer
+  let backendBusy = false; // re-entrancy guard for the fallback poll
 
   // ---- derived ----
   const mm = $derived(String(Math.floor(secs / 60)).padStart(2, "0"));
@@ -41,37 +49,27 @@
   const live = $derived(recording && !paused);
   const hasLiveTranscript = $derived(liveTranscriptSupported && (liveFinal.trim().length > 0 || liveInterim.trim().length > 0));
 
-  // ---- real animated waveform from the mic (Web Audio analyser, rAF-driven) ----
-  // Renders a mirrored row of frequency bars + a smoothed overall level that
-  // drives the glow ring. Always works regardless of transcription support.
+  // ---- subtle animated waveform from the mic (Web Audio analyser, rAF-driven) ----
+  // Renders a small mirrored row of frequency bars. Secondary to the compact clock.
   $effect(() => {
     if (!live || !analyser) return;
     const freq = new Uint8Array(analyser.frequencyBinCount);
     let rafId = 0;
-    let lvl = 0;
     const N = 72;
     const band = Math.max(1, Math.floor(freq.length / N));
     function tick() {
       analyser!.getByteFrequencyData(freq);
-      let peak = 0;
       bars = Array.from({ length: N }, (_, i) => {
         let s = 0;
         for (let j = 0; j < band; j++) s += freq[i * band + j] ?? 0;
         const v = s / band / 255;
-        if (v > peak) peak = v;
         // gentle curve so quiet rooms still show a soft baseline, loud peaks don't clip
         return Math.min(1, v * 1.7 + 0.04);
       });
-      // exponential smoothing on the overall level → calm, low-glare glow
-      lvl += (Math.min(1, peak * 1.5) - lvl) * 0.18;
-      level = lvl;
       rafId = requestAnimationFrame(tick);
     }
     rafId = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(rafId);
-      level = 0;
-    };
+    return () => cancelAnimationFrame(rafId);
   });
 
   // ---- elapsed timer ----
@@ -83,12 +81,12 @@
 
   function cleanupStream() {
     stopRecognition();
+    stopBackendPoll();
     stream?.getTracks().forEach((t) => t.stop());
     audioCtx?.close().catch(() => {});
     stream = null;
     audioCtx = null;
     analyser = null;
-    level = 0;
   }
 
   // ---- live transcription (feature-detected) ----
@@ -134,6 +132,46 @@
     liveInterim = "";
   }
 
+  // ---- backend chunked fallback (no SpeechRecognition) ----
+  function stopBackendPoll() {
+    if (backendPoll) { clearInterval(backendPoll); backendPoll = null; }
+    liveUpdating = false;
+    backendBusy = false;
+  }
+
+  async function pollBackendTranscript() {
+    if (backendBusy || paused || !recording || chunks.length === 0) return;
+    backendBusy = true;
+    liveUpdating = true;
+    try {
+      // Assemble everything recorded so far into a single Blob and ship it to backend Whisper.
+      const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
+      const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+      const text = await api.transcribePartial(bytes);
+      if (text && text.trim()) {
+        liveBackendText = text.trim();
+        whisperMissing = false;
+      } else if (!liveBackendText) {
+        // First call came back empty → no Whisper installed. Be honest and stop polling.
+        whisperMissing = true;
+        stopBackendPoll();
+      }
+    } catch {
+      // Network/backend hiccup — keep the last text, try again next tick.
+    } finally {
+      liveUpdating = false;
+      backendBusy = false;
+    }
+  }
+
+  function startBackendPoll() {
+    if (SR) return; // SpeechRecognition path is authoritative where available
+    stopBackendPoll();
+    whisperMissing = false;
+    // ~15s cadence: long enough to gather speech, short enough to feel live.
+    backendPoll = setInterval(() => void pollBackendTranscript(), 15000);
+  }
+
   async function start() {
     if (!app.activeSubject) {
       app.pushToast({ kind: "error", title: "Open a subject first", body: "Select a subject before recording." });
@@ -165,8 +203,14 @@
     tags = [];
     liveFinal = "";
     liveInterim = "";
-    // Live interim transcript alongside the recording, where supported.
-    startRecognition();
+    liveBackendText = "";
+    whisperMissing = false;
+    // Live transcript alongside the recording when the toggle is on:
+    // SpeechRecognition where available, otherwise backend chunked Whisper.
+    if (liveTranscriptOn) {
+      startRecognition();
+      startBackendPoll();
+    }
   }
 
   function togglePause() {
@@ -182,6 +226,19 @@
       recognitionWantsRun = false;
       if (recognition) { try { recognition.onend = null; recognition.stop(); } catch { /* noop */ } recognition = null; }
       liveInterim = "";
+    }
+  }
+
+  // React to the user toggling the live transcript on/off while recording.
+  function toggleLiveTranscript() {
+    liveTranscriptOn = !liveTranscriptOn;
+    if (!recording) return;
+    if (liveTranscriptOn) {
+      if (!paused) startRecognition();
+      startBackendPoll();
+    } else {
+      stopRecognition();
+      stopBackendPoll();
     }
   }
 
@@ -261,7 +318,7 @@
     if (mediaRecorder && recording) { mediaRecorder.onstop = null; mediaRecorder.stop(); }
     cleanupStream();
     recording = false; paused = false; secs = 0; tags = []; status = "ready";
-    liveFinal = ""; liveInterim = "";
+    liveFinal = ""; liveInterim = ""; liveBackendText = ""; whisperMissing = false;
     bars = Array.from({ length: 72 }, () => 0.06);
     app.setView("subject");
   }
@@ -292,20 +349,9 @@
       <span class="rec-clock">{mm}:{ss}</span>
     </div>
 
-    <!-- Big elapsed timer with a soft level-reactive glow ring -->
-    <div
-      class="rec-timer mono"
-      class:is-live={live}
-      style:--lvl={live ? level : 0}
-    >
-      <span class="rec-timer-val">{mm}<span class="rec-timer-colon">:</span>{ss}</span>
-      <span class="rec-timer-cap faint">
-        {#if status === "transcribing"}transcribing{:else if paused}paused{:else if recording}elapsed{:else}ready{/if}
-      </span>
-    </div>
-
-    <!-- Animated live waveform (mirrored frequency bars, rAF-driven) -->
-    <div class="waveform" class:is-live={live} aria-hidden="true">
+    <!-- Subtle, secondary live waveform (mirrored frequency bars, rAF-driven).
+         Kept small — the compact mm:ss readout in .rec-status is the primary timer. -->
+    <div class="waveform waveform--compact" class:is-live={live} aria-hidden="true">
       {#each bars as bar, i (i)}
         <span
           class="wbar"
@@ -370,20 +416,43 @@
   <!-- Right: live transcript / status panel -->
   <aside class="rec-transcript">
     <div class="rt-head">
-      <span class="label">Transcript</span>
+      <span class="label">Live transcript</span>
+      <span class="grow"></span>
       {#if status === "transcribing"}
         <span class="status-pill status-pill--draft"><span class="dot"></span>processing</span>
-      {:else if live && hasLiveTranscript}
-        <span class="status-pill status-pill--draft"><span class="dot"></span>live preview</span>
+      {:else if live && liveTranscriptOn && liveUpdating}
+        <span class="status-pill status-pill--draft"><span class="dot"></span>updating…</span>
+      {:else if live && liveTranscriptOn && (hasLiveTranscript || liveBackendText.trim())}
+        <span class="status-pill status-pill--draft"><span class="dot"></span>live</span>
       {/if}
+      <!-- Toggleable: turns the live transcript panel on/off. Default on. -->
+      <button
+        type="button"
+        class="rt-toggle"
+        class:is-on={liveTranscriptOn}
+        role="switch"
+        aria-checked={liveTranscriptOn}
+        title="Toggle live transcript"
+        onclick={toggleLiveTranscript}
+      >
+        <span class="rt-toggle-track"><span class="rt-toggle-knob"></span></span>
+      </button>
     </div>
     <div class="rt-body">
       {#if status === "transcribing"}
         <div class="rt-empty mono faint">{note || "Running Whisper on your recording…"}</div>
         {#if liveFinal.trim()}
           <p class="rt-live read rt-live--dim">{liveFinal}</p>
+        {:else if liveBackendText.trim()}
+          <p class="rt-live read rt-live--dim">{liveBackendText}</p>
         {/if}
+      {:else if recording && !liveTranscriptOn}
+        <!-- User switched the live transcript off. -->
+        <div class="rt-note mono faint">
+          Live transcript is off. Flip the switch above to see your words as you speak — the full transcript is still saved when you stop.
+        </div>
       {:else if recording && liveTranscriptSupported}
+        <!-- Real-time path: browser SpeechRecognition (final + interim). -->
         {#if hasLiveTranscript}
           <p class="rt-live read">
             {liveFinal}<span class="rt-interim">{liveInterim}</span>
@@ -391,17 +460,22 @@
         {:else}
           <div class="rt-empty mono faint">Listening… your words will appear here as you speak.</div>
         {/if}
-      {:else if recording}
-        <!-- Honest fallback: no SpeechRecognition on this platform (e.g. WebKitGTK / Tauri Linux) -->
+      {:else if recording && whisperMissing}
+        <!-- Backend fallback tried, came back empty: no Whisper installed. Be honest. -->
         <div class="rt-note mono faint">
-          Live transcription unavailable on this platform — the full transcript is generated after you stop (needs Whisper).
+          Live transcript needs Whisper — install openai-whisper (pip install openai-whisper) or whisper.cpp.
         </div>
+      {:else if recording}
+        <!-- Backend chunked fallback (WebKitGTK / Tauri Linux): refreshed ~every 15s. -->
+        {#if liveBackendText.trim()}
+          <p class="rt-live read">{liveBackendText}</p>
+        {:else}
+          <div class="rt-empty mono faint">Listening… the transcript refreshes every few seconds as Whisper catches up.</div>
+        {/if}
       {:else}
         <div class="rt-empty mono faint">
           Hit record to capture a lecture. On stop, Cortex transcribes it with Whisper and saves it as a searchable source.
-          {#if liveTranscriptSupported}
-            A live preview appears here while you record.
-          {/if}
+          A live transcript appears here while you record — toggle it with the switch above.
         </div>
       {/if}
     </div>
@@ -410,50 +484,8 @@
 </div>
 
 <style>
-  /* ---- Big elapsed timer + level-reactive glow ring ---- */
-  .rec-timer {
-    --lvl: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 2px;
-    padding: 22px 34px 18px;
-    border-radius: var(--rad-4);
-    border: 1px solid var(--border);
-    background:
-      radial-gradient(
-        120% 120% at 50% 30%,
-        color-mix(in oklab, var(--accent) calc(7% + var(--lvl) * 16%), transparent),
-        transparent 70%
-      ),
-      var(--surface);
-    /* glow intensity tracks the smoothed mic level — calm, low-glare */
-    box-shadow:
-      0 0 0 1px color-mix(in oklab, var(--accent) calc(var(--lvl) * 40%), transparent),
-      0 0 calc(8px + var(--lvl) * 44px)
-        color-mix(in oklab, var(--accent) calc(var(--lvl) * 38%), transparent);
-    transition: box-shadow 120ms linear, background 120ms linear, border-color var(--dur);
-  }
-  .rec-timer.is-live {
-    border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
-  }
-  .rec-timer-val {
-    font-size: clamp(40px, 8vw, 58px);
-    line-height: 1;
-    font-weight: 500;
-    letter-spacing: 0.02em;
-    color: var(--fg-bright);
-    font-variant-numeric: tabular-nums;
-  }
-  .rec-timer.is-live .rec-timer-val { color: var(--accent); }
-  .rec-timer-colon { opacity: 0.55; }
-  .rec-timer.is-live .rec-timer-colon { animation: rec-colon 1s steps(1) infinite; }
-  .rec-timer-cap {
-    font-size: var(--t-2xs);
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-  }
-  @keyframes rec-colon { 50% { opacity: 0.18; } }
+  /* ---- compact, secondary waveform (the small mm:ss in .rec-status is the timer) ---- */
+  .waveform--compact { height: 64px; max-width: 460px; opacity: 0.9; }
 
   /* ---- waveform: subtle idle breathing so it never looks dead ---- */
   .waveform :global(.wbar) {
@@ -490,5 +522,47 @@
     border-radius: var(--rad-3);
     background: color-mix(in oklab, var(--surface-2) 60%, transparent);
     font-size: var(--t-xs);
+  }
+
+  /* ---- Live transcript is now the primary feature: give the panel more real estate ---- */
+  .recorder { grid-template-columns: 1fr clamp(420px, 42vw, 560px); }
+
+  /* ---- toggle switch in the transcript header ---- */
+  .rt-toggle {
+    flex: none;
+    margin-left: 10px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+  }
+  .rt-toggle-track {
+    width: 30px;
+    height: 17px;
+    border-radius: var(--rad-pill);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    position: relative;
+    transition: background var(--dur), border-color var(--dur);
+  }
+  .rt-toggle-knob {
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--fg-muted);
+    transition: transform var(--dur), background var(--dur);
+  }
+  .rt-toggle.is-on .rt-toggle-track {
+    background: color-mix(in oklab, var(--accent) 45%, transparent);
+    border-color: color-mix(in oklab, var(--accent) 60%, var(--border-strong));
+  }
+  .rt-toggle.is-on .rt-toggle-knob {
+    transform: translateX(13px);
+    background: var(--accent);
   }
 </style>

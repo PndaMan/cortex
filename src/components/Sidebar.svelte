@@ -10,6 +10,10 @@
   // Local state: which subject is expanded in the tree
   let expanded = $state<string | null>(null);
 
+  // Local state: which topics are expanded. Keyed by topic id, independent per
+  // topic, persists for the session. A topic id present in the set is open.
+  let openTopics = $state<Set<string>>(new Set());
+
   function toggleExpand(id: string, e: MouseEvent) {
     e.stopPropagation();
     expanded = expanded === id ? null : id;
@@ -20,15 +24,44 @@
     app.openSubject(id);
   }
 
-  async function renameSubject(s: { id: string; name: string; code?: string | null }, e: Event) {
+  function toggleTopic(id: string, e: Event) {
     e.stopPropagation();
-    const name = await app.prompt({ title: "Rename subject", label: "Subject name", value: s.name });
-    if (name) app.updateSubject(s.id, name, s.code ?? undefined);
+    const next = new Set(openTopics);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    openTopics = next;
+  }
+
+  function editSubject(s: { id: string; name: string; code?: string | null; glyph: string }, e: Event) {
+    e.stopPropagation();
+    app.openEdit({
+      kind: "subject",
+      id: s.id,
+      name: s.name,
+      code: s.code ?? "",
+      glyph: s.glyph,
+      color: app.subjectColor(s),
+    });
   }
 
   async function removeSubject(s: { id: string; name: string }, e: Event) {
     e.stopPropagation();
     if (await app.confirm({ title: "Delete subject?", body: `"${s.name}" and all its sources and topics will be permanently removed.`, danger: true, okLabel: "Delete" })) app.deleteSubject(s.id);
+  }
+
+  function editTopic(t: { id: string; name: string }, e: Event) {
+    e.stopPropagation();
+    app.openEdit({ kind: "topic", id: t.id, name: t.name });
+  }
+
+  async function removeTopic(t: { id: string }, e: Event) {
+    e.stopPropagation();
+    if (await app.confirm({ title: "Delete topic? Sources will be ungrouped.", danger: true, okLabel: "Delete" })) app.deleteTopic(t.id);
+  }
+
+  // Sources directly under a subject that belong to no topic (topic_id null).
+  function ungroupedSources(s: { topics: { sources: import("../lib/api").Source[] }[] }) {
+    return s.topics.flatMap((t) => t.sources).filter((src) => src.topic_id == null);
   }
 </script>
 
@@ -116,14 +149,17 @@
           >
             <Icon name="chevron" size={11} />
           </span>
+          <span class="s-glyph" style:color={app.subjectColor(s)}>
+            <Icon name="diamond" size={11} />
+          </span>
           <span class="s-name">{s.name}</span>
           <span class="s-actions">
             <button
               class="s-act"
               type="button"
-              title="Rename subject"
-              aria-label="Rename {s.name}"
-              onclick={(e) => renameSubject(s, e)}
+              title="Edit subject"
+              aria-label="Edit {s.name}"
+              onclick={(e) => editSubject(s, e)}
             >
               <Icon name="pencil" size={12} />
             </button>
@@ -147,34 +183,91 @@
         {#if expanded === s.id}
           <div class="sb-children">
             {#each s.topics as t (t.id)}
+              {@const tOpen = openTopics.has(t.id)}
               <div
                 class="sb-topic"
-                onclick={() => openSubject(s.id)}
+                onclick={(e) => toggleTopic(t.id, e)}
                 role="button"
                 tabindex="0"
-                onkeydown={(e) => e.key === "Enter" && openSubject(s.id)}
+                onkeydown={(e) => (e.key === "Enter" || e.key === " ") && toggleTopic(t.id, e)}
               >
-                <span class="t-tw"><Icon name="chevron" size={10} /></span>
+                <span class="t-tw{tOpen ? ' open' : ''}"><Icon name="chevron" size={10} /></span>
                 <span class="t-name">{t.name}</span>
+                <span class="t-actions">
+                  <button
+                    class="s-act"
+                    type="button"
+                    title="Rename topic"
+                    aria-label="Rename {t.name}"
+                    onclick={(e) => editTopic(t, e)}
+                  >
+                    <Icon name="pencil" size={11} />
+                  </button>
+                  <button
+                    class="s-act s-act--danger"
+                    type="button"
+                    title="Delete topic"
+                    aria-label="Delete {t.name}"
+                    onclick={(e) => removeTopic(t, e)}
+                  >
+                    <Icon name="x" size={11} />
+                  </button>
+                </span>
               </div>
-              {#each t.sources as src (src.id)}
-                <div
-                  class="sb-src"
-                  role="button"
-                  tabindex="0"
-                  onclick={() => app.openSource(src)}
-                  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && app.openSource(src)}
-                >
-                  <span
-                    class="badge badge--{src.kind === 'audio' ? 'audio' : src.kind}"
-                    style:height="14px"
-                    style:padding="0 4px"
-                    style:font-size="9px"
-                  >{src.kind.toUpperCase().slice(0, 3)}</span>
-                  <span class="src-name">{src.name}</span>
-                </div>
-              {/each}
+              {#if tOpen}
+                {#each t.sources as src (src.id)}
+                  <div
+                    class="sb-src sb-src--nested"
+                    role="button"
+                    tabindex="0"
+                    onclick={() => app.openSource(src)}
+                    onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && app.openSource(src)}
+                  >
+                    <span
+                      class="badge badge--{src.kind === 'audio' ? 'audio' : src.kind}"
+                      style:height="14px"
+                      style:padding="0 4px"
+                      style:font-size="9px"
+                    >{src.kind.toUpperCase().slice(0, 3)}</span>
+                    <span class="src-name">{src.name}</span>
+                  </div>
+                {/each}
+              {/if}
             {/each}
+
+            {#if ungroupedSources(s).length}
+              {@const ugId = `__ungrouped__${s.id}`}
+              {@const ugOpen = openTopics.has(ugId)}
+              <div
+                class="sb-topic sb-topic--ungrouped"
+                onclick={(e) => toggleTopic(ugId, e)}
+                role="button"
+                tabindex="0"
+                onkeydown={(e) => (e.key === "Enter" || e.key === " ") && toggleTopic(ugId, e)}
+              >
+                <span class="t-tw{ugOpen ? ' open' : ''}"><Icon name="chevron" size={10} /></span>
+                <span class="t-name">Ungrouped</span>
+              </div>
+              {#if ugOpen}
+                {#each ungroupedSources(s) as src (src.id)}
+                  <div
+                    class="sb-src sb-src--nested"
+                    role="button"
+                    tabindex="0"
+                    onclick={() => app.openSource(src)}
+                    onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && app.openSource(src)}
+                  >
+                    <span
+                      class="badge badge--{src.kind === 'audio' ? 'audio' : src.kind}"
+                      style:height="14px"
+                      style:padding="0 4px"
+                      style:font-size="9px"
+                    >{src.kind.toUpperCase().slice(0, 3)}</span>
+                    <span class="src-name">{src.name}</span>
+                  </div>
+                {/each}
+              {/if}
+            {/if}
           </div>
         {/if}
       </div>
@@ -265,10 +358,16 @@
     min-width: 0;
   }
   .sb-subj-row :global(.twisty),
+  .sb-subj-row .s-glyph,
   .sb-subj-row .s-actions,
   .sb-subj-row .s-count,
   .sb-subj-row .s-dot {
     flex: none;
+  }
+  .sb-subj-row .s-glyph {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 4px;
   }
   .sb-subj-row .s-name {
     flex: 1;
@@ -278,7 +377,7 @@
     white-space: nowrap;
   }
 
-  /* Topic rows: chevron stays put, name flexes + truncates */
+  /* Topic rows: chevron stays put, name flexes + truncates, like subjects */
   .sb-topic {
     display: flex;
     align-items: center;
@@ -288,6 +387,10 @@
     flex: none;
     display: inline-flex;
     align-items: center;
+    transition: transform var(--dur-fast);
+  }
+  .sb-topic .t-tw.open {
+    transform: rotate(90deg);
   }
   .sb-topic .t-name {
     flex: 1;
@@ -297,11 +400,50 @@
     white-space: nowrap;
   }
 
+  /* Per-topic inline rename / delete — faint, brighten on row hover */
+  .sb-topic .t-actions {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+    opacity: 0;
+    transition: opacity var(--dur-fast);
+  }
+  .sb-topic:hover .t-actions,
+  .sb-topic:focus-within .t-actions {
+    opacity: 1;
+  }
+  .sb-topic .t-actions .s-act {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    background: none;
+    border-radius: var(--rad-2);
+    color: var(--fg-faint);
+    cursor: pointer;
+    transition: color var(--dur-fast), background var(--dur-fast);
+  }
+  .sb-topic .t-actions .s-act:hover {
+    color: var(--fg-bright);
+    background: var(--surface-3);
+  }
+  .sb-topic .t-actions .s-act--danger:hover {
+    color: var(--err);
+  }
+
   /* Source rows: badge stays put, name flexes + truncates */
   .sb-src {
     display: flex;
     align-items: center;
     min-width: 0;
+  }
+  /* Sources now nest one level under their topic */
+  .sb-src--nested {
+    padding-left: 14px;
   }
   .sb-src :global(.badge) {
     flex: none;

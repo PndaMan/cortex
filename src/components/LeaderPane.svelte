@@ -11,13 +11,14 @@
 
   const actions: LeaderAction[] = [
     { key: "s", label: "Add source",   detail: "ingest a file / URL",   run: () => app.setView("add-source") },
-    { key: "c", label: "Chat",         detail: "open chat dock",         run: () => app.toggleChat() },
+    { key: "c", label: "Chat",         detail: "open chat dock",         run: () => { app.chatOpen = true; } },
     { key: "r", label: "Record",       detail: "lecture recorder",       run: () => app.setView("recorder") },
     { key: "f", label: "Flashcards",   detail: "study session",          run: () => app.setView("subject") },
     { key: "d", label: "Review diff",  detail: "cheatsheet draft",       run: () => app.reviewDiff() },
     { key: "w", label: "Web search",   detail: "search the web",         run: () => app.setView("websearch") },
     { key: "t", label: "Theme",        detail: "cycle Omarchy theme",    run: () => app.cycleTheme() },
     { key: "m", label: "Music",        detail: "study sound panel",      run: () => { app.musicOpen = true; } },
+    { key: "p", label: "Pomodoro",     detail: "focus timer + bonsai",   run: () => { app.pomodoroOpen = true; } },
     { key: "g", label: "Dashboard",    detail: "go to dashboard",        run: () => app.setView("dashboard") },
   ];
 

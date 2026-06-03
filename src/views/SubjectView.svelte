@@ -38,6 +38,30 @@
     loadSources();
   });
 
+  function editSubject() {
+    if (!subj) return;
+    app.openEdit({
+      kind: "subject",
+      id: subj.id,
+      name: subj.name,
+      code: subj.code ?? "",
+      glyph: subj.glyph,
+      color: app.subjectColor(subj),
+    });
+  }
+
+  function editSrc(e: MouseEvent, src: Source) {
+    e.stopPropagation();
+    app.openEdit({
+      kind: "source",
+      id: src.id,
+      name: src.name,
+      topicId: src.topic_id,
+      tags: src.tags ?? [],
+      topicOptions: (subj?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),
+    });
+  }
+
   async function deleteSrc(e: MouseEvent, src: Source) {
     e.stopPropagation();
     if (!(await app.confirm({ title: "Delete this source?", danger: true, okLabel: "Delete" }))) return;
@@ -77,11 +101,18 @@
     <!-- Tab bar -->
     <div class="subj-tabs">
       <div class="st-id">
-        <span class="subj-glyph sm"><Icon name="diamond" size={13} color="var(--accent)" /></span>
+        <span class="subj-glyph sm"><Icon name={subj.glyph ?? "diamond"} size={13} color={app.subjectColor(subj)} /></span>
         <div>
           <div class="st-name">{subj.name}</div>
           <div class="st-code mono">{subj.code ?? ""}{subj.topics[0] ? " · " + subj.topics[0].name : ""}</div>
         </div>
+        <button
+          class="btn btn--icon btn--sm btn--ghost"
+          title="Edit subject"
+          onclick={editSubject}
+        >
+          <Icon name="pencil" size={12} />
+        </button>
       </div>
       <div class="grow"></div>
       {#each TABS as tab (tab.id)}
@@ -148,6 +179,13 @@
                           <span class="dot"></span>
                         </span>
                         <div class="grow"></div>
+                        <button
+                          class="btn btn--icon btn--sm btn--ghost"
+                          title="Edit source"
+                          onclick={(e) => editSrc(e, src)}
+                        >
+                          <Icon name="pencil" size={12} />
+                        </button>
                         <button
                           class="btn btn--icon btn--sm btn--ghost"
                           title="Delete source"

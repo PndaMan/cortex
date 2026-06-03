@@ -65,12 +65,26 @@
   });
 
   // ---- delete ----
-  function confirmDelete() {
+  async function confirmDelete() {
     const src = app.activeSource;
     if (!src) return;
-    if (confirm(`Delete "${src.name}"? This removes the source and its embeddings.`)) {
-      app.deleteSource(src.id); // store action closes the viewer on success
+    if (await app.confirm({ title: "Delete this source?", danger: true, okLabel: "Delete" })) {
+      await app.deleteSource(src.id); // store action closes the viewer on success
     }
+  }
+
+  // ---- edit ----
+  function editSource() {
+    const src = app.activeSource;
+    if (!src) return;
+    app.openEdit({
+      kind: "source",
+      id: src.id,
+      name: src.name,
+      topicId: src.topic_id,
+      tags: src.tags ?? [],
+      topicOptions: (app.activeSubject?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),
+    });
   }
 
   // transcript text for audio: prefer extracted content, fall back to chunks
@@ -141,6 +155,13 @@
         <Icon name="search" size={13} />
       </button>
       {#if src}
+        <button
+          class="btn btn--icon btn--sm btn--ghost"
+          onclick={editSource}
+          title="Edit source"
+        >
+          <Icon name="pencil" size={13} color="currentColor" />
+        </button>
         <button
           class="btn btn--icon btn--sm btn--ghost sv-delete"
           onclick={confirmDelete}

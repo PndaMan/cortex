@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app, THEMES } from "../lib/store.svelte";
+  import { app, THEMES, THEME_LABELS } from "../lib/store.svelte";
   import type { Theme } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import type { Memory } from "../lib/api";
@@ -124,9 +124,16 @@
 
   // ---- appearance state ----
   const THEME_OPTS: { id: Theme; n: string; c: string; b: string }[] = [
-    { id: "osaka-jade",  n: "Osaka Jade",      c: "#2dd5b7", b: "#111c18" },
+    { id: "osaka-jade",  n: "Osaka Jade",       c: "#2dd5b7", b: "#111c18" },
     { id: "tokyo-night", n: "Tokyo Night",      c: "#7aa2f7", b: "#1a1b26" },
     { id: "catppuccin",  n: "Catppuccin Mocha", c: "#94e2d5", b: "#1e1e2e" },
+    { id: "gruvbox",     n: "Gruvbox",          c: "#fabd2f", b: "#282828" },
+    { id: "nord",        n: "Nord",             c: "#88c0d0", b: "#2e3440" },
+    { id: "dracula",     n: "Dracula",          c: "#bd93f9", b: "#282a36" },
+    { id: "rose-pine",   n: "Rosé Pine",        c: "#ebbcba", b: "#191724" },
+    { id: "everforest",  n: "Everforest",       c: "#a7c080", b: "#2d353b" },
+    { id: "solarized",   n: "Solarized",        c: "#268bd2", b: "#002b36" },
+    { id: "kanagawa",    n: "Kanagawa",         c: "#7e9cd8", b: "#1f1f28" },
   ];
   let followOmarchy = $state(true);
   let readFont      = $state("serif");
@@ -1139,7 +1146,7 @@ Notes: {about}</pre>
             <div class="set-row-l"><div class="set-row-t">Theme source</div></div>
             <div class="set-row-r">
               <span class="mono faint">
-                Omarchy · {app.theme === "osaka-jade" ? "Osaka Jade" : app.theme === "tokyo-night" ? "Tokyo Night" : "Catppuccin Mocha"}
+                Omarchy · {THEME_LABELS[app.theme]}
               </span>
             </div>
           </div>

@@ -1,10 +1,28 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
-  import Icon from "./Icon.svelte";
+
+  // The status-bar "PWD": subject › topic › source, reflecting where the user is
+  // (a source view, or the current chat scope). Uses Design-System scope styling.
+  const crumbs = $derived.by(() => {
+    const subj = app.activeSubject;
+    if (!subj) return [] as { label: string; color?: string; glyph?: string }[];
+    const out: { label: string; color?: string; glyph?: string }[] = [
+      { label: subj.name, color: app.subjectColor(subj), glyph: subj.glyph || "◆" },
+    ];
+    const src = app.activeSource;
+    if (app.view === "source" && src) {
+      const topic = subj.topics.find((t) => t.id === src.topic_id);
+      if (topic) out.push({ label: topic.name });
+      out.push({ label: src.name });
+    } else if (app.chatScope) {
+      if (app.chatScope.topicName) out.push({ label: app.chatScope.topicName });
+      if (app.chatScope.sourceName) out.push({ label: app.chatScope.sourceName });
+    }
+    return out;
+  });
 </script>
 
-<!-- Helix-style status bar. Mode block (NOR/INS/SEL) is kept; the leader, help
-     and command segments are real, hover-animated buttons. -->
+<!-- Helix-style status bar. Mode block kept; leader/help/command are buttons. -->
 <div class="statusbar mode-{app.mode}">
   <div class="mode-block">
     {app.mode}
@@ -13,7 +31,6 @@
     {/if}
   </div>
 
-  <!-- clickable leader: a mouse alternative to the Space key -->
   <button
     class="sb-seg sb-seg-btn"
     type="button"
@@ -23,63 +40,57 @@
     <span class="sb-key">␣</span> actions
   </button>
 
-  <div class="sb-seg">
-    <Icon name="diamond" size={10} color="var(--accent)" />
-    {app.activeSubject ? app.activeSubject.name : "Cortex"}
+  <!-- scope breadcrumb (present working directory) -->
+  <div class="sb-seg sb-scope">
+    {#if crumbs.length}
+      {#each crumbs as c, i}
+        {#if i > 0}<span class="scope-sep">›</span>{/if}
+        <span class="scope-seg" class:is-last={i === crumbs.length - 1}>
+          {#if c.glyph}<span class="seg-ico" style:color={c.color ?? "var(--accent)"}>{c.glyph}</span>{/if}
+          {c.label}
+        </span>
+      {/each}
+    {:else}
+      <span class="seg-ico" style="color:var(--accent)">◆</span> Cortex
+    {/if}
   </div>
 
   <div class="sb-spacer"></div>
 
-  <button
-    class="sb-seg sb-seg-btn"
-    type="button"
-    title="Keyboard shortcuts (?)"
-    onclick={() => (app.helpOpen = true)}
-  >
+  <button class="sb-seg sb-seg-btn" type="button" title="Keyboard shortcuts (?)" onclick={() => (app.helpOpen = true)}>
     <span class="sb-key">?</span> help
   </button>
 
-  <button
-    class="sb-seg sb-seg-btn"
-    type="button"
-    title="Command palette (:)"
-    style:border-right="none"
-    onclick={() => (app.cmdkOpen = true)}
-  >
+  <button class="sb-seg sb-seg-btn" type="button" title="Command palette (:)" style:border-right="none" onclick={() => (app.cmdkOpen = true)}>
     <span class="sb-key">:</span> command
   </button>
 </div>
 
 <style>
   .mode-block .mode-ctx {
-    margin-left: 8px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    opacity: 0.92;
+    margin-left: 8px; font-weight: 600; letter-spacing: 0.04em; opacity: 0.92;
   }
-  /* the leader / help / command segments are interactive buttons that still
-     read as plain .sb-seg cells, with a low-glare hover lift */
+  .sb-scope { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 52vw; }
+  .sb-scope .scope-seg {
+    display: inline-flex; align-items: center; gap: 5px; min-width: 0;
+    color: var(--fg-muted);
+  }
+  .sb-scope .scope-seg.is-last {
+    color: var(--fg-bright);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sb-scope .seg-ico { font-size: 10px; flex: none; }
+  .sb-scope .scope-sep { color: var(--fg-faint); flex: none; }
+
   .statusbar .sb-seg-btn {
-    border: none;
-    border-right: 1px solid var(--border);
-    background: none;
-    font: inherit;
-    cursor: pointer;
-    color: var(--fg-faint);
+    border: none; border-right: 1px solid var(--border); background: none;
+    font: inherit; cursor: pointer; color: var(--fg-faint);
     transition: background 0.12s ease, color 0.12s ease;
   }
-  .statusbar .sb-seg-btn:hover {
-    color: var(--fg-bright);
-    background: var(--surface-2);
-  }
+  .statusbar .sb-seg-btn:hover { color: var(--fg-bright); background: var(--surface-2); }
   .statusbar .sb-seg-btn .sb-key {
-    transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+    transition: color 0.12s ease, border-color 0.12s ease;
   }
-  .statusbar .sb-seg-btn:hover .sb-key {
-    color: var(--accent);
-    border-color: var(--accent-dim, var(--accent));
-  }
-  .statusbar .sb-seg-btn:active {
-    transform: translateY(0.5px);
-  }
+  .statusbar .sb-seg-btn:hover .sb-key { color: var(--accent); border-color: var(--accent); }
+  .statusbar .sb-seg-btn:active { transform: translateY(0.5px); }
 </style>
