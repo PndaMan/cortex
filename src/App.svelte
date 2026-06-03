@@ -25,6 +25,7 @@
   import GenerateMaterial from "./views/GenerateMaterial.svelte";
   import NotesView from "./views/NotesView.svelte";
   import CalendarView from "./views/CalendarView.svelte";
+  import BrowserView from "./views/BrowserView.svelte";
   import Settings from "./views/Settings.svelte";
   import Onboarding from "./views/Onboarding.svelte";
 
@@ -137,6 +138,8 @@
           <NotesView />
         {:else if app.view === "calendar"}
           <CalendarView />
+        {:else if app.view === "browser"}
+          <BrowserView />
         {:else if app.view === "settings"}
           <Settings />
         {/if}

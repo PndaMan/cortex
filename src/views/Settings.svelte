@@ -17,6 +17,7 @@
     { id: "appearance", label: "Appearance",    icon: "grid" },
     { id: "keybinds",   label: "Keybinds",      icon: "cmd" },
     { id: "homelab",    label: "Homelab",       icon: "globe" },
+    { id: "calendar",   label: "Google Calendar", icon: "globe" },
     { id: "audio",      label: "Audio",         icon: "music" },
     { id: "data",       label: "Data & privacy",icon: "doc" },
     { id: "about",      label: "About",         icon: "diamond" },
@@ -227,6 +228,61 @@
 
   function saveSearxng() {
     api.setSetting("searxng_url", searxng).catch(() => {});
+  }
+
+  // ---- Google Calendar ----
+  let gClientId = $state("");
+  let gClientSecret = $state("");
+  let gStatus = $state<api.GoogleStatus | null>(null);
+  let gBusy = $state(false);
+  $effect(() => {
+    if (tab === "calendar" && gStatus === null) loadGoogle();
+  });
+  async function loadGoogle() {
+    try {
+      gClientId = (await api.getSetting("google_client_id")) ?? "";
+      gClientSecret = (await api.getSetting("google_client_secret")) ?? "";
+      gStatus = await api.googleStatus();
+    } catch {
+      gStatus = { connected: false, email: null, configured: false };
+    }
+  }
+  function saveGoogleCreds() {
+    api.setSettings({
+      google_client_id: gClientId.trim(),
+      google_client_secret: gClientSecret.trim(),
+    }).catch(() => {});
+  }
+  async function connectGoogle() {
+    gBusy = true;
+    try {
+      saveGoogleCreds();
+      gStatus = await api.googleConnect();
+      app.pushToast({ kind: "success", title: "Google Calendar connected", body: gStatus.email ?? undefined });
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Connect failed", body: String(e) });
+    } finally {
+      gBusy = false;
+    }
+  }
+  async function syncGoogle() {
+    gBusy = true;
+    try {
+      const r = await api.googleSync();
+      app.pushToast({ kind: "success", title: "Calendar synced", body: `${r.pulled} pulled · ${r.pushed} pushed` });
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Sync failed", body: String(e) });
+    } finally {
+      gBusy = false;
+    }
+  }
+  async function disconnectGoogle() {
+    try {
+      gStatus = await api.googleDisconnect();
+      app.pushToast({ kind: "info", title: "Google disconnected" });
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Disconnect failed", body: String(e) });
+    }
   }
 
   async function testSearxng() {
@@ -1060,6 +1116,73 @@ Notes: {about}</pre>
                   onChange={(v) => (voiceB = v)}
                   options={[{ id: "theo", label: "Theo · calm" }, { id: "rex", label: "Rex · energetic" }, { id: "sol", label: "Sol · deep" }]}
                 />
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+    <!-- ===== GOOGLE CALENDAR ===== -->
+    {:else if tab === "calendar"}
+      <div class="set-pane">
+        <header class="set-head">
+          <div class="eyebrow">Google Calendar</div>
+          <h1 class="read set-title">Sync your calendar</h1>
+          <p class="set-sub">Two-way sync with Google Calendar. The native Cortex calendar works fully without this — connecting just mirrors events both ways.</p>
+        </header>
+
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">Status</h3>
+          </div>
+          <div class="set-card">
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">Connection</div>
+                <div class="set-row-d mono faint">
+                  {#if gStatus?.connected}
+                    Connected{gStatus.email ? " · " + gStatus.email : ""}
+                  {:else if gStatus?.configured}
+                    Credentials saved — not connected yet
+                  {:else}
+                    Not configured
+                  {/if}
+                </div>
+              </div>
+              <div class="set-row-r">
+                {#if gStatus?.connected}
+                  <div class="row-inline">
+                    <button class="btn" onclick={syncGoogle} disabled={gBusy}>
+                      <Icon name="refresh" size={12} /> Sync now
+                    </button>
+                    <button class="btn btn--danger" onclick={disconnectGoogle} disabled={gBusy}>Disconnect</button>
+                  </div>
+                {:else}
+                  <button class="btn btn--primary" onclick={connectGoogle} disabled={gBusy}>
+                    <Icon name="globe" size={12} /> {gBusy ? "Connecting…" : "Connect Google"}
+                  </button>
+                {/if}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">Credentials</h3>
+            <p class="set-group-d">Create an OAuth client of type “Desktop app” in Google Cloud → APIs &amp; Services → Credentials, enable the Calendar API, then paste the ID and secret here.</p>
+          </div>
+          <div class="set-card">
+            <div class="set-row stacked">
+              <div class="set-row-l"><div class="set-row-t">Client ID</div></div>
+              <div class="set-row-r">
+                <input class="input mono" bind:value={gClientId} onblur={saveGoogleCreds} placeholder="…apps.googleusercontent.com" />
+              </div>
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-l"><div class="set-row-t">Client secret</div></div>
+              <div class="set-row-r">
+                <input class="input mono" type="password" bind:value={gClientSecret} onblur={saveGoogleCreds} placeholder="GOCSPX-…" />
               </div>
             </div>
           </div>

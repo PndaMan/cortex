@@ -6,6 +6,7 @@ mod commands;
 mod db;
 mod embed;
 mod error;
+mod google;
 mod ingest;
 mod llm;
 mod models;
@@ -103,6 +104,9 @@ pub fn run() {
             commands::db_stats,
             commands::delete_all_data,
             commands::ping_url,
+            commands::open_browser,
+            commands::browser_url,
+            commands::close_browser,
             // notes
             notes::create_note,
             notes::list_notes,
@@ -120,6 +124,11 @@ pub fn run() {
             // review
             review::record_attempt,
             review::review_set,
+            // google calendar
+            google::google_status,
+            google::google_connect,
+            google::google_disconnect,
+            google::google_sync,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cortex");

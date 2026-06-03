@@ -250,6 +250,26 @@ export const dbStats = () => invoke<DbStats>("db_stats");
 export const deleteAllData = () => invoke<void>("delete_all_data");
 export const pingUrl = (url: string) => invoke<boolean>("ping_url", { url });
 
+// ---- Google Calendar (OAuth + sync) ----
+export interface GoogleStatus {
+  connected: boolean;
+  email: string | null;
+  configured: boolean;
+}
+export interface SyncResult {
+  pulled: number;
+  pushed: number;
+}
+export const googleStatus = () => invoke<GoogleStatus>("google_status");
+export const googleConnect = () => invoke<GoogleStatus>("google_connect");
+export const googleDisconnect = () => invoke<GoogleStatus>("google_disconnect");
+export const googleSync = () => invoke<SyncResult>("google_sync");
+
+// ---- in-app browser (child webview window) ----
+export const openBrowser = (url: string) => invoke<void>("open_browser", { url });
+export const browserUrl = () => invoke<string>("browser_url");
+export const closeBrowser = () => invoke<void>("close_browser");
+
 // ---- source re-filing ----
 export const moveSource = (id: string, subjectId: string, topicId?: string | null) =>
   invoke<Source>("move_source", { id, subjectId, topicId });

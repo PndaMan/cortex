@@ -12,7 +12,7 @@ use crate::repo;
 use crate::vector::f32s_to_blob;
 use rusqlite::Connection;
 use std::path::Path;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, Url, WebviewUrl, WebviewWindowBuilder};
 
 const NO_MODEL: &str =
     "No model configured — add an API key in Settings → API keys (Gemini or OpenRouter), then pick it under Settings → Models.";
@@ -797,7 +797,7 @@ pub async fn generate_cheatsheet(
             .map(|t| t.name.clone())
             .unwrap_or_default();
         let spec =
-            repo::get_setting(&c, "model_cheatsheet")?.unwrap_or_else(|| "gemini:gemini-2.5-pro".into());
+            repo::get_setting(&c, "model_cheatsheet")?.unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
         (ctx, n, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c))
     };
     let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
@@ -1340,6 +1340,50 @@ pub async fn ping_url(url: String) -> Result<bool> {
     })
     .await
     .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+}
+
+// ---- in-app browser (real child webview window) -----------------------
+
+/// Label of the single reusable browser window.
+const BROWSER_LABEL: &str = "cortex-browser";
+
+/// Open (or navigate, if already open) a child webview window to `url`. This is
+/// the in-app browser that replaces the SearXNG dependency: the user browses any
+/// page here, then captures it as a source. Sync command → runs on the main
+/// thread, which window creation requires.
+#[tauri::command]
+pub fn open_browser(app: AppHandle, url: String) -> Result<()> {
+    let parsed = Url::parse(url.trim()).map_err(|e| Error::Other(format!("invalid URL: {e}")))?;
+    if let Some(win) = app.get_webview_window(BROWSER_LABEL) {
+        win.navigate(parsed).map_err(|e| Error::Other(e.to_string()))?;
+        let _ = win.set_focus();
+    } else {
+        WebviewWindowBuilder::new(&app, BROWSER_LABEL, WebviewUrl::External(parsed))
+            .title("Cortex Browser")
+            .inner_size(1024.0, 720.0)
+            .build()
+            .map_err(|e| Error::Other(e.to_string()))?;
+    }
+    Ok(())
+}
+
+/// The browser window's current/live URL (may differ from the in-app address
+/// bar after the user clicks links). Empty string when the window is closed.
+#[tauri::command]
+pub fn browser_url(app: AppHandle) -> Result<String> {
+    match app.get_webview_window(BROWSER_LABEL) {
+        Some(win) => Ok(win.url().map(|u| u.to_string()).unwrap_or_default()),
+        None => Ok(String::new()),
+    }
+}
+
+/// Close the browser window if it is open (no-op otherwise).
+#[tauri::command]
+pub fn close_browser(app: AppHandle) -> Result<()> {
+    if let Some(win) = app.get_webview_window(BROWSER_LABEL) {
+        let _ = win.close();
+    }
+    Ok(())
 }
 
 /// Lightweight environment probe for the Settings screen (later slice).

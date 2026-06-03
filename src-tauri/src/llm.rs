@@ -42,15 +42,24 @@ impl Llm for GeminiLlm {
             self.model, self.api_key
         );
         // Gemini 2.5 models reason with hidden "thinking" tokens that draw from
-        // the SAME maxOutputTokens budget. A small budget (4096) is routinely
-        // exhausted by thinking before any answer text is emitted, leaving an
-        // empty `parts[0].text` and a MAX_TOKENS finishReason — the real cause
-        // of "generation doesn't work at all" for cheatsheet/quiz/flashcards.
-        // A roomier budget lets the model finish the actual JSON.
+        // the SAME maxOutputTokens budget. A small budget is routinely exhausted
+        // by thinking before any answer text is emitted, leaving an empty
+        // response with a MAX_TOKENS finishReason — the real cause of
+        // "generation doesn't work at all" for cheatsheet/material.
+        // Two defenses: a roomy budget, and — for flash models, which allow it —
+        // disable thinking entirely so every token goes to the actual output.
+        // (gemini-2.5-pro rejects thinkingBudget:0, so only set it for flash.)
+        let mut generation_config = serde_json::json!({
+            "temperature": 0.3,
+            "maxOutputTokens": 16384
+        });
+        if self.model.contains("flash") {
+            generation_config["thinkingConfig"] = serde_json::json!({ "thinkingBudget": 0 });
+        }
         let body = serde_json::json!({
             "system_instruction": { "parts": [{ "text": system }] },
             "contents": [{ "role": "user", "parts": [{ "text": user }] }],
-            "generationConfig": { "temperature": 0.3, "maxOutputTokens": 8192 }
+            "generationConfig": generation_config
         });
         let resp = client.post(&url).json(&body).send()?;
         if !resp.status().is_success() {

@@ -1202,6 +1202,16 @@ pub fn upsert_event_by_google_id(
     }
 }
 
+/// Attach a Google Calendar event id to a local event after pushing it to
+/// Google (the sync path uses this to avoid re-creating already-synced events).
+pub fn set_event_google_id(conn: &Connection, id: &str, google_id: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE events SET google_id=?2, updated_at=?3 WHERE id=?1",
+        params![id, google_id, now_ms()],
+    )?;
+    Ok(())
+}
+
 // ---- review (spaced repetition) ---------------------------------------
 
 #[allow(clippy::too_many_arguments)]
