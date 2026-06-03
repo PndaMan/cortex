@@ -145,14 +145,16 @@ fn map_source(r: &rusqlite::Row) -> rusqlite::Result<Source> {
         meta: r.get(6)?,
         origin: r.get(7)?,
         error: r.get(8)?,
+        content: r.get(9)?,
+        stored_path: r.get(10)?,
         tags: Vec::new(),
-        created_at: r.get(9)?,
-        updated_at: r.get(10)?,
+        created_at: r.get(11)?,
+        updated_at: r.get(12)?,
     })
 }
 
 const SOURCE_COLS: &str =
-    "id, subject_id, topic_id, name, kind, status, meta, origin, error, created_at, updated_at";
+    "id, subject_id, topic_id, name, kind, status, meta, origin, error, content, stored_path, created_at, updated_at";
 
 pub fn insert_source(
     conn: &Connection,
@@ -183,6 +185,15 @@ pub fn finalize_source(
     conn.execute(
         "UPDATE sources SET status=?2, meta=?3, content=?4, error=?5, updated_at=?6 WHERE id=?1",
         params![id, status, meta, content, error, now_ms()],
+    )?;
+    Ok(())
+}
+
+/// Persist the stable on-disk path to a source's original/rendered bytes.
+pub fn set_stored_path(conn: &Connection, id: &str, stored_path: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE sources SET stored_path=?2, updated_at=?3 WHERE id=?1",
+        params![id, stored_path, now_ms()],
     )?;
     Ok(())
 }
@@ -528,6 +539,85 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
          ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         params![key, value],
     )?;
+    Ok(())
+}
+
+// ---- long-term memory --------------------------------------------------
+
+pub fn insert_memory(conn: &Connection, content: &str, source: Option<&str>) -> Result<Memory> {
+    let id = new_id();
+    let ts = now_ms();
+    conn.execute(
+        "INSERT INTO user_memory (id, content, source, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        params![id, content, source, ts],
+    )?;
+    Ok(Memory {
+        id,
+        content: content.to_string(),
+        source: source.map(|s| s.to_string()),
+        created_at: ts,
+        updated_at: ts,
+    })
+}
+
+pub fn list_memory(conn: &Connection) -> Result<Vec<Memory>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, content, source, created_at, updated_at FROM user_memory ORDER BY created_at DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(Memory {
+            id: r.get(0)?,
+            content: r.get(1)?,
+            source: r.get(2)?,
+            created_at: r.get(3)?,
+            updated_at: r.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn delete_memory(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM user_memory WHERE id=?1", params![id])?;
+    Ok(())
+}
+
+// ---- database stats / maintenance -------------------------------------
+
+/// Count rows in a table, returning 0 if the table does not exist.
+fn count_table(conn: &Connection, table: &str) -> i64 {
+    conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+        .unwrap_or(0)
+}
+
+pub fn content_counts(conn: &Connection) -> (i64, i64, i64) {
+    (
+        count_table(conn, "subjects"),
+        count_table(conn, "sources"),
+        count_table(conn, "chunks"),
+    )
+}
+
+/// Delete all user content while keeping the settings table intact.
+pub fn delete_all_content(conn: &Connection) -> Result<()> {
+    // Order matters only loosely thanks to ON DELETE CASCADE, but be explicit.
+    for table in [
+        "chat_messages",
+        "chat_threads",
+        "cheatsheet_sections",
+        "cheatsheets",
+        "materials",
+        "chunks",
+        "source_tags",
+        "sources",
+        "topics",
+        "subjects",
+        "tags",
+        "user_memory",
+    ] {
+        // Ignore "no such table" so a partial schema never blocks the wipe.
+        let _ = conn.execute(&format!("DELETE FROM {table}"), []);
+    }
     Ok(())
 }
 

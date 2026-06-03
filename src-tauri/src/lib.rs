@@ -28,6 +28,32 @@ pub fn run() {
             let db_path = dir.join("cortex.db");
             let state = AppState::new(&db_path).expect("init database");
             app.manage(state);
+
+            // On Linux (WebKitGTK) getUserMedia is denied by default, which
+            // surfaces as NotAllowedError in the recorder. Auto-grant audio
+            // media permission requests for the app's own webview.
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.with_webview(|webview| {
+                        use webkit2gtk::glib::Cast;
+                        use webkit2gtk::{
+                            PermissionRequestExt, UserMediaPermissionRequest, WebViewExt,
+                        };
+                        let wv = webview.inner();
+                        wv.connect_permission_request(|_wv, req| {
+                            if req.downcast_ref::<UserMediaPermissionRequest>().is_some() {
+                                req.allow();
+                                true
+                            } else {
+                                false
+                            }
+                        });
+                    });
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -56,6 +82,13 @@ pub fn run() {
             commands::get_all_settings,
             commands::set_settings,
             commands::save_recording,
+            commands::web_search,
+            commands::add_memory,
+            commands::list_memory,
+            commands::delete_memory,
+            commands::db_stats,
+            commands::delete_all_data,
+            commands::ping_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cortex");

@@ -114,12 +114,52 @@ impl Llm for OpenAiCompatLlm {
     }
 }
 
+/// Anthropic Claude Messages API (BYOK).
+pub struct ClaudeLlm {
+    pub api_key: String,
+    pub model: String,
+}
+
+impl Llm for ClaudeLlm {
+    fn complete(&self, system: &str, user: &str) -> Result<String> {
+        let client = reqwest::blocking::Client::new();
+        let body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": 4096,
+            "temperature": 0.3,
+            "system": system,
+            "messages": [{ "role": "user", "content": user }]
+        });
+        let resp = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&body)
+            .send()?;
+        if !resp.status().is_success() {
+            let code = resp.status();
+            let txt = resp.text().unwrap_or_default();
+            return Err(Error::Other(format!("claude {code}: {}", truncate(&txt, 300))));
+        }
+        let json: serde_json::Value = resp.json()?;
+        let text = json["content"][0]["text"]
+            .as_str()
+            .ok_or_else(|| Error::Other("claude: empty response".into()))?
+            .to_string();
+        Ok(text)
+    }
+    fn name(&self) -> String {
+        format!("claude:{}", self.model)
+    }
+}
+
 /// API keys available from settings.
 #[derive(Default)]
 pub struct Keys {
     pub gemini: Option<String>,
     pub openrouter: Option<String>,
     pub openai: Option<String>,
+    pub claude: Option<String>,
     pub custom_endpoint: Option<String>,
 }
 
@@ -153,6 +193,9 @@ pub fn from_spec(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
                 label: "openai",
             }) as Box<dyn Llm>
         }),
+        "claude" | "anthropic" => nonempty(&keys.claude).map(|k| {
+            Box::new(ClaudeLlm { api_key: k.to_string(), model }) as Box<dyn Llm>
+        }),
         "custom" => nonempty(&keys.custom_endpoint).map(|base| {
             Box::new(OpenAiCompatLlm {
                 base_url: base.to_string(),
@@ -161,7 +204,7 @@ pub fn from_spec(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
                 label: "custom",
             }) as Box<dyn Llm>
         }),
-        // ollama / claude land in a later slice.
+        // ollama lands in a later slice.
         _ => None,
     }
 }

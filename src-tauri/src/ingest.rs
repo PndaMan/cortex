@@ -7,6 +7,7 @@ use crate::embed::Embedder;
 use crate::error::{Error, Result};
 use crate::models::AddSourceInput;
 use std::path::Path;
+use std::time::Duration;
 
 /// Detect the source kind from explicit input, then path/url extension.
 pub fn detect_kind(input: &AddSourceInput) -> String {
@@ -60,7 +61,10 @@ pub fn parse(kind: &str, input: &AddSourceInput) -> Result<(String, Option<Strin
                 .url
                 .as_deref()
                 .ok_or_else(|| Error::Other("web source needs a url".into()))?;
-            let html = reqwest::blocking::get(url)?.text()?;
+            let client = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()?;
+            let html = client.get(url).send()?.text()?;
             Ok((html_to_text(&html), None))
         }
         "pdf" | "docx" | "pptx" => {
@@ -133,6 +137,8 @@ fn decode_entities(s: &str) -> String {
 }
 
 /// Convert pdf/docx/pptx to text via `libreoffice --headless --convert-to txt`.
+/// Unlike before, a missing binary or failed conversion is a hard `Err` (with
+/// actionable detail) rather than an `Ok(empty)` that silently makes an empty draft.
 fn libreoffice_to_text(path: &str) -> Result<(String, Option<String>)> {
     use std::process::Command;
     let src = Path::new(path);
@@ -155,23 +161,65 @@ fn libreoffice_to_text(path: &str) -> Result<(String, Option<String>)> {
             let txt_path = outdir.join(format!("{stem}.txt"));
             match std::fs::read_to_string(&txt_path) {
                 Ok(t) => Ok((t, None)),
-                Err(e) => Ok((
-                    String::new(),
-                    Some(format!("libreoffice produced no text output: {e}")),
-                )),
+                Err(e) => Err(Error::Other(format!(
+                    "libreoffice produced no text output for {path}: {e}"
+                ))),
             }
         }
-        Ok(o) => Ok((
-            String::new(),
-            Some(format!(
-                "libreoffice conversion failed: {}",
-                String::from_utf8_lossy(&o.stderr)
-            )),
-        )),
-        Err(e) => Ok((
-            String::new(),
-            Some(format!("libreoffice not runnable ({e}); install it to ingest {path}")),
-        )),
+        Ok(o) => Err(Error::Other(format!(
+            "libreoffice conversion of {path} failed: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ))),
+        Err(e) => Err(Error::Other(format!(
+            "libreoffice is not runnable ({e}); install LibreOffice to ingest {path}"
+        ))),
+    };
+    let _ = std::fs::remove_dir_all(&outdir);
+    result
+}
+
+/// Render a docx/pptx (or any LibreOffice-openable doc) to PDF and copy the
+/// result to `dest`. Returns a hard `Err` (with stderr) if conversion fails so
+/// callers never persist a half-ingested source silently.
+pub fn libreoffice_to_pdf(path: &str, dest: &Path) -> Result<()> {
+    use std::process::Command;
+    let src = Path::new(path);
+    if !src.exists() {
+        return Err(Error::NotFound(format!("file not found: {path}")));
+    }
+    let outdir = std::env::temp_dir().join(format!("cortex-pdf-{}", crate::db::new_id()));
+    std::fs::create_dir_all(&outdir)?;
+
+    let bin = libreoffice_bin();
+    let output = Command::new(&bin)
+        .args(["--headless", "--convert-to", "pdf", "--outdir"])
+        .arg(&outdir)
+        .arg(src)
+        .output();
+
+    let result: Result<()> = match output {
+        Ok(o) if o.status.success() => {
+            let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
+            let pdf_path = outdir.join(format!("{stem}.pdf"));
+            if pdf_path.exists() {
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&pdf_path, dest)?;
+                Ok(())
+            } else {
+                Err(Error::Other(format!(
+                    "libreoffice did not produce a PDF for {path}"
+                )))
+            }
+        }
+        Ok(o) => Err(Error::Other(format!(
+            "libreoffice PDF conversion of {path} failed: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ))),
+        Err(e) => Err(Error::Other(format!(
+            "libreoffice is not runnable ({e}); install LibreOffice to render {path}"
+        ))),
     };
     let _ = std::fs::remove_dir_all(&outdir);
     result

@@ -37,6 +37,10 @@ pub struct Source {
     pub meta: Option<String>,
     pub origin: Option<String>,
     pub error: Option<String>,
+    /// Extracted plaintext (for txt/md/url and as fallback display text).
+    pub content: Option<String>,
+    /// Stable on-disk path to the original (or rendered PDF) for preview.
+    pub stored_path: Option<String>,
     pub tags: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -144,6 +148,41 @@ pub struct AddSourceInput {
     pub url: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+}
+
+// ---- web search -------------------------------------------------------
+
+/// A single web search result from a SearXNG instance.
+#[derive(Debug, Clone, Serialize)]
+pub struct WebResult {
+    pub title: String,
+    pub url: String,
+    pub host: String,
+    pub snippet: String,
+    pub engine: String,
+}
+
+// ---- long-term memory -------------------------------------------------
+
+/// A manually-saved long-term memory fact, injected into chat/synthesis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Memory {
+    pub id: String,
+    pub content: String,
+    pub source: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+// ---- database stats ---------------------------------------------------
+
+/// Storage + content counts for the Settings → Data screen.
+#[derive(Debug, Clone, Serialize)]
+pub struct DbStats {
+    pub db_bytes: i64,
+    pub subjects: i64,
+    pub sources: i64,
+    pub chunks: i64,
 }
 
 /// Progress event emitted on the `ingest:progress` channel.

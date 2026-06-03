@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 /// Embedded migrations. Index in the array == target `user_version`.
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_init.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/0001_init.sql"),
+    include_str!("../migrations/0002_preview_and_memory.sql"),
+];
 
 /// Shared application state: a single SQLite connection behind a Mutex.
 /// rusqlite is synchronous; Tauri runs commands on a worker pool so brief

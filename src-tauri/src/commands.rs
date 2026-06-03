@@ -27,8 +27,68 @@ fn read_keys(c: &Connection) -> Result<llm::Keys> {
         gemini: repo::get_setting(c, "gemini_api_key")?,
         openrouter: repo::get_setting(c, "openrouter_api_key")?,
         openai: repo::get_setting(c, "openai_api_key")?,
+        claude: repo::get_setting(c, "claude_api_key")?,
         custom_endpoint: repo::get_setting(c, "custom_endpoint")?,
     })
+}
+
+/// Build a concise "About the user" + "Remembered facts" preamble from the
+/// profile settings and all stored long-term memories. Empty string when there
+/// is nothing personalized to add.
+fn profile_preamble(c: &Connection) -> Result<String> {
+    let get = |k: &str| repo::get_setting(c, k).ok().flatten().filter(|s| !s.trim().is_empty());
+    let name = get("profile_name");
+    let level = get("profile_level");
+    let field = get("profile_field");
+    let about = get("profile_about");
+
+    let mut about_bits: Vec<String> = Vec::new();
+    if let Some(n) = &name {
+        about_bits.push(format!("Name: {n}"));
+    }
+    if let Some(l) = &level {
+        about_bits.push(format!("Level: {l}"));
+    }
+    if let Some(f) = &field {
+        about_bits.push(format!("Field of study: {f}"));
+    }
+    if let Some(a) = &about {
+        about_bits.push(a.clone());
+    }
+
+    let memories = repo::list_memory(c)?;
+
+    let mut out = String::new();
+    if !about_bits.is_empty() {
+        out.push_str("About the user:\n");
+        for b in &about_bits {
+            out.push_str("- ");
+            out.push_str(b);
+            out.push('\n');
+        }
+    }
+    if !memories.is_empty() {
+        out.push_str("Remembered facts:\n");
+        for m in memories.iter().take(50) {
+            out.push_str("- ");
+            out.push_str(m.content.trim());
+            out.push('\n');
+        }
+    }
+    Ok(out)
+}
+
+/// Map `profile_style` to a one-line length/verbosity instruction for synthesis.
+fn style_instruction(c: &Connection) -> String {
+    let style = repo::get_setting(c, "profile_style")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    match style.as_str() {
+        "concise" => " Keep explanations concise and to the point.".to_string(),
+        "detailed" => " Be thorough and detailed in explanations.".to_string(),
+        _ => String::new(),
+    }
 }
 
 fn slug(s: &str) -> String {
@@ -189,6 +249,38 @@ pub fn add_source(
 
     emit_progress(&app, &source_id, "parsing", &format!("reading {kind}"), 15);
 
+    // 1b. persist the ORIGINAL bytes for file-based kinds so the frontend can
+    //     render a real preview (txt/md/url keep stored_path NULL — their text
+    //     lives in `content`). For pptx/docx we ALSO render a PDF below.
+    let sources_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| Error::Other(e.to_string()))?
+        .join("sources");
+    let is_file_kind = matches!(kind.as_str(), "pdf" | "image" | "pptx" | "docx" | "audio");
+    if is_file_kind {
+        if let Some(src_path) = input.path.as_deref() {
+            let ext = Path::new(src_path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("bin")
+                .to_lowercase();
+            std::fs::create_dir_all(&sources_dir)?;
+            let dest = sources_dir.join(format!("{source_id}.{ext}"));
+            if let Err(e) = std::fs::copy(src_path, &dest) {
+                let c = state.db.lock().unwrap();
+                let msg = format!("failed to store original file: {e}");
+                let _ = repo::finalize_source(&c, &source_id, "error", None, None, Some(&msg));
+                emit_progress(&app, &source_id, "error", &msg, 100);
+                return Err(Error::Io(e));
+            }
+            if let Some(p) = dest.to_str() {
+                let c = state.db.lock().unwrap();
+                repo::set_stored_path(&c, &source_id, p)?;
+            }
+        }
+    }
+
     // 2. parse (no lock — may hit network / libreoffice)
     let parse_res = ingest::parse(&kind, &input);
     let (text, warning) = match parse_res {
@@ -200,6 +292,26 @@ pub fn add_source(
             return Err(e);
         }
     };
+
+    // 2b. pptx/docx: render a PDF for inline slide preview, overriding the
+    //     stored original-bytes path so the frontend shows PDF pages. A failed
+    //     render is a hard error (don't silently ship a half-ingested source).
+    if matches!(kind.as_str(), "pptx" | "docx") {
+        if let Some(src_path) = input.path.as_deref() {
+            emit_progress(&app, &source_id, "parsing", "rendering slides to PDF", 25);
+            let pdf_dest = sources_dir.join(format!("{source_id}.pdf"));
+            if let Err(e) = ingest::libreoffice_to_pdf(src_path, &pdf_dest) {
+                let c = state.db.lock().unwrap();
+                let _ = repo::finalize_source(&c, &source_id, "error", None, None, Some(&e.to_string()));
+                emit_progress(&app, &source_id, "error", &e.to_string(), 100);
+                return Err(e);
+            }
+            if let Some(p) = pdf_dest.to_str() {
+                let c = state.db.lock().unwrap();
+                repo::set_stored_path(&c, &source_id, p)?;
+            }
+        }
+    }
     let chars = text.chars().count() as i64;
 
     emit_progress(&app, &source_id, "chunking", "splitting text", 35);
@@ -381,13 +493,14 @@ pub fn chat_answer(
     source_id: Option<String>,
     query: String,
 ) -> Result<ChatAnswer> {
-    let (embed_provider, ollama_url, chat_spec, keys) = {
+    let (embed_provider, ollama_url, chat_spec, keys, preamble) = {
         let c = state.db.lock().unwrap();
         (
             repo::get_setting(&c, "embed_provider")?.unwrap_or_else(|| "stub".into()),
             repo::get_setting(&c, "ollama_url")?,
             repo::get_setting(&c, "model_chat")?.unwrap_or_else(|| "gemini:gemini-2.5-flash".into()),
             read_keys(&c)?,
+            profile_preamble(&c)?,
         )
     };
     // Require a real model before doing any work.
@@ -416,9 +529,22 @@ pub fn chat_answer(
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    let system = "You are Cortex, a precise study assistant. Answer ONLY from the provided \
+    let base_system = "You are Cortex, a precise study assistant. Answer ONLY from the provided \
         source context. If the context is insufficient, say so plainly. Cite the sources you \
         use inline using the format ⟦source-name · location⟧. Be concise and accurate.";
+    let system = if preamble.is_empty() {
+        base_system.to_string()
+    } else {
+        format!("{preamble}\nUse the above to personalize tone and examples, but {}", {
+            // lowercase the first letter so the sentence reads naturally
+            let mut chars = base_system.chars();
+            match chars.next() {
+                Some(f) => f.to_lowercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+    };
+    let system = system.as_str();
     let user = if context.is_empty() {
         format!("(No indexed sources are in scope yet.)\n\nQUESTION: {query}")
     } else {
@@ -492,7 +618,7 @@ pub fn generate_cheatsheet(
     subject_id: String,
     topic_id: Option<String>,
 ) -> Result<CheatsheetData> {
-    let (context, sources, subject_name, topic_name, spec, keys) = {
+    let (context, sources, subject_name, topic_name, spec, keys, style) = {
         let c = state.db.lock().unwrap();
         let (ctx, n) = repo::context_text(&c, &subject_id, topic_id.as_deref(), 24000)?;
         let subj = repo::get_subject(&c, &subject_id)?;
@@ -504,7 +630,7 @@ pub fn generate_cheatsheet(
             .unwrap_or_default();
         let spec =
             repo::get_setting(&c, "model_cheatsheet")?.unwrap_or_else(|| "gemini:gemini-2.5-pro".into());
-        (ctx, n, subj.name, tname, spec, read_keys(&c)?)
+        (ctx, n, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c))
     };
     let model = llm::from_spec(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
     if context.trim().is_empty() {
@@ -513,12 +639,13 @@ pub fn generate_cheatsheet(
         ));
     }
 
-    let system = "You are an expert study-notes synthesizer for a university student. Produce a \
+    let system = format!("You are an expert study-notes synthesizer for a university student. Produce a \
         COMPLETE, accurate cheatsheet from the source material — completeness matters more than \
         brevity; do not drop key points. Output ONLY valid JSON, no prose, in this exact shape: \
-        {\"sections\":[{\"title\":string,\"items\":[{\"t\":\"term\",\"d\":\"explanation\"}]}]}. \
+        {{\"sections\":[{{\"title\":string,\"items\":[{{\"t\":\"term\",\"d\":\"explanation\"}}]}}]}}. \
         Use exactly these sections in this order: Definitions, Key Concepts, Formulas, Worked \
-        Examples, Common Pitfalls, Quick Recall.";
+        Examples, Common Pitfalls, Quick Recall.{style}");
+    let system = system.as_str();
     let user = format!("Subject: {subject_name} › {topic_name}\n\nSOURCE MATERIAL:\n{context}\n\nProduce the cheatsheet JSON now.");
 
     let raw = model.complete(system, &user)?;
@@ -596,7 +723,7 @@ pub fn generate_material(
         "flashcards" => "model_flashcard",
         _ => "model_cheatsheet",
     };
-    let (context, subject_name, topic_name, spec, keys) = {
+    let (context, subject_name, topic_name, spec, keys, style) = {
         let c = state.db.lock().unwrap();
         let (ctx, _) = repo::context_text(&c, &subject_id, topic_id.as_deref(), 18000)?;
         let subj = repo::get_subject(&c, &subject_id)?;
@@ -608,7 +735,7 @@ pub fn generate_material(
             .unwrap_or_default();
         let spec = repo::get_setting(&c, setting_key)?
             .unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
-        (ctx, subj.name, tname, spec, read_keys(&c)?)
+        (ctx, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c))
     };
     let model = llm::from_spec(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
     if context.trim().is_empty() {
@@ -647,6 +774,7 @@ pub fn generate_material(
             format!("{topic_name} flashcards"),
         ),
     };
+    let system = format!("{system}{style}");
     let user = format!("Subject: {subject_name} › {topic_name}\n\nSOURCE MATERIAL:\n{context}\n\nGenerate now.");
 
     let raw = model.complete(&system, &user)?;
@@ -849,6 +977,144 @@ pub fn save_recording(
         chars: transcript.chars().count() as i64,
         warning,
     })
+}
+
+// ---- web search (SearXNG) --------------------------------------------
+
+/// Best-effort host extraction from a URL without pulling in a URL crate.
+fn host_from_url(url: &str) -> String {
+    let after_scheme = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let authority = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(after_scheme);
+    // strip userinfo and port
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    authority
+        .split(':')
+        .next()
+        .unwrap_or(authority)
+        .trim_start_matches("www.")
+        .to_string()
+}
+
+/// Query a configured SearXNG instance for web results.
+#[tauri::command]
+pub fn web_search(
+    state: State<AppState>,
+    query: String,
+    categories: Option<String>,
+) -> Result<Vec<WebResult>> {
+    let base = {
+        let c = state.db.lock().unwrap();
+        repo::get_setting(&c, "searxng_url")?
+    };
+    let base = base
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| Error::Other("searxng_url not configured".into()))?;
+    let base = base.trim_end_matches('/');
+    let cats = categories.filter(|s| !s.is_empty()).unwrap_or_else(|| "general".into());
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()?;
+    let resp = client
+        .get(format!("{base}/search"))
+        .query(&[
+            ("q", query.as_str()),
+            ("format", "json"),
+            ("categories", cats.as_str()),
+            ("pageno", "1"),
+        ])
+        .send()?;
+    if !resp.status().is_success() {
+        return Err(Error::Other(format!("searxng returned {}", resp.status())));
+    }
+    let json: serde_json::Value = resp.json()?;
+    let results = json["results"].as_array().cloned().unwrap_or_default();
+    let out = results
+        .iter()
+        .map(|r| {
+            let url = r["url"].as_str().unwrap_or("").to_string();
+            WebResult {
+                title: r["title"].as_str().unwrap_or("").to_string(),
+                host: host_from_url(&url),
+                url,
+                snippet: r["content"].as_str().unwrap_or("").to_string(),
+                engine: r["engine"].as_str().unwrap_or("").to_string(),
+            }
+        })
+        .collect();
+    Ok(out)
+}
+
+// ---- long-term memory -------------------------------------------------
+
+#[tauri::command]
+pub fn add_memory(state: State<AppState>, content: String) -> Result<Memory> {
+    let c = state.db.lock().unwrap();
+    repo::insert_memory(&c, &content, None)
+}
+
+#[tauri::command]
+pub fn list_memory(state: State<AppState>) -> Result<Vec<Memory>> {
+    let c = state.db.lock().unwrap();
+    repo::list_memory(&c)
+}
+
+#[tauri::command]
+pub fn delete_memory(state: State<AppState>, id: String) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    repo::delete_memory(&c, &id)
+}
+
+// ---- data maintenance -------------------------------------------------
+
+#[tauri::command]
+pub fn db_stats(app: AppHandle, state: State<AppState>) -> Result<DbStats> {
+    let (subjects, sources, chunks) = {
+        let c = state.db.lock().unwrap();
+        repo::content_counts(&c)
+    };
+    let db_path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| Error::Other(e.to_string()))?
+        .join("cortex.db");
+    let db_bytes = std::fs::metadata(&db_path).map(|m| m.len() as i64).unwrap_or(0);
+    Ok(DbStats {
+        db_bytes,
+        subjects,
+        sources,
+        chunks,
+    })
+}
+
+#[tauri::command]
+pub fn delete_all_data(app: AppHandle, state: State<AppState>) -> Result<()> {
+    {
+        let c = state.db.lock().unwrap();
+        repo::delete_all_content(&c)?;
+    }
+    // Remove persisted files (originals + recordings), keep the dirs.
+    if let Ok(dir) = app.path().app_data_dir() {
+        for sub in ["sources", "recordings"] {
+            let _ = std::fs::remove_dir_all(dir.join(sub));
+        }
+    }
+    Ok(())
+}
+
+/// Reachability check for the homelab "Test connection" button.
+#[tauri::command]
+pub fn ping_url(url: String) -> Result<bool> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    match client.get(&url).send() {
+        Ok(resp) => Ok(resp.status().is_success()),
+        Err(_) => Ok(false),
+    }
 }
 
 /// Lightweight environment probe for the Settings screen (later slice).
