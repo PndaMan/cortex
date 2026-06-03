@@ -2,6 +2,7 @@
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import type { WebResult } from "../lib/api";
+  import { wsCache } from "../lib/websearch";
   import Icon from "../components/Icon.svelte";
 
   // Default query shown in the first tab (replaces mock.search.suggested).
@@ -48,7 +49,8 @@
 
   // ---- constants ----
   const SERP_CATS = ["All", "General", "Science", "Files", "Videos"];
-  let __tabSeq = 1;
+  // seq is seeded from the persistent cache so tab ids stay unique across remounts
+  let __tabSeq = wsCache.seq;
 
   // Deterministic favicon background derived from the host string.
   const FAV_BGS = ["#3b6ea5", "#2dd5b7", "#a31f34", "#e07a26", "#5b6ee1", "#3a5", "#b54bd6"];
@@ -100,11 +102,22 @@
   }
 
   // ---- state ----
-  const firstTab = makeTab(SUGGESTED);
-  let tabs = $state<Tab[]>([firstTab]);
-  let activeId = $state<string>(firstTab.id);
+  // Restore the previous browser session (tabs/history) from the cache, or start
+  // a fresh tab. Initial values come from a const so we don't reference $state
+  // during its own declaration.
+  const restoredTabs = (wsCache.tabs as Tab[] | null) ?? [makeTab(SUGGESTED)];
+  let tabs = $state<Tab[]>(restoredTabs);
+  let activeId = $state<string>(wsCache.activeId ?? restoredTabs[0].id);
   let inputEl = $state<HTMLInputElement | null>(null);
   let listEl = $state<HTMLElement | null>(null);
+
+  // Persist the browser session whenever it changes, so leaving and returning
+  // keeps every tab and result exactly where it was.
+  $effect(() => {
+    wsCache.tabs = tabs;
+    wsCache.activeId = activeId;
+    wsCache.seq = __tabSeq;
+  });
 
   // ---- derived ----
   const active = $derived(tabs.find((t) => t.id === activeId) ?? tabs[0]);
