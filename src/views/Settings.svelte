@@ -677,7 +677,7 @@ Notes: {about}</pre>
                     <span class="row-keytitle">
                       {k.label}
                       <span class={"key-status " + (isSet ? "ok" : "off")}>
-                        {isSet ? "connected" : "not set"}
+                        {isSet ? `connected · ${keys[k.id as keyof typeof keys].trim().length} chars` : "not set"}
                       </span>
                     </span>
                   </div>
@@ -702,6 +702,14 @@ Notes: {about}</pre>
                       <Icon name={showKey[k.id] ? "x" : "search"} size={13} />
                     </button>
                   </div>
+                  {#if isSet}
+                    <button
+                      type="button"
+                      class="btn btn--ghost btn--sm"
+                      style="margin-top:6px"
+                      onclick={() => { keys = { ...keys, [k.id]: "" }; }}
+                    >Clear</button>
+                  {/if}
                 </div>
               </div>
             {/each}

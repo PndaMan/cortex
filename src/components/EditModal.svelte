@@ -1,7 +1,7 @@
 <script lang="ts">
   // Rich, fully-themed edit modal — subjects/topics/sources with all their
   // fields. Driven by app.editing; saves through the store's update actions.
-  import { app, SUBJECT_COLORS } from "../lib/store.svelte";
+  import { app, SUBJECT_COLORS, GLYPHS } from "../lib/store.svelte";
   import Picker from "./Picker.svelte";
 
   // Local form state, seeded whenever a new target opens.
@@ -46,6 +46,17 @@
     app.closeEdit();
   }
 
+  async function del() {
+    const t = app.editing;
+    if (!t) return;
+    const ok = await app.confirm({ title: `Delete this ${t.kind}?`, danger: true, okLabel: "Delete" });
+    if (!ok) return;
+    if (t.kind === "subject") app.deleteSubject(t.id);
+    else if (t.kind === "topic") app.deleteTopic(t.id);
+    else app.deleteSource(t.id);
+    app.closeEdit();
+  }
+
   function onKey(e: KeyboardEvent) {
     if (!app.editing) return;
     e.stopPropagation();
@@ -78,25 +89,31 @@
           <span class="edit-lbl">Code</span>
           <input bind:value={code} class="input" placeholder="e.g. PHIL-101" />
         </label>
-        <div class="edit-row">
-          <label class="edit-field" style="flex:0 0 92px">
-            <span class="edit-lbl">Glyph</span>
-            <input bind:value={glyph} class="input" maxlength="2" style="text-align:center" />
-          </label>
-          <div class="edit-field" style="flex:1">
-            <span class="edit-lbl">Color</span>
-            <div class="edit-colors">
-              {#each SUBJECT_COLORS as c}
-                <button
-                  type="button"
-                  class={"swatch" + (color === c ? " on" : "")}
-                  style:background={c}
-                  aria-label={c}
-                  onclick={() => (color = c)}
-                ></button>
-              {/each}
-              <input type="color" bind:value={color} class="swatch-custom" aria-label="Custom color" />
-            </div>
+        <div class="edit-field">
+          <span class="edit-lbl">Glyph</span>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            {#each GLYPHS as g}
+              <button
+                type="button"
+                style="width:28px;height:28px;border-radius:7px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;background:var(--surface-2);border:1px solid {glyph === g ? color : 'var(--border-strong)'};color:{glyph === g ? color : 'var(--fg-muted)'}"
+                onclick={() => (glyph = g)}
+              >{g}</button>
+            {/each}
+          </div>
+        </div>
+        <div class="edit-field">
+          <span class="edit-lbl">Color</span>
+          <div class="edit-colors">
+            {#each SUBJECT_COLORS as c}
+              <button
+                type="button"
+                class={"swatch" + (color === c ? " on" : "")}
+                style:background={c}
+                aria-label={c}
+                onclick={() => (color = c)}
+              ></button>
+            {/each}
+            <input type="color" bind:value={color} class="swatch-custom" aria-label="Custom color" />
           </div>
         </div>
       {/if}
@@ -118,6 +135,7 @@
       {/if}
 
       <div class="edit-actions">
+        <button class="btn btn--danger btn--sm" type="button" style="margin-right:auto" onclick={del}>Delete</button>
         <button class="btn btn--ghost btn--sm" type="button" onclick={() => app.closeEdit()}>Cancel</button>
         <button class="btn btn--primary btn--sm" type="button" onclick={save}>Save</button>
       </div>

@@ -44,11 +44,6 @@
     });
   }
 
-  async function removeSubject(s: { id: string; name: string }, e: Event) {
-    e.stopPropagation();
-    if (await app.confirm({ title: "Delete subject?", body: `"${s.name}" and all its sources and topics will be permanently removed.`, danger: true, okLabel: "Delete" })) app.deleteSubject(s.id);
-  }
-
   function editTopic(t: { id: string; name: string }, e: Event) {
     e.stopPropagation();
     app.openEdit({ kind: "topic", id: t.id, name: t.name });
@@ -145,8 +140,8 @@
           >
             <Icon name="chevron" size={11} />
           </span>
-          <span class="s-glyph" style:color={app.subjectColor(s)}>
-            <Icon name="diamond" size={11} />
+          <span class="s-glyph" style:color={app.subjectColor(s)} style:font-size="12px">
+            {s.glyph || "◆"}
           </span>
           <span class="s-name">{s.name}</span>
           <span class="s-actions">
@@ -160,13 +155,18 @@
               <Icon name="pencil" size={12} />
             </button>
             <button
-              class="s-act s-act--danger"
+              class="s-act"
               type="button"
-              title="Delete subject"
-              aria-label="Delete {s.name}"
-              onclick={(e) => removeSubject(s, e)}
+              title="Add a topic to {s.name}"
+              aria-label="Add topic to {s.name}"
+              onclick={async (e) => {
+                e.stopPropagation();
+                app.activeSubjectId = s.id;
+                const n = await app.prompt({ title: "Add topic to " + s.name, label: "Topic name", placeholder: "e.g. Determinism" });
+                if (n) app.createTopic(n);
+              }}
             >
-              <Icon name="x" size={12} />
+              <Icon name="plus" size={12} />
             </button>
           </span>
           <span class="s-count">{s.sourceCount}</span>
@@ -338,9 +338,6 @@
   .sb-subj-row .s-act:hover {
     color: var(--fg-bright);
     background: var(--surface-3);
-  }
-  .sb-subj-row .s-act--danger:hover {
-    color: var(--err);
   }
   /* Count still hugs the dot; cancel the row's default margin-auto on name */
   .sb-subj-row .s-actions + .s-count {

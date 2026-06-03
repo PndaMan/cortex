@@ -41,7 +41,7 @@
           style:box-shadow="inset 3px 0 0 {app.subjectColor(s)}"
         >
           <div class="sc-top">
-            <span class="subj-glyph"><Icon name="diamond" size={15} color={app.subjectColor(s)} /></span>
+            <span class="subj-glyph" style="font-size:15px;line-height:1">{s.glyph || "◆"}</span>
             <span class="subj-code mono">{s.code ?? ""}</span>
             <div class="grow"></div>
             {#if s.streak > 0}
@@ -53,10 +53,10 @@
           <h3 class="subj-name read">{s.name}</h3>
           <div class="subj-stat mono">{s.sourceCount} sources · {s.topics.length} topics</div>
           <div class="subj-foot">
-            {#if s.status === "ready"}
-              <span class="status-pill status-pill--ready"><span class="dot"></span>Cheatsheet ready</span>
+            {#if s.sourceCount === 0}
+              <span class="status-pill status-pill--review"><span class="dot"></span>No sources yet</span>
             {:else}
-              <span class="status-pill status-pill--review"><span class="dot"></span>Needs review</span>
+              <span class="status-pill status-pill--ready"><span class="dot"></span>{s.sourceCount} source{s.sourceCount === 1 ? "" : "s"}</span>
             {/if}
           </div>
         </button>

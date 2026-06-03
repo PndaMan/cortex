@@ -275,11 +275,12 @@ fn emit_progress(app: &AppHandle, source_id: &str, stage: &str, detail: &str, pc
 
 /// Full pipeline: detect → parse → chunk → embed → store, emitting progress.
 #[tauri::command]
-pub fn add_source(
+pub async fn add_source(
     app: AppHandle,
-    state: State<AppState>,
     input: AddSourceInput,
 ) -> Result<IngestResult> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<IngestResult> {
+    let state = app.state::<AppState>();
     let kind = ingest::detect_kind(&input);
     let display_name = input.name.clone().unwrap_or_else(|| {
         input
@@ -464,6 +465,9 @@ pub fn add_source(
         chars,
         warning,
     })
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
 /// Embed a query and return cosine top-k chunks (foundation for scoped chat).
@@ -545,13 +549,15 @@ pub fn seed_demo(state: State<AppState>) -> Result<Vec<Subject>> {
 /// (optionally narrowed to a single source), and asks the configured LLM to
 /// answer from that context with inline ⟦source · loc⟧ citations.
 #[tauri::command]
-pub fn chat_answer(
-    state: State<AppState>,
+pub async fn chat_answer(
+    app: AppHandle,
     subject_id: String,
     level: String,
     source_id: Option<String>,
     query: String,
 ) -> Result<ChatAnswer> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<ChatAnswer> {
+    let state = app.state::<AppState>();
     let (embed_provider, ollama_url, chat_spec, keys, preamble) = {
         let c = state.db.lock().unwrap();
         (
@@ -627,6 +633,9 @@ pub fn chat_answer(
         citations,
         model: model.name(),
     })
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
 // ---- AI: cheatsheet synthesis ----------------------------------------
@@ -672,11 +681,13 @@ fn parse_cheatsheet(raw: &str) -> Vec<CsSection> {
 
 /// Synthesize a sectioned cheatsheet from a subject/topic's indexed sources.
 #[tauri::command]
-pub fn generate_cheatsheet(
-    state: State<AppState>,
+pub async fn generate_cheatsheet(
+    app: AppHandle,
     subject_id: String,
     topic_id: Option<String>,
 ) -> Result<CheatsheetData> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<CheatsheetData> {
+    let state = app.state::<AppState>();
     let (context, sources, subject_name, topic_name, spec, keys, style) = {
         let c = state.db.lock().unwrap();
         let (ctx, n) = repo::context_text(&c, &subject_id, topic_id.as_deref(), 24000)?;
@@ -734,6 +745,9 @@ pub fn generate_cheatsheet(
         model: model.name(),
         sections,
     })
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
 /// Read the stored cheatsheet for a subject/topic (None if none generated yet).
@@ -769,13 +783,15 @@ pub fn get_cheatsheet(
 
 /// Generate a study material (flashcards | quiz) from a subject/topic's sources.
 #[tauri::command]
-pub fn generate_material(
-    state: State<AppState>,
+pub async fn generate_material(
+    app: AppHandle,
     subject_id: String,
     topic_id: Option<String>,
     kind: String,
     title: Option<String>,
 ) -> Result<MaterialRec> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<MaterialRec> {
+    let state = app.state::<AppState>();
     let setting_key = match kind.as_str() {
         "quiz" => "model_quiz",
         "audio" => "model_audio",
@@ -869,6 +885,9 @@ pub fn generate_material(
         status: "ready".into(),
         payload,
     })
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
 #[tauri::command]
@@ -969,7 +988,8 @@ fn transcribe(file: &Path) -> (String, Option<String>) {
 /// transcriber is installed this returns an empty string (the frontend shows an
 /// install note) rather than hard-erroring.
 #[tauri::command]
-pub fn transcribe_partial(app: AppHandle, _state: State<AppState>, audio: Vec<u8>) -> Result<String> {
+pub async fn transcribe_partial(app: AppHandle, audio: Vec<u8>) -> Result<String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String> {
     // Prefer the app data dir's recordings folder; fall back to the OS temp dir.
     let dir = app
         .path()
@@ -983,19 +1003,23 @@ pub fn transcribe_partial(app: AppHandle, _state: State<AppState>, audio: Vec<u8
     let (transcript, _warning) = transcribe(&file);
     let _ = std::fs::remove_file(&file);
     Ok(transcript)
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
 /// Save a captured lecture recording: write the audio, create an audio source,
 /// transcribe it, then chunk + embed the transcript like any other source.
 #[tauri::command]
-pub fn save_recording(
+pub async fn save_recording(
     app: AppHandle,
-    state: State<AppState>,
     subject_id: String,
     topic_id: Option<String>,
     name: String,
     audio: Vec<u8>,
 ) -> Result<IngestResult> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<IngestResult> {
+    let state = app.state::<AppState>();
     // 1. persist the audio file
     let dir = app.path().app_data_dir().map_err(|e| Error::Other(e.to_string()))?.join("recordings");
     std::fs::create_dir_all(&dir)?;
@@ -1066,6 +1090,9 @@ pub fn save_recording(
         chars: transcript.chars().count() as i64,
         warning,
     })
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
 // ---- web search (SearXNG) --------------------------------------------
@@ -1089,11 +1116,13 @@ fn host_from_url(url: &str) -> String {
 
 /// Query a configured SearXNG instance for web results.
 #[tauri::command]
-pub fn web_search(
-    state: State<AppState>,
+pub async fn web_search(
+    app: AppHandle,
     query: String,
     categories: Option<String>,
 ) -> Result<Vec<WebResult>> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<WebResult>> {
+    let state = app.state::<AppState>();
     let base = {
         let c = state.db.lock().unwrap();
         repo::get_setting(&c, "searxng_url")?
@@ -1133,6 +1162,9 @@ pub fn web_search(
         })
         .collect();
     Ok(out)
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
 // ---- long-term memory -------------------------------------------------
@@ -1194,12 +1226,16 @@ pub fn delete_all_data(app: AppHandle, state: State<AppState>) -> Result<()> {
 
 /// Reachability check for the homelab "Test connection" button.
 #[tauri::command]
-pub fn ping_url(url: String) -> Result<bool> {
-    let client = http_client(5);
-    match client.get(&url).send() {
-        Ok(resp) => Ok(resp.status().is_success()),
-        Err(_) => Ok(false),
-    }
+pub async fn ping_url(url: String) -> Result<bool> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<bool> {
+        let client = http_client(5);
+        match client.get(&url).send() {
+            Ok(resp) => Ok(resp.status().is_success()),
+            Err(_) => Ok(false),
+        }
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
 /// Lightweight environment probe for the Settings screen (later slice).

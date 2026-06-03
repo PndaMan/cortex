@@ -79,6 +79,13 @@ pub struct OpenAiCompatLlm {
 
 impl Llm for OpenAiCompatLlm {
     fn complete(&self, system: &str, user: &str) -> Result<String> {
+        let key = self.api_key.trim();
+        if key.is_empty() {
+            return Err(Error::Other(format!(
+                "{}: API key is empty — paste it in Settings → API keys and click Save keys.",
+                self.label
+            )));
+        }
         let client = reqwest::blocking::Client::new();
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let body = serde_json::json!({
@@ -91,7 +98,7 @@ impl Llm for OpenAiCompatLlm {
         });
         let resp = client
             .post(&url)
-            .bearer_auth(&self.api_key)
+            .header("Authorization", format!("Bearer {key}"))
             // OpenRouter likes these; harmless elsewhere.
             .header("HTTP-Referer", "https://cortex.study")
             .header("X-Title", "Cortex")
@@ -100,7 +107,12 @@ impl Llm for OpenAiCompatLlm {
         if !resp.status().is_success() {
             let code = resp.status();
             let txt = resp.text().unwrap_or_default();
-            return Err(Error::Other(format!("{} {code}: {}", self.label, truncate(&txt, 300))));
+            // key-length is a non-secret diagnostic: distinguishes "key empty"
+            // (length 0) from "key present but rejected" for 401s.
+            return Err(Error::Other(format!(
+                "{} {code} [{}:{} chars]: {}",
+                self.label, self.model, key.len(), truncate(&txt, 300)
+            )));
         }
         let json: serde_json::Value = resp.json()?;
         let text = json["choices"][0]["message"]["content"]

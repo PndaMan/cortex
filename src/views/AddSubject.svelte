@@ -1,14 +1,15 @@
 <script lang="ts">
-  import { app } from "../lib/store.svelte";
+  import { app, SUBJECT_COLORS, GLYPHS } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import Icon from "../components/Icon.svelte";
 
   let name = $state("");
   let code = $state("");
-  let color = $state("#2dd5b7");
+  let color = $state(SUBJECT_COLORS[0]);
+  let glyph = $state(GLYPHS[0]);
   let topics = $state(["", "", ""]);
 
-  const colors = ["#2dd5b7", "#7aa2f7", "#cba6f7", "#e0af68", "#f7768e", "#9ece6a"];
+  const colors = SUBJECT_COLORS;
 
   function setTopic(i: number, v: string) {
     topics = topics.map((x, idx) => (idx === i ? v : x));
@@ -19,7 +20,7 @@
   async function create() {
     if (!ready) return;
     try {
-      const subj = await api.createSubject(name.trim(), code.trim() || undefined);
+      const subj = await api.createSubject(name.trim(), code.trim() || undefined, glyph, color);
       // Create each non-empty starter topic sequentially. Resilient: a failing
       // topic surfaces a toast but never blocks the rest or the navigation.
       for (const t of topics) {
@@ -54,8 +55,8 @@
     </div>
 
     <div class="addsubj-preview">
-      <span class="subj-glyph" style="border-color:{color}">
-        <Icon name="diamond" size={15} color={color} />
+      <span class="subj-glyph" style="border-color:{color};color:{color};font-size:15px;display:inline-flex;align-items:center;justify-content:center">
+        {glyph}
       </span>
       <div>
         <div class="read" style="font-size:var(--r-lg);color:var(--fg-bright)">{name || "Untitled subject"}</div>
@@ -91,6 +92,20 @@
                 <Icon name="check" size={12} color="#07140f" />
               {/if}
             </button>
+          {/each}
+        </div>
+      </div>
+
+      <div class="field">
+        <!-- svelte-ignore a11y_label_has_associated_control -->
+        <label class="onb-label mono">GLYPH</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          {#each GLYPHS as g}
+            <button
+              type="button"
+              style="width:28px;height:28px;border-radius:7px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;background:var(--surface-2);border:1px solid {glyph === g ? color : 'var(--border-strong)'};color:{glyph === g ? color : 'var(--fg-muted)'}"
+              onclick={() => (glyph = g)}
+            >{g}</button>
           {/each}
         </div>
       </div>

@@ -101,7 +101,7 @@
     <!-- Tab bar -->
     <div class="subj-tabs">
       <div class="st-id">
-        <span class="subj-glyph sm"><Icon name={subj.glyph ?? "diamond"} size={13} color={app.subjectColor(subj)} /></span>
+        <span class="subj-glyph sm" style="color:{app.subjectColor(subj)};font-size:13px;line-height:1">{subj.glyph || "◆"}</span>
         <div>
           <div class="st-name">{subj.name}</div>
           <div class="st-code mono">{subj.code ?? ""}{subj.topics[0] ? " · " + subj.topics[0].name : ""}</div>

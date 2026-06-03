@@ -77,6 +77,14 @@ export const SUBJECT_COLORS = [
   "#9ece6a", "#bb9af7", "#7dcfff", "#ff9e64",
 ];
 
+// Selectable subject glyphs — subject-relevant emojis. Rendered as text so they
+// show in full where displayed; the subject's color accents the card/border.
+export const GLYPHS = [
+  "📘", "📗", "📙", "📐", "🧠", "⚛️", "🔬", "🧪", "💻", "📊",
+  "📈", "🧮", "🎨", "🎵", "🌍", "🗺️", "⚖️", "🏛️", "🩺", "🧬",
+  "🔭", "🪐", "📜", "✍️", "🧩", "💡", "🎭", "⚙️", "🔢", "🌐",
+];
+
 function uid() {
   return Math.random().toString(36).slice(2);
 }
