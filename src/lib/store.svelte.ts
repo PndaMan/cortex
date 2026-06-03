@@ -5,6 +5,7 @@
 import * as api from "./api";
 import type { Subject, Source } from "./api";
 import { music } from "./music";
+import { keybinds } from "./keybinds.svelte";
 
 export type View =
   | "dashboard"
@@ -59,10 +60,11 @@ class AppStore {
   chatOpen = $state(true);
   musicOpen = $state(false);
   diffOpen = $state(false);
+  helpOpen = $state(false);
   onboarding = $state(false);
   metaModal = $state<any | null>(null);
   toasts = $state<Toast[]>([]);
-  pending = $state(3); // cheatsheet draft sections awaiting review (mock)
+  pending = $state(0); // cheatsheet draft sections awaiting review (real count set by Cheatsheet view)
   // playing starts false — browsers block autoplay until a user gesture.
   music = $state<Music>({ current: "lofi", playing: false, volume: 60 });
 
@@ -72,9 +74,12 @@ class AppStore {
 
   async init() {
     this.loading = true;
+    // Surface stream/playback failures instead of swallowing them.
+    music.onError = (m) => this.pushToast({ kind: "warning", title: "Music", body: m });
     try {
-      let subs = await api.listSubjects();
-      if (subs.length === 0) subs = await api.seedDemo();
+      // Start empty on a fresh install — no demo seeding. Every view renders a
+      // proper empty state when there are no subjects/sources.
+      const subs = await api.listSubjects();
       this.subjects = subs;
       if (subs.length && !this.activeSubjectId) this.activeSubjectId = subs[0].id;
     } catch (e) {
@@ -82,9 +87,18 @@ class AppStore {
     } finally {
       this.loading = false;
     }
-    const saved = (await api.getSetting("theme").catch(() => null)) as Theme | null;
-    if (saved && THEMES.includes(saved)) this.setTheme(saved);
-    else this.applyTheme(this.theme);
+    // Restore preferences: theme, keybinds, and audio defaults.
+    try {
+      const all = await api.getAllSettings();
+      const savedTheme = all["theme"] as Theme | undefined;
+      if (savedTheme && THEMES.includes(savedTheme)) this.setTheme(savedTheme);
+      else this.applyTheme(this.theme);
+      await keybinds.load();
+      if (all["default_station"]) this.music = { ...this.music, current: all["default_station"] };
+      if (all["autoplay"] === "true") this.toggleMusic();
+    } catch {
+      this.applyTheme(this.theme);
+    }
   }
 
   async refresh() {
@@ -132,6 +146,71 @@ class AppStore {
     this.diffOpen = false;
     this.pending = 0;
     this.pushToast({ kind: "success", title: "Cheatsheet merged", body: "Approved sections are now part of the cheatsheet." });
+  }
+
+  // ---- subject / source / topic CRUD ----
+  async deleteSubject(id: string) {
+    try {
+      await api.deleteSubject(id);
+      const wasActive = this.activeSubjectId === id;
+      this.subjects = await api.listSubjects();
+      if (wasActive) {
+        this.activeSubjectId = this.subjects[0]?.id ?? null;
+        this.activeSource = null;
+        this.view = this.subjects.length ? "subject" : "dashboard";
+      }
+      this.pushToast({ kind: "success", title: "Subject deleted" });
+    } catch (e) {
+      this.pushToast({ kind: "error", title: "Delete failed", body: String(e) });
+    }
+  }
+
+  async updateSubject(id: string, name: string, code?: string) {
+    try {
+      await api.updateSubject(id, name, code);
+      this.subjects = await api.listSubjects();
+      this.pushToast({ kind: "success", title: "Subject updated" });
+    } catch (e) {
+      this.pushToast({ kind: "error", title: "Update failed", body: String(e) });
+    }
+  }
+
+  async deleteSource(id: string) {
+    try {
+      await api.deleteSource(id);
+      if (this.activeSource?.id === id) {
+        this.activeSource = null;
+        this.view = "subject";
+      }
+      await this.refresh();
+      this.pushToast({ kind: "success", title: "Source deleted" });
+    } catch (e) {
+      this.pushToast({ kind: "error", title: "Delete failed", body: String(e) });
+    }
+  }
+
+  async createTopic(name: string) {
+    const sid = this.activeSubjectId;
+    if (!sid || !name.trim()) return;
+    try {
+      await api.createTopic(sid, name.trim());
+      await this.refresh();
+      this.pushToast({ kind: "success", title: "Topic added" });
+    } catch (e) {
+      this.pushToast({ kind: "error", title: "Add topic failed", body: String(e) });
+    }
+  }
+
+  async deleteTopic(id: string) {
+    const sid = this.activeSubjectId;
+    if (!sid) return;
+    try {
+      await api.deleteTopic(id, sid);
+      await this.refresh();
+      this.pushToast({ kind: "success", title: "Topic deleted" });
+    } catch (e) {
+      this.pushToast({ kind: "error", title: "Delete topic failed", body: String(e) });
+    }
   }
 
   // ---- theme ----

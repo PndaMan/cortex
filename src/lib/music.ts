@@ -32,13 +32,23 @@ class MusicController {
   private genNodes: AudioScheduledSourceNode[] = [];
   private volume = 0.6;
   current: string | null = null;
+  // Set by the store so playback failures surface to the user instead of being
+  // swallowed (SomaFM streams need internet; a dead network shows a toast).
+  onError: ((msg: string) => void) | null = null;
 
   private ensureAudio(): HTMLAudioElement {
     if (!this.audio) {
       this.audio = new Audio();
       this.audio.loop = true; // streams are endless, but loop covers any EOF
       this.audio.preload = "none";
-      this.audio.crossOrigin = "anonymous";
+      // NOTE: do NOT set crossOrigin — SomaFM Icecast streams send no CORS
+      // headers, so "anonymous" makes the WebView block the load entirely.
+      // We never feed the stream through Web Audio, so opaque playback is fine.
+      this.audio.onerror = () => {
+        const msg = "Stream failed to load — check your internet connection.";
+        console.warn("[music]", msg, this.audio?.error);
+        this.onError?.(msg);
+      };
     }
     return this.audio;
   }
@@ -69,7 +79,14 @@ class MusicController {
       const a = this.ensureAudio();
       if (!a.src.includes(st.url)) a.src = st.url;
       a.volume = this.volume;
-      a.play().catch(() => {}); // ignore autoplay rejection until a user gesture
+      a.play().catch((err) => {
+        // Autoplay rejection (before a user gesture) is benign; a real network
+        // failure is not — surface anything that isn't a NotAllowedError.
+        if (err?.name !== "NotAllowedError") {
+          console.warn("[music] play failed", err);
+          this.onError?.("Couldn't start the stream — check your connection.");
+        }
+      });
       return;
     }
 

@@ -14,6 +14,8 @@ export interface Source {
   meta: string | null;
   origin: string | null;
   error: string | null;
+  content: string | null;      // extracted plaintext (for readable text preview)
+  stored_path: string | null;  // stable path to the persisted original/rendered file
   tags: string[];
   created_at: number;
   updated_at: number;
@@ -177,6 +179,40 @@ export const saveRecording = (
 export const getAllSettings = () => invoke<Record<string, string>>("get_all_settings");
 export const setSettings = (values: Record<string, string>) =>
   invoke<void>("set_settings", { values });
+
+// ---- web search (SearXNG on the user's homelab) ----
+export interface WebResult {
+  title: string;
+  url: string;
+  host: string;
+  snippet: string;
+  engine: string;
+}
+export const webSearch = (query: string, categories?: string) =>
+  invoke<WebResult[]>("web_search", { query, categories });
+
+// ---- long-term memory (manual; injected into AI prompts) ----
+export interface Memory {
+  id: string;
+  content: string;
+  source: string | null;
+  created_at: number;
+  updated_at: number;
+}
+export const listMemory = () => invoke<Memory[]>("list_memory");
+export const addMemory = (content: string) => invoke<Memory>("add_memory", { content });
+export const deleteMemory = (id: string) => invoke<void>("delete_memory", { id });
+
+// ---- data & privacy / homelab utilities ----
+export interface DbStats {
+  db_bytes: number;
+  subjects: number;
+  sources: number;
+  chunks: number;
+}
+export const dbStats = () => invoke<DbStats>("db_stats");
+export const deleteAllData = () => invoke<void>("delete_all_data");
+export const pingUrl = (url: string) => invoke<boolean>("ping_url", { url });
 
 // ---- events ----
 export const onIngestProgress = (
