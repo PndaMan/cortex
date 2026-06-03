@@ -275,9 +275,9 @@ fn emit_progress(app: &AppHandle, source_id: &str, stage: &str, detail: &str, pc
 
 /// Full pipeline: detect → parse → chunk → embed → store, emitting progress.
 #[tauri::command]
-pub async fn add_source(
+pub fn add_source(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<AppState>,
     input: AddSourceInput,
 ) -> Result<IngestResult> {
     let kind = ingest::detect_kind(&input);
@@ -545,8 +545,8 @@ pub fn seed_demo(state: State<AppState>) -> Result<Vec<Subject>> {
 /// (optionally narrowed to a single source), and asks the configured LLM to
 /// answer from that context with inline ⟦source · loc⟧ citations.
 #[tauri::command]
-pub async fn chat_answer(
-    state: State<'_, AppState>,
+pub fn chat_answer(
+    state: State<AppState>,
     subject_id: String,
     level: String,
     source_id: Option<String>,
@@ -672,8 +672,8 @@ fn parse_cheatsheet(raw: &str) -> Vec<CsSection> {
 
 /// Synthesize a sectioned cheatsheet from a subject/topic's indexed sources.
 #[tauri::command]
-pub async fn generate_cheatsheet(
-    state: State<'_, AppState>,
+pub fn generate_cheatsheet(
+    state: State<AppState>,
     subject_id: String,
     topic_id: Option<String>,
 ) -> Result<CheatsheetData> {
@@ -769,8 +769,8 @@ pub fn get_cheatsheet(
 
 /// Generate a study material (flashcards | quiz) from a subject/topic's sources.
 #[tauri::command]
-pub async fn generate_material(
-    state: State<'_, AppState>,
+pub fn generate_material(
+    state: State<AppState>,
     subject_id: String,
     topic_id: Option<String>,
     kind: String,
@@ -969,7 +969,7 @@ fn transcribe(file: &Path) -> (String, Option<String>) {
 /// transcriber is installed this returns an empty string (the frontend shows an
 /// install note) rather than hard-erroring.
 #[tauri::command]
-pub async fn transcribe_partial(app: AppHandle, _state: State<'_, AppState>, audio: Vec<u8>) -> Result<String> {
+pub fn transcribe_partial(app: AppHandle, _state: State<AppState>, audio: Vec<u8>) -> Result<String> {
     // Prefer the app data dir's recordings folder; fall back to the OS temp dir.
     let dir = app
         .path()
@@ -988,9 +988,9 @@ pub async fn transcribe_partial(app: AppHandle, _state: State<'_, AppState>, aud
 /// Save a captured lecture recording: write the audio, create an audio source,
 /// transcribe it, then chunk + embed the transcript like any other source.
 #[tauri::command]
-pub async fn save_recording(
+pub fn save_recording(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<AppState>,
     subject_id: String,
     topic_id: Option<String>,
     name: String,
@@ -1089,8 +1089,8 @@ fn host_from_url(url: &str) -> String {
 
 /// Query a configured SearXNG instance for web results.
 #[tauri::command]
-pub async fn web_search(
-    state: State<'_, AppState>,
+pub fn web_search(
+    state: State<AppState>,
     query: String,
     categories: Option<String>,
 ) -> Result<Vec<WebResult>> {
@@ -1194,7 +1194,7 @@ pub fn delete_all_data(app: AppHandle, state: State<AppState>) -> Result<()> {
 
 /// Reachability check for the homelab "Test connection" button.
 #[tauri::command]
-pub async fn ping_url(url: String) -> Result<bool> {
+pub fn ping_url(url: String) -> Result<bool> {
     let client = http_client(5);
     match client.get(&url).send() {
         Ok(resp) => Ok(resp.status().is_success()),

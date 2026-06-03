@@ -430,6 +430,7 @@
             <div
               class="scopesw-item scopesw-item--{o.kind}{sel ? ' sel' : ''}"
               role="option"
+              tabindex="-1"
               aria-selected={sel}
               onmouseenter={() => (switcherSel = i)}
               onclick={() => applyOption(o)}

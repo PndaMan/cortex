@@ -100,8 +100,9 @@
   }
 
   // ---- state ----
-  let tabs = $state<Tab[]>([makeTab(SUGGESTED)]);
-  let activeId = $state<string>(tabs[0].id);
+  const firstTab = makeTab(SUGGESTED);
+  let tabs = $state<Tab[]>([firstTab]);
+  let activeId = $state<string>(firstTab.id);
   let inputEl = $state<HTMLInputElement | null>(null);
   let listEl = $state<HTMLElement | null>(null);
 
@@ -353,10 +354,12 @@
       {@const te = tab.stack[tab.idx]}
       {@const tabTitle = te.kind === "serp" ? (te.query || "New tab") : te.page.title}
       {@const tabFav = te.kind === "page" ? te.page : null}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div
         class="br-tab{tab.id === activeId ? ' on' : ''}"
         onclick={() => (activeId = tab.id)}
         role="tab"
+        tabindex="0"
         aria-selected={tab.id === activeId}
         title={tabTitle}
       >
@@ -372,6 +375,7 @@
           <Icon name="search" size={12} color="var(--fg-faint)" />
         {/if}
         <span class="br-tab-title">{tabTitle}</span>
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
         <span
           class="br-tab-x"
           onclick={(e) => closeTab(tab.id, e)}

@@ -36,8 +36,15 @@
   // Defaults to the first topic of the active subject when one exists.
   let selectedTopic = $state("");
   $effect(() => {
-    // (re)default the selection whenever the active subject changes
-    selectedTopic = subj?.topics[0]?.id ?? "";
+    // If opened via a topic's "+" button, preselect that topic (once); otherwise
+    // default to the subject's first topic.
+    const pending = app.addSourceTopicId;
+    if (pending && subj?.topics.some((t) => t.id === pending)) {
+      selectedTopic = pending;
+      app.addSourceTopicId = null; // consume it
+    } else {
+      selectedTopic = subj?.topics[0]?.id ?? "";
+    }
   });
   const topicId = $derived(selectedTopic || null);
   // Themed dropdown options: the subject's topics, plus an explicit "no topic" entry.
@@ -295,6 +302,7 @@
       <!-- URL input -->
       {#if method === "url"}
         <div class="add-input-row">
+          <!-- svelte-ignore a11y_autofocus -->
           <input
             class="input"
             autofocus
@@ -307,6 +315,7 @@
       <!-- Text paste: optional title + textarea -->
       {#if method === "text"}
         <div class="add-input-row" style:display="flex" style:flex-direction="column" style:gap="8px">
+          <!-- svelte-ignore a11y_autofocus -->
           <input
             class="input"
             autofocus

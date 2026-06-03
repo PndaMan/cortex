@@ -3,17 +3,18 @@
 
   // The status-bar "PWD": subject › topic › source, reflecting where the user is
   // (a source view, or the current chat scope). Uses Design-System scope styling.
+  type Crumb = { label: string; color?: string; glyph?: string; act?: () => void };
   const crumbs = $derived.by(() => {
     const subj = app.activeSubject;
-    if (!subj) return [] as { label: string; color?: string; glyph?: string }[];
-    const out: { label: string; color?: string; glyph?: string }[] = [
-      { label: subj.name, color: app.subjectColor(subj), glyph: subj.glyph || "◆" },
+    if (!subj) return [] as Crumb[];
+    const out: Crumb[] = [
+      { label: subj.name, color: app.subjectColor(subj), glyph: subj.glyph || "◆", act: () => app.openSubject(subj.id) },
     ];
     const src = app.activeSource;
     if (app.view === "source" && src) {
       const topic = subj.topics.find((t) => t.id === src.topic_id);
-      if (topic) out.push({ label: topic.name });
-      out.push({ label: src.name });
+      if (topic) out.push({ label: topic.name, act: () => app.openSubject(subj.id) });
+      out.push({ label: src.name, act: () => app.openSource(src) });
     } else if (app.chatScope) {
       if (app.chatScope.topicName) out.push({ label: app.chatScope.topicName });
       if (app.chatScope.sourceName) out.push({ label: app.chatScope.sourceName });
@@ -45,10 +46,17 @@
     {#if crumbs.length}
       {#each crumbs as c, i}
         {#if i > 0}<span class="scope-sep">›</span>{/if}
-        <span class="scope-seg" class:is-last={i === crumbs.length - 1}>
-          {#if c.glyph}<span class="seg-ico" style:color={c.color ?? "var(--accent)"}>{c.glyph}</span>{/if}
-          {c.label}
-        </span>
+        {#if c.act}
+          <button type="button" class="scope-seg scope-seg--btn" class:is-last={i === crumbs.length - 1} onclick={c.act} title={c.label}>
+            {#if c.glyph}<span class="seg-ico" style:color={c.color ?? "var(--accent)"}>{c.glyph}</span>{/if}
+            {c.label}
+          </button>
+        {:else}
+          <span class="scope-seg" class:is-last={i === crumbs.length - 1}>
+            {#if c.glyph}<span class="seg-ico" style:color={c.color ?? "var(--accent)"}>{c.glyph}</span>{/if}
+            {c.label}
+          </span>
+        {/if}
       {/each}
     {:else}
       <span class="seg-ico" style="color:var(--accent)">◆</span> Cortex
@@ -81,6 +89,12 @@
   }
   .sb-scope .seg-ico { font-size: 10px; flex: none; }
   .sb-scope .scope-sep { color: var(--fg-faint); flex: none; }
+  /* clickable crumbs navigate to that subject/source */
+  .sb-scope .scope-seg--btn {
+    background: none; border: none; font: inherit; padding: 0; cursor: pointer;
+    transition: color 0.12s ease;
+  }
+  .sb-scope .scope-seg--btn:hover { color: var(--accent); }
 
   .statusbar .sb-seg-btn {
     border: none; border-right: 1px solid var(--border); background: none;

@@ -65,16 +65,20 @@
 
     <div class="addsubj-form">
       <div class="field">
+        <!-- svelte-ignore a11y_label_has_associated_control -->
         <label class="onb-label mono">SUBJECT NAME</label>
+        <!-- svelte-ignore a11y_autofocus -->
         <input class="input" autofocus bind:value={name} placeholder="e.g. Algorithms" />
       </div>
 
       <div class="field">
+        <!-- svelte-ignore a11y_label_has_associated_control -->
         <label class="onb-label mono">COURSE CODE <span class="faint">optional</span></label>
         <input class="input mono" bind:value={code} placeholder="CS-3490" />
       </div>
 
       <div class="field">
+        <!-- svelte-ignore a11y_label_has_associated_control -->
         <label class="onb-label mono">COLOR</label>
         <div class="color-row">
           {#each colors as c}
@@ -92,6 +96,7 @@
       </div>
 
       <div class="field">
+        <!-- svelte-ignore a11y_label_has_associated_control -->
         <label class="onb-label mono">FIRST TOPICS <span class="faint">optional — add lectures into these</span></label>
         <div class="topic-inputs">
           {#each topics as t, i}

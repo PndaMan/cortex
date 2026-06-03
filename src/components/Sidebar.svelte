@@ -66,9 +66,9 @@
     <span class="glyph">C</span>
     <span class="b-name">Cortex</span>
     <span class="b-spacer"></span>
-    <span class="b-cmd" title="Command palette ( : )" onclick={() => (app.cmdkOpen = true)}>
+    <button class="b-cmd" type="button" title="Command palette ( : )" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;display:inline-flex;align-items:center" onclick={() => (app.cmdkOpen = true)}>
       <Icon name="cmd" size={15} />
-    </span>
+    </button>
   </div>
 
   <div class="sb-scroll">
@@ -135,6 +135,7 @@
           tabindex="0"
           onkeydown={(e) => e.key === "Enter" && openSubject(s.id)}
         >
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
           <span
             class="twisty{expanded === s.id ? ' open' : ''}"
             onclick={(e) => toggleExpand(s.id, e)}
@@ -425,9 +426,6 @@
   .sb-topic .t-actions .s-act:hover {
     color: var(--fg-bright);
     background: var(--surface-3);
-  }
-  .sb-topic .t-actions .s-act--danger:hover {
-    color: var(--err);
   }
 
   /* Source rows: badge stays put, name flexes + truncates */

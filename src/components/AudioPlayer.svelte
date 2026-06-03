@@ -168,6 +168,7 @@
       <!-- Scrubber -->
       <div class="ao-scrubber">
         <span class="ao-time mono">{fmt(t)}</span>
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div class="ao-track" onclick={scrub} role="slider" aria-valuenow={t} aria-valuemin={0} aria-valuemax={total} tabindex="0">
           <div class="ao-fill" style:width="{total > 0 ? (t / total * 100) : 0}%">
             <span class="ao-knob"></span>

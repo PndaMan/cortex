@@ -102,6 +102,7 @@
             Cortex is BYOK — your key stays on this machine, in the OS keychain. Nothing routes
             through our servers. You can add Claude, OpenAI or a local Ollama model later in Settings.
           </p>
+          <!-- svelte-ignore a11y_label_has_associated_control -->
           <label class="onb-label mono">GEMINI_API_KEY</label>
           <input
             class="input"
@@ -170,6 +171,7 @@
           </button>
           {#if homelab}
             <div class="onb-homelab">
+              <!-- svelte-ignore a11y_label_has_associated_control -->
               <label class="onb-label mono">ENDPOINT</label>
               <input
                 class="input"
@@ -197,7 +199,9 @@
             A subject holds topics, sources and one living cheatsheet. Name it after a course —
             you'll add lectures next.
           </p>
+          <!-- svelte-ignore a11y_label_has_associated_control -->
           <label class="onb-label mono">SUBJECT NAME</label>
+          <!-- svelte-ignore a11y_autofocus -->
           <input
             class="input"
             bind:value={subjName}

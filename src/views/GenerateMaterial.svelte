@@ -235,6 +235,7 @@
       <div class="gm-section">
         <div class="gm-step mono"><span class="gm-step-n">3</span> Details</div>
         <div class="field">
+          <!-- svelte-ignore a11y_label_has_associated_control -->
           <label class="onb-label mono">TITLE <span class="faint">auto-suggested</span></label>
           <input
             class="input"
