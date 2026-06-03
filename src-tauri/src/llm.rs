@@ -41,10 +41,16 @@ impl Llm for GeminiLlm {
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             self.model, self.api_key
         );
+        // Gemini 2.5 models reason with hidden "thinking" tokens that draw from
+        // the SAME maxOutputTokens budget. A small budget (4096) is routinely
+        // exhausted by thinking before any answer text is emitted, leaving an
+        // empty `parts[0].text` and a MAX_TOKENS finishReason — the real cause
+        // of "generation doesn't work at all" for cheatsheet/quiz/flashcards.
+        // A roomier budget lets the model finish the actual JSON.
         let body = serde_json::json!({
             "system_instruction": { "parts": [{ "text": system }] },
             "contents": [{ "role": "user", "parts": [{ "text": user }] }],
-            "generationConfig": { "temperature": 0.3, "maxOutputTokens": 4096 }
+            "generationConfig": { "temperature": 0.3, "maxOutputTokens": 8192 }
         });
         let resp = client.post(&url).json(&body).send()?;
         if !resp.status().is_success() {
@@ -53,10 +59,27 @@ impl Llm for GeminiLlm {
             return Err(Error::Other(format!("gemini {code}: {}", truncate(&txt, 300))));
         }
         let json: serde_json::Value = resp.json()?;
-        let text = json["candidates"][0]["content"]["parts"][0]["text"]
-            .as_str()
-            .ok_or_else(|| Error::Other("gemini: empty response".into()))?
-            .to_string();
+        // Concatenate every text part (some responses split across parts).
+        let text: String = json["candidates"][0]["content"]["parts"]
+            .as_array()
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|p| p["text"].as_str())
+                    .collect::<String>()
+            })
+            .unwrap_or_default();
+        if text.is_empty() {
+            // Surface the finishReason (e.g. MAX_TOKENS / SAFETY) so the failure
+            // is diagnosable instead of an opaque "empty response".
+            let reason = json["candidates"][0]["finishReason"]
+                .as_str()
+                .unwrap_or("unknown");
+            return Err(Error::Other(format!(
+                "gemini: empty response (finishReason={reason}). \
+                 If MAX_TOKENS, the model spent its budget on reasoning — try a flash model."
+            )));
+        }
         Ok(text)
     }
     fn name(&self) -> String {
@@ -307,6 +330,14 @@ mod tests {
     fn extract_json_array() {
         let v = extract_json("[{\"q\":\"a\",\"a\":\"b\"}]").unwrap();
         assert_eq!(v[0]["q"], "a");
+    }
+
+    #[test]
+    fn extract_json_fenced_array_with_trailing_prose() {
+        // The common "wrapped in ```json + closing prose" failure shape.
+        let reply = "```json\n[{\"q\":\"x\",\"a\":\"y\"}]\n```\nHope this helps!";
+        let v = extract_json(reply).unwrap();
+        assert_eq!(v[0]["a"], "y");
     }
 
     #[test]

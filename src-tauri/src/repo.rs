@@ -921,6 +921,358 @@ pub fn delete_all_content(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+// ---- notes -------------------------------------------------------------
+
+fn map_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
+    Ok(Note {
+        id: r.get(0)?,
+        subject_id: r.get(1)?,
+        topic_id: r.get(2)?,
+        title: r.get(3)?,
+        body: r.get(4)?,
+        source_id: r.get(5)?,
+        created_at: r.get(6)?,
+        updated_at: r.get(7)?,
+    })
+}
+
+const NOTE_COLS: &str =
+    "id, subject_id, topic_id, title, body, source_id, created_at, updated_at";
+
+pub fn insert_note(
+    conn: &Connection,
+    subject_id: Option<&str>,
+    topic_id: Option<&str>,
+    title: &str,
+    body: &str,
+) -> Result<String> {
+    let id = new_id();
+    let ts = now_ms();
+    conn.execute(
+        "INSERT INTO notes (id, subject_id, topic_id, title, body, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+        params![id, subject_id, topic_id, title, body, ts],
+    )?;
+    Ok(id)
+}
+
+pub fn list_notes(conn: &Connection, subject_id: Option<&str>) -> Result<Vec<Note>> {
+    let sql = format!(
+        "SELECT {NOTE_COLS} FROM notes
+         WHERE (?1 IS NULL OR subject_id=?1) ORDER BY updated_at DESC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![subject_id], map_note)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn get_note(conn: &Connection, id: &str) -> Result<Note> {
+    let sql = format!("SELECT {NOTE_COLS} FROM notes WHERE id=?1");
+    conn.query_row(&sql, params![id], map_note)
+        .optional()?
+        .ok_or_else(|| Error::NotFound(format!("note {id}")))
+}
+
+pub fn update_note(conn: &Connection, id: &str, title: &str, body: &str) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE notes SET title=?2, body=?3, updated_at=?4 WHERE id=?1",
+        params![id, title, body, now_ms()],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound(format!("note {id}")));
+    }
+    Ok(())
+}
+
+/// Link a note to the source generated when it was converted.
+pub fn set_note_source(conn: &Connection, id: &str, source_id: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE notes SET source_id=?2, updated_at=?3 WHERE id=?1",
+        params![id, source_id, now_ms()],
+    )?;
+    Ok(())
+}
+
+pub fn delete_note(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM notes WHERE id=?1", params![id])?;
+    Ok(())
+}
+
+// ---- calendar events / tasks ------------------------------------------
+
+fn map_event(r: &rusqlite::Row) -> rusqlite::Result<CalEvent> {
+    Ok(CalEvent {
+        id: r.get(0)?,
+        subject_id: r.get(1)?,
+        title: r.get(2)?,
+        description: r.get(3)?,
+        location: r.get(4)?,
+        color: r.get(5)?,
+        start_ms: r.get(6)?,
+        end_ms: r.get(7)?,
+        all_day: r.get::<_, i64>(8)? != 0,
+        kind: r.get(9)?,
+        done: r.get::<_, i64>(10)? != 0,
+        reminder_ms: r.get(11)?,
+        notified: r.get::<_, i64>(12)? != 0,
+        google_id: r.get(13)?,
+        created_at: r.get(14)?,
+        updated_at: r.get(15)?,
+    })
+}
+
+const EVENT_COLS: &str = "id, subject_id, title, description, location, color, start_ms, end_ms, \
+    all_day, kind, done, reminder_ms, notified, google_id, created_at, updated_at";
+
+#[allow(clippy::too_many_arguments)]
+pub fn insert_event(
+    conn: &Connection,
+    subject_id: Option<&str>,
+    title: &str,
+    description: Option<&str>,
+    location: Option<&str>,
+    color: Option<&str>,
+    start_ms: i64,
+    end_ms: Option<i64>,
+    all_day: bool,
+    kind: &str,
+    reminder_ms: Option<i64>,
+) -> Result<String> {
+    let id = new_id();
+    let ts = now_ms();
+    conn.execute(
+        "INSERT INTO events
+            (id, subject_id, title, description, location, color, start_ms, end_ms,
+             all_day, kind, done, reminder_ms, notified, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, 0, ?12, ?12)",
+        params![
+            id, subject_id, title, description, location, color, start_ms, end_ms,
+            all_day as i64, kind, reminder_ms, ts
+        ],
+    )?;
+    Ok(id)
+}
+
+pub fn list_events(
+    conn: &Connection,
+    subject_id: Option<&str>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+) -> Result<Vec<CalEvent>> {
+    let sql = format!(
+        "SELECT {EVENT_COLS} FROM events
+         WHERE (?1 IS NULL OR subject_id=?1)
+           AND (?2 IS NULL OR start_ms >= ?2)
+           AND (?3 IS NULL OR start_ms <= ?3)
+         ORDER BY start_ms ASC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![subject_id, from_ms, to_ms], map_event)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn get_event(conn: &Connection, id: &str) -> Result<CalEvent> {
+    let sql = format!("SELECT {EVENT_COLS} FROM events WHERE id=?1");
+    conn.query_row(&sql, params![id], map_event)
+        .optional()?
+        .ok_or_else(|| Error::NotFound(format!("event {id}")))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn update_event(
+    conn: &Connection,
+    id: &str,
+    title: &str,
+    description: Option<&str>,
+    location: Option<&str>,
+    color: Option<&str>,
+    start_ms: i64,
+    end_ms: Option<i64>,
+    all_day: bool,
+    kind: &str,
+    reminder_ms: Option<i64>,
+) -> Result<()> {
+    // Editing an event resets its notified flag so a moved reminder fires again.
+    let n = conn.execute(
+        "UPDATE events SET
+            title=?2, description=?3, location=?4, color=?5, start_ms=?6, end_ms=?7,
+            all_day=?8, kind=?9, reminder_ms=?10, notified=0, updated_at=?11
+         WHERE id=?1",
+        params![
+            id, title, description, location, color, start_ms, end_ms,
+            all_day as i64, kind, reminder_ms, now_ms()
+        ],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound(format!("event {id}")));
+    }
+    Ok(())
+}
+
+pub fn set_event_done(conn: &Connection, id: &str, done: bool) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE events SET done=?2, updated_at=?3 WHERE id=?1",
+        params![id, done as i64, now_ms()],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound(format!("event {id}")));
+    }
+    Ok(())
+}
+
+pub fn delete_event(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM events WHERE id=?1", params![id])?;
+    Ok(())
+}
+
+/// Events whose reminder is due and not yet notified.
+pub fn due_reminders(conn: &Connection, now: i64) -> Result<Vec<CalEvent>> {
+    let sql = format!(
+        "SELECT {EVENT_COLS} FROM events
+         WHERE reminder_ms IS NOT NULL AND reminder_ms <= ?1 AND notified = 0
+         ORDER BY reminder_ms ASC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![now], map_event)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn mark_notified(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE events SET notified=1, updated_at=?2 WHERE id=?1",
+        params![id, now_ms()],
+    )?;
+    Ok(())
+}
+
+/// Insert or update an event keyed by its Google Calendar id (sync path).
+/// Provided ahead of the Google Calendar sync slice (no caller yet).
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+pub fn upsert_event_by_google_id(
+    conn: &Connection,
+    google_id: &str,
+    subject_id: Option<&str>,
+    title: &str,
+    description: Option<&str>,
+    location: Option<&str>,
+    color: Option<&str>,
+    start_ms: i64,
+    end_ms: Option<i64>,
+    all_day: bool,
+    kind: &str,
+    reminder_ms: Option<i64>,
+) -> Result<String> {
+    let ts = now_ms();
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT id FROM events WHERE google_id=?1",
+            params![google_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    match existing {
+        Some(id) => {
+            conn.execute(
+                "UPDATE events SET
+                    subject_id=?2, title=?3, description=?4, location=?5, color=?6,
+                    start_ms=?7, end_ms=?8, all_day=?9, kind=?10, reminder_ms=?11, updated_at=?12
+                 WHERE id=?1",
+                params![
+                    id, subject_id, title, description, location, color, start_ms, end_ms,
+                    all_day as i64, kind, reminder_ms, ts
+                ],
+            )?;
+            Ok(id)
+        }
+        None => {
+            let id = new_id();
+            conn.execute(
+                "INSERT INTO events
+                    (id, subject_id, title, description, location, color, start_ms, end_ms,
+                     all_day, kind, done, reminder_ms, notified, google_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, 0, ?12, ?13, ?13)",
+                params![
+                    id, subject_id, title, description, location, color, start_ms, end_ms,
+                    all_day as i64, kind, reminder_ms, google_id, ts
+                ],
+            )?;
+            Ok(id)
+        }
+    }
+}
+
+// ---- review (spaced repetition) ---------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+pub fn record_attempt(
+    conn: &Connection,
+    subject_id: &str,
+    material_id: Option<&str>,
+    kind: &str,
+    item_index: i64,
+    item_key: &str,
+    correct: bool,
+) -> Result<String> {
+    let id = new_id();
+    conn.execute(
+        "INSERT INTO attempts
+            (id, subject_id, material_id, kind, item_index, item_key, correct, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![id, subject_id, material_id, kind, item_index, item_key, correct as i64, now_ms()],
+    )?;
+    Ok(id)
+}
+
+/// Distinct items (by item_key) whose MOST RECENT attempt was incorrect — the
+/// set to re-study. One row per item_key, carrying its item_index.
+pub fn wrong_items(conn: &Connection, subject_id: &str, kind: &str) -> Result<Vec<ReviewItem>> {
+    let mut stmt = conn.prepare(
+        "SELECT a.item_index, a.item_key
+         FROM attempts a
+         JOIN (
+             SELECT item_key, MAX(created_at) AS latest
+             FROM attempts
+             WHERE subject_id=?1 AND kind=?2
+             GROUP BY item_key
+         ) m ON m.item_key = a.item_key AND m.latest = a.created_at
+         WHERE a.subject_id=?1 AND a.kind=?2 AND a.correct = 0
+         ORDER BY a.item_index",
+    )?;
+    let rows = stmt.query_map(params![subject_id, kind], |r| {
+        Ok(ReviewItem {
+            item_index: r.get(0)?,
+            item_key: r.get(1)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+// ---- source move (re-file across subject/topic) -----------------------
+
+/// Re-file a source to a new subject (and optional topic), keeping retrieval
+/// scoping correct by updating the denormalized subject_id/topic_id on the
+/// source's chunks too.
+pub fn move_source(
+    conn: &Connection,
+    source_id: &str,
+    subject_id: &str,
+    topic_id: Option<&str>,
+) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE sources SET subject_id=?2, topic_id=?3, updated_at=?4 WHERE id=?1",
+        params![source_id, subject_id, topic_id, now_ms()],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound(format!("source {source_id}")));
+    }
+    conn.execute(
+        "UPDATE chunks SET subject_id=?2, topic_id=?3 WHERE source_id=?1",
+        params![source_id, subject_id, topic_id],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -951,5 +1303,79 @@ mod tests {
         set_setting(&c, "embed_provider", "stub").unwrap();
         set_setting(&c, "embed_provider", "gemini").unwrap();
         assert_eq!(get_setting(&c, "embed_provider").unwrap().unwrap(), "gemini");
+    }
+
+    #[test]
+    fn notes_crud_roundtrips() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let sid = insert_subject(&c, "Bio", None, None, None).unwrap();
+        let id = insert_note(&c, Some(&sid), None, "Cells", "mitochondria").unwrap();
+        assert_eq!(list_notes(&c, Some(&sid)).unwrap().len(), 1);
+        update_note(&c, &id, "Cells v2", "powerhouse").unwrap();
+        assert_eq!(get_note(&c, &id).unwrap().title, "Cells v2");
+        let srcid = insert_source(&c, &sid, None, "Cells", "note", None).unwrap();
+        set_note_source(&c, &id, &srcid).unwrap();
+        assert_eq!(get_note(&c, &id).unwrap().source_id.as_deref(), Some(srcid.as_str()));
+        delete_note(&c, &id).unwrap();
+        assert!(list_notes(&c, None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn events_reminders_and_done() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let due = insert_event(
+            &c, None, "Exam", None, None, None, 1_000, Some(2_000), false, "event", Some(500),
+        )
+        .unwrap();
+        let _future = insert_event(
+            &c, None, "Later", None, None, None, 9_000, None, false, "task", Some(8_000),
+        )
+        .unwrap();
+        // only the past-due, un-notified reminder comes back at now=1000
+        let reminders = due_reminders(&c, 1_000).unwrap();
+        assert_eq!(reminders.len(), 1);
+        assert_eq!(reminders[0].id, due);
+        mark_notified(&c, &due).unwrap();
+        assert!(due_reminders(&c, 1_000).unwrap().is_empty());
+        set_event_done(&c, &due, true).unwrap();
+        assert!(get_event(&c, &due).unwrap().done);
+        assert_eq!(list_events(&c, None, Some(0), Some(5_000)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn review_set_uses_latest_attempt() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let sid = insert_subject(&c, "Chem", None, None, None).unwrap();
+        record_attempt(&c, &sid, None, "quiz", 0, "Q1", false).unwrap();
+        // a later correct attempt on Q1 removes it from the review set
+        record_attempt(&c, &sid, None, "quiz", 0, "Q1", true).unwrap();
+        record_attempt(&c, &sid, None, "quiz", 1, "Q2", false).unwrap();
+        let wrong = wrong_items(&c, &sid, "quiz").unwrap();
+        assert_eq!(wrong.len(), 1);
+        assert_eq!(wrong[0].item_key, "Q2");
+    }
+
+    #[test]
+    fn move_source_repoints_chunks() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let a = insert_subject(&c, "A", None, None, None).unwrap();
+        let b = insert_subject(&c, "B", None, None, None).unwrap();
+        let bt = insert_topic(&c, &b, "T", None).unwrap();
+        let src = insert_source(&c, &a, None, "s.md", "md", None).unwrap();
+        insert_chunk(&c, &src, &a, None, 0, "text", None, 1, &[0u8, 0, 0, 0]).unwrap();
+        move_source(&c, &src, &b, Some(&bt)).unwrap();
+        assert_eq!(get_source(&c, &src).unwrap().subject_id, b);
+        let scoped: i64 = c
+            .query_row(
+                "SELECT count(*) FROM chunks WHERE subject_id=?1 AND topic_id=?2",
+                params![b, bt],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(scoped, 1);
     }
 }

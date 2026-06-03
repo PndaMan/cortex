@@ -8,6 +8,7 @@
     "core:event:default",
     "dialog:default",
     "dialog:allow-open",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    "notification:default"
   ]
 }

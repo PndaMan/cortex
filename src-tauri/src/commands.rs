@@ -244,6 +244,20 @@ pub fn delete_source(state: State<AppState>, id: String) -> Result<()> {
     repo::delete_source(&c, &id)
 }
 
+/// Re-file a source to a different subject (and optional topic). Repoints the
+/// source's chunks too so retrieval scoping stays correct.
+#[tauri::command]
+pub fn move_source(
+    state: State<AppState>,
+    id: String,
+    subject_id: String,
+    topic_id: Option<String>,
+) -> Result<Source> {
+    let c = state.db.lock().unwrap();
+    repo::move_source(&c, &id, &subject_id, topic_id.as_deref())?;
+    repo::get_source(&c, &id)
+}
+
 /// Stored chunks for a source — lets the UI confirm parse + embedding happened.
 #[tauri::command]
 pub fn list_chunks(state: State<AppState>, source_id: String) -> Result<Vec<ChunkInfo>> {
@@ -791,9 +805,10 @@ pub async fn generate_cheatsheet(
         ));
     }
 
-    let system = format!("You are an expert study-notes synthesizer for a university student. Produce a \
-        COMPLETE, accurate cheatsheet from the source material — completeness matters more than \
-        brevity; do not drop key points. Output ONLY valid JSON, no prose, in this exact shape: \
+    let system = format!("You are an exam-focused study-notes synthesizer. Build an accurate, \
+        exam-ready cheatsheet from the source material; keep each explanation tight (one or two \
+        sentences). Respond with ONLY raw JSON — no markdown code fences, no prose before or after. \
+        Use this exact shape: \
         {{\"sections\":[{{\"title\":string,\"items\":[{{\"t\":\"term\",\"d\":\"explanation\"}}]}}]}}. \
         Use exactly these sections in this order: Definitions, Key Concepts, Formulas, Worked \
         Examples, Common Pitfalls, Quick Recall.{style}");
@@ -931,7 +946,12 @@ pub async fn generate_material(
             format!("{topic_name} flashcards"),
         ),
     };
-    let system = format!("{system}{style}");
+    // Uniform guardrail: many models wrap JSON in ```json fences or add prose.
+    // extract_json tolerates that, but instructing raw JSON makes it far more
+    // reliable end-to-end (and avoids truncation from wasted fence tokens).
+    let system = format!(
+        "{system}{style} Respond with ONLY raw JSON — no markdown code fences, no prose before or after."
+    );
     let user = format!("Subject: {subject_name} › {topic_name}\n\nSOURCE MATERIAL:\n{context}\n\nGenerate now.");
 
     let raw = model.complete(&system, &user)?;

@@ -1,6 +1,7 @@
 //! Cortex backend library. Wires the SQLite-backed AppState into Tauri and
 //! registers the command surface consumed by the Svelte frontend.
 
+mod calendar;
 mod commands;
 mod db;
 mod embed;
@@ -8,7 +9,9 @@ mod error;
 mod ingest;
 mod llm;
 mod models;
+mod notes;
 mod repo;
+mod review;
 mod vector;
 
 use db::AppState;
@@ -18,6 +21,7 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // Per-app data dir (created if missing); DB lives at cortex.db.
             let dir = app
@@ -69,6 +73,7 @@ pub fn run() {
             commands::get_source,
             commands::update_source,
             commands::delete_source,
+            commands::move_source,
             commands::list_chunks,
             commands::get_setting,
             commands::set_setting,
@@ -98,6 +103,23 @@ pub fn run() {
             commands::db_stats,
             commands::delete_all_data,
             commands::ping_url,
+            // notes
+            notes::create_note,
+            notes::list_notes,
+            notes::get_note,
+            notes::update_note,
+            notes::delete_note,
+            notes::note_to_source,
+            // calendar
+            calendar::create_event,
+            calendar::list_events,
+            calendar::update_event,
+            calendar::delete_event,
+            calendar::set_event_done,
+            calendar::check_reminders,
+            // review
+            review::record_attempt,
+            review::review_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cortex");

@@ -193,6 +193,72 @@ pub struct Memory {
     pub updated_at: i64,
 }
 
+// ---- notes ------------------------------------------------------------
+
+/// A free-text note. Can be "converted" into a first-class source (chunked +
+/// embedded) later, at which point `source_id` links to the generated source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Note {
+    pub id: String,
+    pub subject_id: Option<String>,
+    pub topic_id: Option<String>,
+    pub title: String,
+    pub body: String,
+    pub source_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+// ---- calendar events / tasks ------------------------------------------
+
+/// A calendar event or task. `kind` is "event" or "task"; reminders are an
+/// absolute epoch-ms timestamp the frontend polls (`check_reminders`).
+/// `google_id` exists for a later Google Calendar sync slice.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalEvent {
+    pub id: String,
+    pub subject_id: Option<String>,
+    pub title: String,
+    pub description: Option<String>,
+    pub location: Option<String>,
+    pub color: Option<String>,
+    pub start_ms: i64,
+    pub end_ms: Option<i64>,
+    pub all_day: bool,
+    pub kind: String, // event | task
+    pub done: bool,
+    pub reminder_ms: Option<i64>,
+    pub notified: bool,
+    pub google_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+// ---- review (spaced repetition over wrong answers) --------------------
+
+/// One answered quiz/flashcard item. The review set is built from the latest
+/// attempt per `item_key`. Mirrored in `api.ts` for the frontend; the Rust side
+/// stores attempts via raw params, so the struct itself is not yet constructed.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Attempt {
+    pub id: String,
+    pub subject_id: String,
+    pub material_id: Option<String>,
+    pub kind: String, // quiz | flashcard
+    pub item_index: i64,
+    pub item_key: String,
+    pub correct: bool,
+    pub created_at: i64,
+}
+
+/// A single "re-study this" item returned by `review_set`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReviewItem {
+    pub item_index: i64,
+    pub item_key: String,
+}
+
 // ---- database stats ---------------------------------------------------
 
 /// Storage + content counts for the Settings → Data screen.

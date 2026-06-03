@@ -250,6 +250,147 @@ export const dbStats = () => invoke<DbStats>("db_stats");
 export const deleteAllData = () => invoke<void>("delete_all_data");
 export const pingUrl = (url: string) => invoke<boolean>("ping_url", { url });
 
+// ---- source re-filing ----
+export const moveSource = (id: string, subjectId: string, topicId?: string | null) =>
+  invoke<Source>("move_source", { id, subjectId, topicId });
+
+// ---- notes ----
+export interface Note {
+  id: string;
+  subject_id: string | null;
+  topic_id: string | null;
+  title: string;
+  body: string;
+  source_id: string | null;
+  created_at: number;
+  updated_at: number;
+}
+export const createNote = (
+  title: string,
+  body: string,
+  subjectId?: string | null,
+  topicId?: string | null
+) => invoke<Note>("create_note", { subjectId, topicId, title, body });
+export const listNotes = (subjectId?: string | null) =>
+  invoke<Note[]>("list_notes", { subjectId });
+export const getNote = (id: string) => invoke<Note>("get_note", { id });
+export const updateNote = (id: string, title: string, body: string) =>
+  invoke<Note>("update_note", { id, title, body });
+export const deleteNote = (id: string) => invoke<void>("delete_note", { id });
+export const noteToSource = (id: string) =>
+  invoke<IngestResult>("note_to_source", { id });
+
+// ---- calendar (events + tasks) ----
+export interface CalEvent {
+  id: string;
+  subject_id: string | null;
+  title: string;
+  description: string | null;
+  location: string | null;
+  color: string | null;
+  start_ms: number;
+  end_ms: number | null;
+  all_day: boolean;
+  kind: string; // event | task
+  done: boolean;
+  reminder_ms: number | null;
+  notified: boolean;
+  google_id: string | null;
+  created_at: number;
+  updated_at: number;
+}
+export const createEvent = (e: {
+  title: string;
+  startMs: number;
+  subjectId?: string | null;
+  description?: string | null;
+  location?: string | null;
+  color?: string | null;
+  endMs?: number | null;
+  allDay?: boolean;
+  kind?: string;
+  reminderMs?: number | null;
+}) =>
+  invoke<CalEvent>("create_event", {
+    subjectId: e.subjectId,
+    title: e.title,
+    description: e.description,
+    location: e.location,
+    color: e.color,
+    startMs: e.startMs,
+    endMs: e.endMs,
+    allDay: e.allDay,
+    kind: e.kind,
+    reminderMs: e.reminderMs,
+  });
+export const listEvents = (
+  subjectId?: string | null,
+  fromMs?: number | null,
+  toMs?: number | null
+) => invoke<CalEvent[]>("list_events", { subjectId, fromMs, toMs });
+export const updateEvent = (e: {
+  id: string;
+  title: string;
+  startMs: number;
+  description?: string | null;
+  location?: string | null;
+  color?: string | null;
+  endMs?: number | null;
+  allDay?: boolean;
+  kind?: string;
+  reminderMs?: number | null;
+}) =>
+  invoke<CalEvent>("update_event", {
+    id: e.id,
+    title: e.title,
+    description: e.description,
+    location: e.location,
+    color: e.color,
+    startMs: e.startMs,
+    endMs: e.endMs,
+    allDay: e.allDay,
+    kind: e.kind,
+    reminderMs: e.reminderMs,
+  });
+export const deleteEvent = (id: string) => invoke<void>("delete_event", { id });
+export const setEventDone = (id: string, done: boolean) =>
+  invoke<CalEvent>("set_event_done", { id, done });
+export const checkReminders = () => invoke<CalEvent[]>("check_reminders");
+
+// ---- review (spaced repetition over wrong answers) ----
+export interface Attempt {
+  id: string;
+  subject_id: string;
+  material_id: string | null;
+  kind: string; // quiz | flashcard
+  item_index: number;
+  item_key: string;
+  correct: boolean;
+  created_at: number;
+}
+export interface ReviewItem {
+  item_index: number;
+  item_key: string;
+}
+export const recordAttempt = (
+  subjectId: string,
+  kind: "quiz" | "flashcard",
+  itemIndex: number,
+  itemKey: string,
+  correct: boolean,
+  materialId?: string | null
+) =>
+  invoke<void>("record_attempt", {
+    subjectId,
+    materialId,
+    kind,
+    itemIndex,
+    itemKey,
+    correct,
+  });
+export const reviewSet = (subjectId: string, kind: "quiz" | "flashcard") =>
+  invoke<ReviewItem[]>("review_set", { subjectId, kind });
+
 // ---- events ----
 export const onIngestProgress = (
   cb: (p: IngestProgress) => void
