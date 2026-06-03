@@ -64,7 +64,14 @@ pub fn parse(kind: &str, input: &AddSourceInput) -> Result<(String, Option<Strin
             let html = client.get(url).send()?.text()?;
             Ok((html_to_text(&html), None))
         }
-        "pdf" | "docx" | "pptx" => {
+        "pdf" => {
+            let p = input
+                .path
+                .as_deref()
+                .ok_or_else(|| Error::Other("pdf source needs a file path".into()))?;
+            pdf_to_text(p)
+        }
+        "docx" | "pptx" => {
             let p = input
                 .path
                 .as_deref()
@@ -133,7 +140,76 @@ fn decode_entities(s: &str) -> String {
         .into_owned()
 }
 
-/// Convert pdf/docx/pptx to text via `libreoffice --headless --convert-to txt`.
+/// Extract text from a PDF via `pdftotext -layout -enc UTF-8 <path> -` (poppler),
+/// streaming output to stdout. PDFs are wrong for LibreOffice's txt converter
+/// (it opens them in Draw and produces no .txt), so we use poppler instead.
+///
+/// This is forgiving on purpose: a scanned/image-only PDF has no extractable
+/// text, but we still want it to ingest because the original bytes are copied
+/// and remain previewable. So a missing `pdftotext` binary OR empty/whitespace
+/// output returns `Ok((empty, Some(warning)))` rather than an error. Only a real
+/// non-zero exit with stderr is a hard error.
+fn pdf_to_text(path: &str) -> Result<(String, Option<String>)> {
+    use std::process::Command;
+    let src = Path::new(path);
+    if !src.exists() {
+        return Err(Error::NotFound(format!("file not found: {path}")));
+    }
+
+    if which("pdftotext").is_none() {
+        return Ok((
+            String::new(),
+            Some("warning: no extractable text (scanned PDF?); preview still available".into()),
+        ));
+    }
+
+    let output = Command::new("pdftotext")
+        .args(["-layout", "-enc", "UTF-8"])
+        .arg(src)
+        .arg("-")
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let text = String::from_utf8_lossy(&o.stdout).into_owned();
+            if text.trim().is_empty() {
+                Ok((
+                    String::new(),
+                    Some(
+                        "warning: no extractable text (scanned PDF?); preview still available"
+                            .into(),
+                    ),
+                ))
+            } else {
+                Ok((text, None))
+            }
+        }
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
+            if stderr.is_empty() {
+                // non-zero exit but nothing to report → degrade gracefully
+                Ok((
+                    String::new(),
+                    Some(
+                        "warning: no extractable text (scanned PDF?); preview still available"
+                            .into(),
+                    ),
+                ))
+            } else {
+                Err(Error::Other(format!(
+                    "pdftotext failed for {path}: {stderr}"
+                )))
+            }
+        }
+        // binary vanished between the which() check and exec → degrade gracefully
+        Err(_) => Ok((
+            String::new(),
+            Some("warning: no extractable text (scanned PDF?); preview still available".into()),
+        )),
+    }
+}
+
+/// Convert docx/pptx to text via `libreoffice --headless --convert-to txt`.
 /// Unlike before, a missing binary or failed conversion is a hard `Err` (with
 /// actionable detail) rather than an `Ok(empty)` that silently makes an empty draft.
 fn libreoffice_to_text(path: &str) -> Result<(String, Option<String>)> {
