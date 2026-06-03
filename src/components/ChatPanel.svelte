@@ -6,7 +6,7 @@
   import type { Source } from "../lib/api";
   import * as api from "../lib/api";
 
-  let { compact = false, onClose }: { compact?: boolean; onClose?: () => void } = $props();
+  let { compact = false, onClose, onFullscreen }: { compact?: boolean; onClose?: () => void; onFullscreen?: () => void } = $props();
 
   // ── vertical resize ────────────────────────────────────────────────────────
   // A thin grab bar on the panel's top edge drags to change its height. Dragging
@@ -375,6 +375,17 @@
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
+      return;
+    }
+    // When the composer is EMPTY, Escape or "c" closes the chat — so the same
+    // key that opens it also closes it, even though the dock pages land focus
+    // here. With text typed, "c" types normally and Esc just blurs.
+    if (!draft.trim() && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key === "c" || e.key === "Escape")) {
+      e.preventDefault();
+      (e.target as HTMLElement | null)?.blur();
+      app.setMode("NOR");
+      if (onClose) onClose();
+      else app.chatOpen = false;
     }
   }
 
@@ -466,6 +477,11 @@
     <button class="btn btn--icon btn--sm btn--ghost" title="New conversation" onclick={startNewConversation}>
       <Icon name="plus" size={13} />
     </button>
+    {#if onFullscreen}
+      <button class="btn btn--icon btn--sm btn--ghost" onclick={onFullscreen} title="Fullscreen chat">
+        <Icon name="external" size={12} />
+      </button>
+    {/if}
     {#if onClose}
       <button class="btn btn--icon btn--sm btn--ghost" onclick={onClose} title="Close chat">
         <Icon name="x" size={12} />

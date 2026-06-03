@@ -79,6 +79,10 @@
           app.cmdkOpen = false; app.leaderOpen = false; app.musicOpen = false; return;
         }
         if ((window as any).__cortexModalOpen) return; // modals handle their own Esc
+        // If the chat dock is open, Esc closes it first (reliable close path).
+        if (app.chatOpen && (app.view === "notes" || (app.view === "subject" && app.subjectTab !== "chats")) && !typing) {
+          app.chatOpen = false; app.setMode("NOR"); return;
+        }
         // In a text field (e.g. the chat compose box) Esc just leaves edit mode.
         if (typing) { el?.blur(); app.setMode("NOR"); return; }
         // Everywhere else, Esc navigates back to the previous page.
@@ -178,7 +182,10 @@
 
       {#if showChatDock}
         <div class="chatdock">
-          <ChatPanel onClose={() => (app.chatOpen = false)} />
+          <ChatPanel
+            onClose={() => (app.chatOpen = false)}
+            onFullscreen={() => { app.setView("subject"); app.subjectTab = "chats"; }}
+          />
         </div>
       {/if}
 
