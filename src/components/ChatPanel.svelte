@@ -1,7 +1,8 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
-  import CiteText from "./CiteText.svelte";
+  import RichText from "./RichText.svelte";
+  import Picker from "./Picker.svelte";
   import type { Source } from "../lib/api";
   import * as api from "../lib/api";
 
@@ -18,6 +19,38 @@
   let messages = $state<ChatMessage[]>([]);
   let draft = $state("");
   let streaming = $state<string | null>(null);
+  let suggestions = $state<string[]>([]); // next-step prompts under the composer
+  let queued = $state<string[]>([]); // messages sent while a response is streaming
+
+  // In-chat model picker (writes the same model_chat setting Settings uses).
+  const CHAT_MODELS = [
+    "openrouter:openai/gpt-4o-mini",
+    "openrouter:openai/gpt-4o",
+    "openrouter:anthropic/claude-3.5-sonnet",
+    "openrouter:google/gemini-2.0-flash-001",
+    "openrouter:deepseek/deepseek-chat",
+    "gemini:gemini-2.5-flash",
+    "gemini:gemini-2.5-pro",
+    "openai:gpt-4o-mini",
+    "claude:claude-3-5-sonnet-20241022",
+  ];
+  let chatModel = $state("");
+  let chatModelLoaded = false;
+  $effect(() => {
+    if (chatModelLoaded) return;
+    chatModelLoaded = true;
+    api.getSetting("model_chat").then((v) => { if (v) chatModel = v; }).catch(() => {});
+  });
+  const modelOptions = $derived(
+    Array.from(new Set([...(chatModel ? [chatModel] : []), ...CHAT_MODELS])).map((spec) => ({
+      id: spec,
+      label: spec.includes(":") ? spec.split(":").slice(1).join(":") : spec,
+    }))
+  );
+  function setChatModel(spec: string) {
+    chatModel = spec;
+    api.setSetting("model_chat", spec).catch(() => {});
+  }
   let scrollEl = $state<HTMLElement | null>(null);
   let modelLabel = $state<string | null>(null);
   let composeEl = $state<HTMLTextAreaElement | null>(null);
@@ -160,43 +193,86 @@
     }
   }
 
-  // ── streaming send ────────────────────────────────────────────────────────
-  async function send() {
-    const text = draft.trim();
-    if (!text || streaming !== null) return;
-    if (!app.activeSubject) return;
+  // ── streaming send (with queue, stop, and next-step suggestions) ───────────
+  let typeIv: ReturnType<typeof setInterval> | null = null;
+  let cancelled = false;
 
-    messages = [...messages, { role: "user", text }];
-    draft = "";
+  // Split the trailing "SUGGESTIONS: a | b | c" line off the answer.
+  function splitSuggestions(full: string): { body: string; sugg: string[] } {
+    const m = full.match(/\n?\s*SUGGESTIONS:\s*(.+?)\s*$/i);
+    if (!m) return { body: full, sugg: [] };
+    const sugg = m[1].split("|").map((s) => s.trim()).filter(Boolean).slice(0, 3);
+    return { body: full.slice(0, m.index).trimEnd(), sugg };
+  }
 
-    streaming = "";
-    try {
-      const sourceId =
-        effLevel === "source" && curSrcObj ? curSrcObj.id : undefined;
-      const result = await api.chatAnswer(
-        app.activeSubject.id,
-        effLevel,
-        text,
-        sourceId
-      );
-      // Typewriter effect over result.text
-      const full = result.text;
-      modelLabel = result.model || null;
-      let i = 0;
-      const iv = setInterval(() => {
-        i += 2;
-        streaming = full.slice(0, i);
-        if (i >= full.length) {
-          clearInterval(iv);
-          streaming = null;
-          messages = [...messages, { role: "assistant", text: full }];
-        }
-      }, 16);
-    } catch (err) {
-      streaming = null;
-      const msg = err instanceof Error ? err.message : String(err);
-      messages = [...messages, { role: "system", text: msg }];
+  function send(textArg?: string) {
+    const text = (textArg ?? draft).trim();
+    if (!text || !app.activeSubject) return;
+    // While a response is in-flight, queue the message instead of dropping it.
+    if (streaming !== null) {
+      queued = [...queued, text];
+      if (textArg === undefined) draft = "";
+      return;
     }
+    if (textArg === undefined) draft = "";
+    messages = [...messages, { role: "user", text }];
+    suggestions = [];
+    streaming = "";
+    cancelled = false;
+
+    const sourceId = effLevel === "source" && curSrcObj ? curSrcObj.id : undefined;
+    api
+      .chatAnswer(app.activeSubject.id, effLevel, text, sourceId)
+      .then((result) => {
+        if (cancelled) { streaming = null; dequeue(); return; }
+        const { body, sugg } = splitSuggestions(result.text);
+        modelLabel = result.model || null;
+        let i = 0;
+        typeIv = setInterval(() => {
+          if (cancelled) {
+            if (typeIv) clearInterval(typeIv);
+            typeIv = null;
+            messages = [...messages, { role: "assistant", text: body.slice(0, i) || body }];
+            streaming = null;
+            suggestions = sugg;
+            dequeue();
+            return;
+          }
+          i += 3;
+          streaming = body.slice(0, i);
+          if (i >= body.length) {
+            if (typeIv) clearInterval(typeIv);
+            typeIv = null;
+            messages = [...messages, { role: "assistant", text: body }];
+            streaming = null;
+            suggestions = sugg;
+            dequeue();
+          }
+        }, 16);
+      })
+      .catch((err) => {
+        streaming = null;
+        const msg = err instanceof Error ? err.message : String(err);
+        messages = [...messages, { role: "system", text: msg }];
+        dequeue();
+      });
+  }
+
+  // Send the next queued message (if any) once the current one finishes.
+  function dequeue() {
+    if (queued.length === 0) return;
+    const [next, ...rest] = queued;
+    queued = rest;
+    send(next);
+  }
+
+  // Stop the current generation: abort the typewriter (and discard a pending
+  // result), keeping whatever has streamed so far.
+  function stop() {
+    cancelled = true;
+    if (typeIv) { clearInterval(typeIv); typeIv = null; }
+    if (streaming) messages = [...messages, { role: "assistant", text: streaming }];
+    streaming = null;
   }
 
   function handleKey(e: KeyboardEvent) {
@@ -220,12 +296,17 @@
     }
   }
 
-  // ── auto-scroll ───────────────────────────────────────────────────────────
+  // ── auto-scroll (stick to bottom only when the user is already there, so
+  // they can freely scroll up to read history mid-stream) ────────────────────
+  let stick = $state(true);
+  function onScroll() {
+    if (!scrollEl) return;
+    stick = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 120;
+  }
   $effect(() => {
-    // reactive on messages and streaming
     const _ = messages.length;
     const __ = streaming;
-    if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
+    if (scrollEl && stick) scrollEl.scrollTop = scrollEl.scrollHeight;
   });
 
   // ── badge label map ───────────────────────────────────────────────────────
@@ -269,6 +350,9 @@
     {/if}
 
     <div class="grow"></div>
+    <div class="chat-model-pick" title="Chat model">
+      <Picker value={chatModel} onChange={setChatModel} options={modelOptions} icon="bolt" placeholder="Model" />
+    </div>
     <button class="btn btn--icon btn--sm btn--ghost" title="History">
       <Icon name="refresh" size={13} />
     </button>
@@ -280,7 +364,7 @@
   </div>
 
   <!-- ── message list ───────────────────────────────────────────────────── -->
-  <div class="chat-scroll" bind:this={scrollEl}>
+  <div class="chat-scroll" bind:this={scrollEl} onscroll={onScroll}>
     {#if !app.activeSubject}
       <div class="chat-empty-state">
         <div class="ces-ico">
@@ -304,13 +388,13 @@
         {:else if m.role === "user"}
           <div class="bubble user">{m.text}</div>
         {:else}
-          <div class="bubble assistant"><CiteText text={m.text} /></div>
+          <div class="bubble assistant"><RichText text={m.text} /></div>
         {/if}
       {/each}
 
       {#if streaming !== null}
         <div class="bubble assistant">
-          <CiteText text={streaming} /><span class="cursor-blink">▋</span>
+          <RichText text={streaming} /><span class="cursor-blink">▋</span>
         </div>
       {/if}
     {/if}
@@ -318,6 +402,17 @@
 
   <!-- ── compose ───────────────────────────────────────────────────────── -->
   <div class="chat-compose">
+    {#if suggestions.length && streaming === null}
+      <div class="chat-suggest">
+        <span class="cs-label mono">Next</span>
+        {#each suggestions as s}
+          <button type="button" class="suggest-chip" onclick={() => send(s)}>{s}</button>
+        {/each}
+      </div>
+    {/if}
+    {#if queued.length}
+      <div class="chat-queued mono faint">{queued.length} message{queued.length === 1 ? "" : "s"} queued…</div>
+    {/if}
     <div class="compose-box{app.mode === 'INS' ? ' is-insert' : ''}">
       <textarea
         bind:this={composeEl}
@@ -333,14 +428,20 @@
         onblur={() => app.setMode("NOR")}
         onkeydown={handleKey}
       ></textarea>
-      <button
-        class="btn btn--icon btn--sm btn--primary"
-        onclick={send}
-        disabled={!draft.trim() || !app.activeSubject}
-        title="Send"
-      >
-        <Icon name="arrowR" size={13} />
-      </button>
+      {#if streaming !== null}
+        <button class="btn btn--icon btn--sm chat-stop" onclick={stop} title="Stop generating">
+          <span class="stop-sq"></span>
+        </button>
+      {:else}
+        <button
+          class="btn btn--icon btn--sm btn--primary"
+          onclick={() => send()}
+          disabled={!draft.trim() || !app.activeSubject}
+          title="Send"
+        >
+          <Icon name="arrowR" size={13} />
+        </button>
+      {/if}
     </div>
     <div class="compose-hint">
       <span><span class="kbd">i</span> insert</span>
@@ -416,6 +517,26 @@
 </div>
 
 <style>
+  /* ── next-step suggestion chips + queue + stop + model picker ──────────── */
+  .chat-suggest {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px;
+  }
+  .chat-suggest .cs-label {
+    font-size: var(--t-2xs, 10.5px); letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--fg-faint); margin-right: 2px;
+  }
+  .suggest-chip {
+    font: inherit; font-size: 12px; cursor: pointer;
+    padding: 5px 10px; border-radius: 999px;
+    border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--fg);
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  }
+  .suggest-chip:hover { background: var(--surface-3); border-color: var(--accent-dim, var(--accent)); color: var(--fg-bright); }
+  .chat-queued { font-size: 11px; margin-bottom: 6px; }
+  .chat-stop .stop-sq { width: 10px; height: 10px; border-radius: 2px; background: var(--err); display: block; }
+  .chat-stop { border-color: var(--border-strong); }
+  .chat-model-pick { max-width: 200px; font-size: 11px; }
+
   /* ── scope selector (the reworked top bar: one clean clickable control) ─── */
   .scope-pick {
     display: inline-flex;
