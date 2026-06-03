@@ -1,24 +1,53 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import Icon from "../components/Icon.svelte";
-  import { diff } from "../lib/mock";
+  import * as api from "../lib/api";
   import { flip } from "svelte/animate";
+
+  type DiffChange = { type: "ctx" | "add" | "del"; text: string };
+  type DiffSec = { id: string; title: string; changes: DiffChange[] };
 
   // Local UI state — all Svelte 5 runes
   let view = $state<"inline" | "split">("inline");
   let resolving = $state<Record<string, "accept" | "reject">>({});
   let focus = $state(0);
   let bodyEl = $state<HTMLElement | null>(null);
-  // Live list — resolved sections are removed so the rest snap up (flip animation).
-  let sections = $state(diff.sections.map((s) => ({ ...s })));
+  let loading = $state(false);
+  let sourceLabel = $state("cheatsheet draft");
+  // REAL data: the active subject's cheatsheet sections still in draft-pending
+  // state — the genuine proposed additions awaiting review (no mock fixtures).
+  let sections = $state<DiffSec[]>([]);
 
-  // Reset state whenever modal opens
+  // Load the real cheatsheet draft whenever the modal opens.
   $effect(() => {
-    if (app.diffOpen) {
-      resolving = {};
-      focus = 0;
-      sections = diff.sections.map((s) => ({ ...s }));
-    }
+    if (!app.diffOpen) return;
+    resolving = {};
+    focus = 0;
+    loading = true;
+    sections = [];
+    const sid = app.activeSubjectId;
+    (async () => {
+      try {
+        const cs = sid ? await api.getCheatsheet(sid) : null;
+        if (cs) {
+          sourceLabel = cs.topic ? `${cs.subject} · ${cs.topic}` : cs.subject;
+          sections = cs.sections
+            .filter((s) => s.state === "draft-pending")
+            .map((s) => ({
+              id: s.id,
+              title: s.title,
+              changes: s.items.map((it) => ({
+                type: "add" as const,
+                text: it.t ? `${it.t}: ${it.d}` : it.d,
+              })),
+            }));
+        }
+      } catch (e) {
+        app.pushToast({ kind: "error", title: "Couldn't load draft", body: String(e) });
+      } finally {
+        loading = false;
+      }
+    })();
   });
 
   // Keyboard handler — capture phase, installed only while open
@@ -95,6 +124,7 @@
   }
 
   function acceptAll() {
+    if (!sections.length) { close(); return; }
     const next: Record<string, "accept" | "reject"> = {};
     sections.forEach((s) => (next[s.id] = "accept"));
     resolving = next;
@@ -127,7 +157,7 @@
           <div class="diff-title mono">
             Draft from
             <span class="badge badge--web" style="margin-left: 4px;">
-              <span class="dot"></span>{diff.source}
+              <span class="dot"></span>{sourceLabel}
             </span>
           </div>
         </div>
@@ -157,6 +187,18 @@
 
       <!-- Diff body -->
       <div class="diff-body" bind:this={bodyEl}>
+        {#if loading}
+          <div class="mono faint" style="display:flex;align-items:center;justify-content:center;min-height:200px;">Loading draft…</div>
+        {:else if sections.length === 0}
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:240px;text-align:center;padding:24px;">
+            <Icon name="check" size={26} color="var(--ok)" />
+            <div class="read" style="font-size:18px;color:var(--fg-bright);">Nothing to review</div>
+            <p class="mono faint" style="max-width:360px;line-height:1.5;">
+              No pending cheatsheet changes for this subject. Generate or regenerate
+              the cheatsheet to see proposed additions here.
+            </p>
+          </div>
+        {:else}
         {#each sections as sec, idx (sec.id)}
           {@const r = resolving[sec.id]}
           {@const isFocus = idx === focus && !r}
@@ -228,6 +270,7 @@
             {/if}
           </div>
         {/each}
+        {/if}
       </div>
 
       <!-- Footer -->

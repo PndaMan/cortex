@@ -155,7 +155,16 @@
     if (!listening) return;
     (window as any).__cortexModalOpen = true;
     function onKey(e: KeyboardEvent) {
+      // Ignore standalone modifier presses so the user can type a shifted key
+      // (e.g. press Shift then ":") — keep listening until a real key arrives.
+      if (["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock"].includes(e.key)) {
+        return;
+      }
+      // Swallow the event entirely so the global keyboard engine doesn't also
+      // act on it (otherwise ":" would open the command palette).
       e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
       const k = e.key === "Escape" ? null : e.key;
       if (k && listening) {
         keybinds.set(listening, k); // persists + applies live

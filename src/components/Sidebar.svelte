@@ -20,19 +20,15 @@
     app.openSubject(id);
   }
 
-  function renameSubject(s: { id: string; name: string; code?: string | null }, e: Event) {
+  async function renameSubject(s: { id: string; name: string; code?: string | null }, e: Event) {
     e.stopPropagation();
-    const next = window.prompt("Rename subject", s.name);
-    if (next && next.trim() && next.trim() !== s.name) {
-      app.updateSubject(s.id, next.trim(), s.code ?? undefined);
-    }
+    const name = await app.prompt({ title: "Rename subject", label: "Subject name", value: s.name });
+    if (name) app.updateSubject(s.id, name, s.code ?? undefined);
   }
 
-  function removeSubject(s: { id: string; name: string }, e: Event) {
+  async function removeSubject(s: { id: string; name: string }, e: Event) {
     e.stopPropagation();
-    if (window.confirm(`Delete subject “${s.name}”? This can’t be undone.`)) {
-      app.deleteSubject(s.id);
-    }
+    if (await app.confirm({ title: "Delete subject?", body: `"${s.name}" and all its sources and topics will be permanently removed.`, danger: true, okLabel: "Delete" })) app.deleteSubject(s.id);
   }
 </script>
 
@@ -158,7 +154,8 @@
                 tabindex="0"
                 onkeydown={(e) => e.key === "Enter" && openSubject(s.id)}
               >
-                <Icon name="chevron" size={10} /> {t.name}
+                <span class="t-tw"><Icon name="chevron" size={10} /></span>
+                <span class="t-name">{t.name}</span>
               </div>
               {#each t.sources as src (src.id)}
                 <div
@@ -174,7 +171,7 @@
                     style:padding="0 4px"
                     style:font-size="9px"
                   >{src.kind.toUpperCase().slice(0, 3)}</span>
-                  <span style:overflow="hidden" style:text-overflow="ellipsis" style:white-space="nowrap">{src.name}</span>
+                  <span class="src-name">{src.name}</span>
                 </div>
               {/each}
             {/each}
@@ -259,5 +256,61 @@
   /* Count still hugs the dot; cancel the row's default margin-auto on name */
   .sb-subj-row .s-actions + .s-count {
     margin-left: 0;
+  }
+
+  /* ── Overflow safety: long names truncate instead of widening the 248px sidebar ── */
+  .sb-subj-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+  .sb-subj-row :global(.twisty),
+  .sb-subj-row .s-actions,
+  .sb-subj-row .s-count,
+  .sb-subj-row .s-dot {
+    flex: none;
+  }
+  .sb-subj-row .s-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Topic rows: chevron stays put, name flexes + truncates */
+  .sb-topic {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+  .sb-topic .t-tw {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+  }
+  .sb-topic .t-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Source rows: badge stays put, name flexes + truncates */
+  .sb-src {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+  .sb-src :global(.badge) {
+    flex: none;
+  }
+  .sb-src .src-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>

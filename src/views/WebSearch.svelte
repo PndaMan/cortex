@@ -5,7 +5,7 @@
   import Icon from "../components/Icon.svelte";
 
   // Default query shown in the first tab (replaces mock.search.suggested).
-  const SUGGESTED = "dynamic programming memoization";
+  const SUGGESTED = ""; // no mock default query — the address bar starts empty
 
   // ---- types ----
   // A renderable result: the real WebResult plus the extra fields the existing
@@ -469,9 +469,11 @@
               Type a query in the address bar above, or press <kbd>/</kbd> to focus it.
               Results come from your self-hosted SearXNG instance.
             </p>
-            <button class="btn btn--sm btn--primary" onclick={() => runSearch(active.draft || SUGGESTED)}>
-              <Icon name="search" size={13} /> Search “{(active.draft || SUGGESTED).trim()}”
-            </button>
+            {#if active.draft.trim()}
+              <button class="btn btn--sm btn--primary" onclick={() => runSearch(active.draft)}>
+                <Icon name="search" size={13} /> Search “{active.draft.trim()}”
+              </button>
+            {/if}
           </div>
 
         {:else if st === "loading"}

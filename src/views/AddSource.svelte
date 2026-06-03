@@ -3,6 +3,7 @@
   import * as api from "../lib/api";
   import type { IngestResult } from "../lib/api";
   import Icon from "../components/Icon.svelte";
+  import Picker from "../components/Picker.svelte";
   import type { UnlistenFn } from "@tauri-apps/api/event";
 
   // Current input method selected
@@ -39,6 +40,11 @@
     selectedTopic = subj?.topics[0]?.id ?? "";
   });
   const topicId = $derived(selectedTopic || null);
+  // Themed dropdown options: the subject's topics, plus an explicit "no topic" entry.
+  const topicOptions = $derived([
+    ...(subj?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),
+    { id: "", label: "— no topic —" },
+  ]);
 
   function isDone(st: string) {
     return ORDER.indexOf(st) < ORDER.indexOf(stage ?? "");
@@ -276,13 +282,13 @@
       <!-- Target topic -->
       {#if subj}
         <div class="field" style:margin-top="14px">
-          <label class="onb-label mono" for="addsrc-topic">TOPIC <span class="faint">where this source lives</span></label>
-          <select id="addsrc-topic" class="input mono" bind:value={selectedTopic}>
-            {#each subj.topics as t (t.id)}
-              <option value={t.id}>{t.name}</option>
-            {/each}
-            <option value="">— no topic —</option>
-          </select>
+          <span class="onb-label mono">TOPIC <span class="faint">where this source lives</span></span>
+          <Picker
+            value={selectedTopic}
+            onChange={(id) => (selectedTopic = id)}
+            options={topicOptions}
+            placeholder="— no topic —"
+          />
         </div>
       {/if}
 

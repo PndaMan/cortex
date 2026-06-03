@@ -10,6 +10,7 @@
   import LeaderPane from "./components/LeaderPane.svelte";
   import ChatPanel from "./components/ChatPanel.svelte";
   import HelpOverlay from "./components/HelpOverlay.svelte";
+  import Dialog from "./components/Dialog.svelte";
   import { keybinds } from "./lib/keybinds.svelte";
 
   import Dashboard from "./views/Dashboard.svelte";
@@ -152,6 +153,7 @@
     <DiffModal />
     <MusicPanel />
     <SourceMetaModal />
+    <Dialog />
     <ToastStack />
   </div>
 {/if}

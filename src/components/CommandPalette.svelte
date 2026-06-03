@@ -28,7 +28,7 @@
     })),
     { id: "a-record", group: "Actions", label: "Record lecture", kind: "command", icon: "record", hint: "␣ r", run: () => app.setView("recorder") },
     { id: "a-source", group: "Actions", label: "Add source", kind: "command", icon: "plus", hint: "␣ s", run: () => app.setView("add-source") },
-    { id: "a-diff", group: "Actions", label: "Review cheatsheet diff", kind: "command", icon: "book", hint: app.pending + " pending", run: () => app.reviewDiff() },
+    { id: "a-diff", group: "Actions", label: "Review cheatsheet diff", kind: "command", icon: "book", hint: app.pending ? app.pending + " pending" : "", run: () => app.reviewDiff() },
     { id: "a-regen", group: "Actions", label: "Regenerate cheatsheet", kind: "command", icon: "refresh", run: () => app.pushToast({ kind: "info", title: "Regenerating…", body: "Re-synthesizing the cheatsheet from your sources." }) },
     { id: "a-flash", group: "Actions", label: "Study flashcards", kind: "command", icon: "cards", run: () => { app.setView("subject"); app.setTab("materials"); } },
     { id: "a-quiz", group: "Actions", label: "Generate quiz", kind: "command", icon: "check", run: () => { app.setView("subject"); app.setTab("materials"); } },

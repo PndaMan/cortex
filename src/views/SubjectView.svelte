@@ -40,21 +40,21 @@
 
   async function deleteSrc(e: MouseEvent, src: Source) {
     e.stopPropagation();
-    if (!confirm(`Delete source "${src.name}"? This cannot be undone.`)) return;
+    if (!(await app.confirm({ title: "Delete this source?", danger: true, okLabel: "Delete" }))) return;
     await app.deleteSource(src.id); // toasts + refreshes the store internally
     loadSources(); // reload the local list this tab renders from
   }
 
   async function deleteTopicGroup(topicId: string, name: string) {
-    if (!confirm(`Delete topic "${name}"? Its sources become ungrouped.`)) return;
+    if (!(await app.confirm({ title: "Delete topic? Sources in it will be ungrouped.", danger: true, okLabel: "Delete" }))) return;
     await app.deleteTopic(topicId); // toasts + refreshes store internally
     loadSources();
   }
 
   async function addTopic() {
-    const name = window.prompt("New topic name");
-    if (name && name.trim()) {
-      await app.createTopic(name.trim()); // adds to active subject + toasts + refreshes
+    const name = await app.prompt({ title: "Add topic", label: "Topic name", placeholder: "e.g. Determinism" });
+    if (name) {
+      await app.createTopic(name); // adds to active subject + toasts + refreshes
       loadSources();
     }
   }

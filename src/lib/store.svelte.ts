@@ -36,6 +36,17 @@ const THEME_LABELS: Record<Theme, string> = {
 
 export type Music = { current: string; playing: boolean; volume: number };
 
+export type DialogSpec = {
+  kind: "confirm" | "prompt";
+  title: string;
+  body?: string;
+  label?: string;
+  value?: string;
+  placeholder?: string;
+  danger?: boolean;
+  okLabel?: string;
+};
+
 function uid() {
   return Math.random().toString(36).slice(2);
 }
@@ -64,6 +75,8 @@ class AppStore {
   onboarding = $state(false);
   metaModal = $state<any | null>(null);
   toasts = $state<Toast[]>([]);
+  // themed confirm/prompt dialog (replaces native window.confirm / window.prompt)
+  dialog = $state<DialogSpec | null>(null);
   pending = $state(0); // cheatsheet draft sections awaiting review (real count set by Cheatsheet view)
   // playing starts false — browsers block autoplay until a user gesture.
   music = $state<Music>({ current: "lofi", playing: false, volume: 60 });
@@ -246,6 +259,30 @@ class AppStore {
   setVolume(v: number) {
     this.music = { ...this.music, volume: v };
     music.setVolume(v / 100);
+  }
+
+  // ---- themed dialogs (confirm / prompt) ----
+  #dialogResolve: ((v: any) => void) | null = null;
+  /** Themed replacement for window.confirm. Resolves true on OK, false otherwise. */
+  confirm(opts: { title: string; body?: string; danger?: boolean; okLabel?: string }): Promise<boolean> {
+    return new Promise((resolve) => {
+      this.#dialogResolve = resolve;
+      this.dialog = { kind: "confirm", okLabel: "Confirm", ...opts };
+    });
+  }
+  /** Themed replacement for window.prompt. Resolves the trimmed string, or null if cancelled. */
+  prompt(opts: { title: string; body?: string; label?: string; value?: string; placeholder?: string; okLabel?: string }): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.#dialogResolve = resolve;
+      this.dialog = { kind: "prompt", okLabel: "OK", value: "", ...opts };
+    });
+  }
+  /** Called by the Dialog component to settle the active dialog. */
+  resolveDialog(v: boolean | string | null) {
+    const r = this.#dialogResolve;
+    this.dialog = null;
+    this.#dialogResolve = null;
+    r?.(v);
   }
 
   // ---- toasts ----
