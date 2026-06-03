@@ -1,19 +1,22 @@
 <script lang="ts">
-  // Markdown notes — a master/detail workspace. Left: note list scoped to the
-  // active subject (or all unfiled notes). Right: title + Markdown editor with
-  // Save button, debounced autosave, "Convert to source", and Delete.
+  // Markdown notes — a master/detail workspace. Left: collapsible note list
+  // scoped to the active subject (or all unfiled notes). Right: title +
+  // Markdown editor with Save, autosave, "Convert to source", "Export PDF",
+  // and Delete.
   // Renders full-page in `.workspace-scroll`, or compact when `embedded`.
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import type { Note } from "../lib/api";
   import Icon from "../components/Icon.svelte";
   import MarkdownEditor from "../components/MarkdownEditor.svelte";
+  import RichText from "../components/RichText.svelte";
 
   let { embedded = false }: { embedded?: boolean } = $props();
 
   let notes = $state<Note[]>([]);
   let loading = $state(true);
   let selectedId = $state<string | null>(null);
+  let listCollapsed = $state(false);
 
   // Draft fields for the selected note; saved status tracks persistence.
   let title = $state("");
@@ -111,6 +114,10 @@
     }
   }
 
+  function exportPdf() {
+    window.print();
+  }
+
   function relTime(ms: number): string {
     const diff = Date.now() - ms;
     const m = Math.round(diff / 60000);
@@ -127,42 +134,77 @@
 </script>
 
 {#snippet notesWorkspace()}
-  <div class={"notes" + (embedded ? " notes--embedded" : "")}>
-    <aside class="notes-list">
-      <div class="notes-list-head">
-        <span class="notes-list-title">Notes</span>
-        <button class="btn btn--primary btn--sm" type="button" onclick={newNote}>
-          <Icon name="plus" size={12} /> New note
+  <div class={"notes" + (embedded ? " notes--embedded" : "") + (listCollapsed ? " notes--collapsed" : "")}>
+    <!-- Left: note list or slim rail when collapsed -->
+    {#if listCollapsed}
+      <aside class="notes-rail" aria-label="Note list (collapsed)">
+        <button
+          type="button"
+          class="notes-rail-toggle"
+          title="Expand note list"
+          aria-label="Expand note list"
+          onclick={() => (listCollapsed = false)}
+        >
+          <Icon name="chevron" size={14} />
         </button>
-      </div>
-      <div class="notes-items">
-        {#if loading}
-          <div class="notes-hint">Loading…</div>
-        {:else if notes.length === 0}
-          <div class="notes-empty">
-            <div class="notes-empty-glyph">📝</div>
-            <div class="notes-empty-title">No notes yet</div>
-            <div class="notes-empty-body">
-              {app.activeSubjectId ? "Capture ideas in Markdown for this subject." : "Capture ideas in Markdown."}
-            </div>
-            <button class="btn btn--primary btn--sm" type="button" onclick={newNote}>
+        <button
+          type="button"
+          class="notes-rail-new"
+          title="New note"
+          aria-label="New note"
+          onclick={newNote}
+        >
+          <Icon name="plus" size={13} />
+        </button>
+      </aside>
+    {:else}
+      <aside class="notes-list">
+        <div class="notes-list-head">
+          <span class="notes-list-title">Notes</span>
+          <div class="notes-list-head-actions">
+            <button class="btn btn--primary btn--sm" type="button" onclick={newNote} title="New note">
               <Icon name="plus" size={12} /> New note
             </button>
-          </div>
-        {:else}
-          {#each notes as n (n.id)}
             <button
               type="button"
-              class={"notes-item" + (n.id === selectedId ? " on" : "")}
-              onclick={() => select(n)}
+              class="notes-collapse-btn"
+              title="Collapse note list"
+              aria-label="Collapse note list"
+              onclick={() => (listCollapsed = true)}
             >
-              <span class="notes-item-title">{n.title || "Untitled"}</span>
-              <span class="notes-item-time">{relTime(n.updated_at)}</span>
+              <Icon name="chevron" size={13} style="transform:rotate(180deg)" />
             </button>
-          {/each}
-        {/if}
-      </div>
-    </aside>
+          </div>
+        </div>
+        <div class="notes-items">
+          {#if loading}
+            <div class="notes-hint">Loading…</div>
+          {:else if notes.length === 0}
+            <div class="notes-empty">
+              <div class="notes-empty-glyph">📝</div>
+              <div class="notes-empty-title">No notes yet</div>
+              <div class="notes-empty-body">
+                {app.activeSubjectId ? "Capture ideas in Markdown for this subject." : "Capture ideas in Markdown."}
+              </div>
+              <button class="btn btn--primary btn--sm" type="button" onclick={newNote}>
+                <Icon name="plus" size={12} /> New note
+              </button>
+            </div>
+          {:else}
+            {#each notes as n (n.id)}
+              <button
+                type="button"
+                class={"notes-item" + (n.id === selectedId ? " on" : "")}
+                onclick={() => select(n)}
+              >
+                <span class="notes-item-title">{n.title || "Untitled"}</span>
+                <span class="notes-item-time">{relTime(n.updated_at)}</span>
+              </button>
+            {/each}
+          {/if}
+        </div>
+      </aside>
+    {/if}
 
     <section class="notes-detail">
       {#if selected}
@@ -182,16 +224,36 @@
           <MarkdownEditor value={body} onChange={(v) => { body = v; markDirty(); }} />
         </div>
 
+        <!-- Print-only rendered preview — hidden on screen, shown when printing -->
+        <div class="notes-print-preview" aria-hidden="true">
+          <h1 class="notes-print-title">{title || "Untitled"}</h1>
+          <RichText text={body} />
+        </div>
+
         <div class="notes-actions">
-          <button class="btn btn--danger btn--sm" type="button" style="margin-right:auto" onclick={remove}>
+          <button
+            class="btn btn--danger btn--sm"
+            type="button"
+            style="margin-right:auto"
+            onclick={remove}
+            title="Delete this note"
+          >
             Delete
+          </button>
+          <button
+            class="btn btn--ghost btn--sm"
+            type="button"
+            onclick={exportPdf}
+            title="Export note as PDF"
+          >
+            <Icon name="doc" size={13} /> Export PDF
           </button>
           <span class="notes-convert-wrap" title={canConvert ? "" : "Notes need a subject to become a source"}>
             <button class="btn btn--ghost btn--sm" type="button" disabled={!canConvert} onclick={convert}>
               <Icon name="arrowR" size={13} /> Convert to source
             </button>
           </span>
-          <button class="btn btn--primary btn--sm" type="button" disabled={saved} onclick={save}>
+          <button class="btn btn--primary btn--sm" type="button" disabled={saved} onclick={save} title="Save note">
             Save
           </button>
         </div>
@@ -225,16 +287,11 @@
 
 <style>
   /* ── Full-page wrapper ──────────────────────────────────────────────────── */
-  /* Make workspace-scroll a flex column so notes-page can fill height.
-     We scope this override via a companion class so it doesn't bleed to other
-     views that also use workspace-scroll. */
   :global(.notes-workspace-scroll) {
     display: flex;
     flex-direction: column;
   }
 
-  /* notes-page fills the scroll container vertically and spans full width.
-     The page-head is flex-none; the notes grid takes all remaining height. */
   .notes-page {
     display: flex;
     flex-direction: column;
@@ -253,8 +310,6 @@
   }
 
   /* ── Master–detail grid ─────────────────────────────────────────────────── */
-  /* Full view: fixed list column + editor fills remaining width. Both columns
-     stretch to the same height (the remaining workspace height). */
   .notes {
     display: grid;
     grid-template-columns: 260px 1fr;
@@ -268,6 +323,11 @@
     margin-bottom: 24px;
   }
 
+  /* When list is collapsed, shrink first column to the slim rail width. */
+  .notes--collapsed {
+    grid-template-columns: 40px 1fr;
+  }
+
   /* Embedded (dock) mode: narrower list, single frame, no extra margin. */
   .notes--embedded {
     grid-template-columns: 180px 1fr;
@@ -275,6 +335,9 @@
     min-height: 420px;
     margin-bottom: 0;
     border-radius: var(--r-lg, 12px);
+  }
+  .notes--embedded.notes--collapsed {
+    grid-template-columns: 40px 1fr;
   }
 
   /* ── Left: note list ────────────────────────────────────────────────────── */
@@ -298,6 +361,20 @@
     font-size: var(--t-2xs, 10.5px); font-weight: 600; letter-spacing: 0.12em;
     text-transform: uppercase; color: var(--fg-faint);
   }
+
+  .notes-list-head-actions {
+    display: flex; align-items: center; gap: 4px;
+  }
+
+  /* Collapse toggle button in the list header. */
+  .notes-collapse-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; padding: 0;
+    background: none; border: 1px solid transparent; border-radius: 6px;
+    color: var(--fg-faint); cursor: pointer;
+    transition: background 0.1s ease, color 0.1s ease;
+  }
+  .notes-collapse-btn:hover { background: var(--surface-3); color: var(--fg-bright); }
 
   /* List items area scrolls independently within the fixed column height. */
   .notes-items {
@@ -323,9 +400,31 @@
   .notes-item-time { font-size: var(--t-2xs, 10px); color: var(--fg-faint); font-family: var(--font-mono); }
   .notes-hint { padding: 10px; color: var(--fg-faint); font-size: var(--t-xs, 12px); }
 
+  /* ── Collapsed rail ─────────────────────────────────────────────────────── */
+  .notes-rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 0;
+    background: var(--surface-2);
+    border-right: 1px solid var(--border);
+  }
+
+  .notes-rail-toggle,
+  .notes-rail-new {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; padding: 0;
+    background: none; border: 1px solid transparent; border-radius: 7px;
+    color: var(--fg-faint); cursor: pointer;
+    transition: background 0.1s ease, color 0.1s ease;
+  }
+  .notes-rail-toggle:hover,
+  .notes-rail-new:hover {
+    background: var(--surface-3); color: var(--fg-bright);
+  }
+
   /* ── Right: detail pane ─────────────────────────────────────────────────── */
-  /* Detail pane fills the grid cell and lays out as a flex column so the
-     MarkdownEditor (flex:1) can grow to fill all remaining space. */
   .notes-detail {
     display: flex;
     flex-direction: column;
@@ -357,8 +456,6 @@
   }
   .notes-saved.on { color: var(--accent); }
 
-  /* MarkdownEditor lives here and is flex:1 in its own styles; wrap it in a
-     flex-grow region so it fills vertical space between the header and footer. */
   .notes-editor-wrap {
     flex: 1 1 0;
     min-height: 0;
@@ -376,6 +473,15 @@
   }
   .notes-convert-wrap { display: inline-flex; }
 
+  /* ── Print-only preview block ───────────────────────────────────────────── */
+  /* Hidden on screen; only the @media print rule makes it visible. */
+  .notes-print-preview {
+    display: none;
+  }
+  .notes-print-title {
+    font-size: 22px; font-weight: 700; margin: 0 0 16px; color: #000;
+  }
+
   /* ── Empty states ───────────────────────────────────────────────────────── */
   .notes-empty, .notes-detail-empty {
     display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
@@ -389,4 +495,55 @@
   .notes-empty-glyph { font-size: 30px; line-height: 1; }
   .notes-empty-title { font-size: var(--t-md, 14px); font-weight: 600; color: var(--fg-bright); }
   .notes-empty-body { font-size: var(--t-xs, 12px); color: var(--fg-faint); max-width: 220px; }
+
+  /* ── PDF / Print ────────────────────────────────────────────────────────── */
+  @media print {
+    /* Hide entire app chrome. These are :global because they live outside this
+       component's shadow — the sidebar, statusbar, chat dock, etc. */
+    :global(.sidebar),
+    :global(.statusbar),
+    :global(.chat-dock),
+    :global(.chat-bar),
+    :global(.workspace-scroll > *:not(.notes-page)),
+    :global(.notes-page-head) {
+      display: none !important;
+    }
+
+    /* Strip page layout so only the note fills the printed page. */
+    :global(body),
+    :global(.workspace-scroll),
+    :global(.notes-page) {
+      display: block !important;
+      background: #fff !important;
+      color: #000 !important;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+
+    /* Hide everything inside the notes component except the print preview. */
+    .notes-list,
+    .notes-rail,
+    .notes-detail-head,
+    .notes-editor-wrap,
+    .notes-actions {
+      display: none !important;
+    }
+
+    /* Let the notes grid collapse to a single column for the detail pane. */
+    .notes {
+      display: block !important;
+      border: none !important;
+      margin: 0 !important;
+    }
+
+    /* Show the hidden print-only preview block, full-width, black on white. */
+    .notes-print-preview {
+      display: block !important;
+      color: #000;
+      background: #fff;
+      padding: 24px 32px;
+      font-size: 12pt;
+      line-height: 1.6;
+    }
+  }
 </style>

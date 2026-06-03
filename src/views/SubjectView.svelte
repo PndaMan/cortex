@@ -6,6 +6,8 @@
   import Cheatsheet from "./Cheatsheet.svelte";
   import Materials from "./Materials.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
+  import GeneratingCard from "../components/GeneratingCard.svelte";
+  import { jobs } from "../lib/jobs.svelte";
 
   const TABS = [
     { id: "cheatsheet", label: "Cheatsheet", icon: "book" },
@@ -106,6 +108,13 @@
       items,
     }));
   });
+
+  // Source ingestion jobs for this subject: running cards + errors until dismissed.
+  const sourceJobs = $derived(
+    jobs.forSubject(app.activeSubjectId).filter(
+      (j) => j.kind === "source" && (j.status === "running" || j.status === "error")
+    )
+  );
 </script>
 
 {#if subj}
@@ -155,6 +164,10 @@
                 <Icon name="plus" size={12} /> Add source
               </button>
             </div>
+
+            {#each sourceJobs as job (job.id)}
+              <GeneratingCard {job} />
+            {/each}
 
             {#each groups as g (g.key)}
               <div class="src-topic">

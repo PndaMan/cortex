@@ -112,7 +112,7 @@
       tabindex="0"
       onkeydown={(e) => e.key === "Enter" && app.setView("notes")}
     >
-      <Icon name="reader" size={14} /> Notes <span class="nav-k">␣ n</span>
+      <Icon name="reader" size={14} /> Notes <span class="nav-k">␣ o</span>
     </div>
     <div
       class="sb-nav-item{app.view === 'calendar' ? ' on' : ''}"

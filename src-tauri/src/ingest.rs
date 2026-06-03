@@ -284,6 +284,26 @@ fn libreoffice_to_text(path: &str) -> Result<(String, Option<String>)> {
     if !src.exists() {
         return Err(Error::NotFound(format!("file not found: {path}")));
     }
+
+    // LibreOffice Impress (pptx/ppt) cannot export the Writer "Text" filter —
+    // `--convert-to txt:Text` fails with an Io/Write error. Render the deck to a
+    // temporary PDF (Impress CAN do that) and pull the text out with pdftotext.
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if matches!(ext.as_str(), "pptx" | "ppt") {
+        let tmp = std::env::temp_dir().join(format!("cortex-ppt-{}", crate::db::new_id()));
+        std::fs::create_dir_all(&tmp)?;
+        let pdf = tmp.join("deck.pdf");
+        let res = libreoffice_to_pdf(path, &pdf).and_then(|_| {
+            pdf_to_text(pdf.to_str().ok_or_else(|| Error::Other("bad temp path".into()))?)
+        });
+        let _ = std::fs::remove_dir_all(&tmp);
+        return res;
+    }
+
     let outdir = std::env::temp_dir().join(format!("cortex-ingest-{}", crate::db::new_id()));
     std::fs::create_dir_all(&outdir)?;
 

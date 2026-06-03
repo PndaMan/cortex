@@ -150,6 +150,98 @@
     selectedDay ? (byDay[dayKey(selectedDay)] ?? []) : []
   );
 
+  // ---- day-view timeline geometry ----
+  const HOURS = Array.from({ length: 24 }, (_, h) => h);
+  const HOUR_PX = 52; // height of one hour row
+  const MIN_BLOCK_PX = 24;
+
+  // Label for an hour gutter row (am/pm, reusing the same formatting style).
+  function hourLabel(h: number): string {
+    const ap = h >= 12 ? "pm" : "am";
+    const hh = h % 12 || 12;
+    return `${hh} ${ap}`;
+  }
+
+  // Split the day's events into the all-day strip vs. positioned timed blocks.
+  const allDayEvents = $derived<CalEvent[]>(
+    selectedDayEvents.filter((e) => e.all_day)
+  );
+
+  type TimedBlock = { e: CalEvent; top: number; height: number };
+  const timedBlocks = $derived.by<TimedBlock[]>(() => {
+    if (!selectedDay) return [];
+    const dayStart = new Date(selectedDay);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayStartMs = dayStart.getTime();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const out: TimedBlock[] = [];
+    for (const e of selectedDayEvents) {
+      if (e.all_day) continue;
+      // Minutes from start of day for the start; clamp to the visible day.
+      const startOff = Math.max(0, e.start_ms - dayStartMs);
+      const startMin = startOff / 60000;
+      const endMsRaw = e.end_ms != null ? e.end_ms : e.start_ms + 60 * 60 * 1000;
+      const endOff = Math.min(dayMs, endMsRaw - dayStartMs);
+      const durMin = Math.max(0, endOff / 60000 - startMin);
+      const top = (startMin / 60) * HOUR_PX;
+      const height = Math.max(MIN_BLOCK_PX, (durMin / 60) * HOUR_PX);
+      out.push({ e, top, height });
+    }
+    return out;
+  });
+
+  // ---- red current-time line ----
+  let nowMs = $state(Date.now());
+
+  const selectedIsToday = $derived.by<boolean>(() => {
+    if (!selectedDay) return false;
+    const n = new Date(nowMs);
+    return (
+      selectedDay.getFullYear() === n.getFullYear() &&
+      selectedDay.getMonth() === n.getMonth() &&
+      selectedDay.getDate() === n.getDate()
+    );
+  });
+
+  // Vertical offset (px) of the now-line within the grid.
+  const nowTop = $derived.by<number>(() => {
+    const n = new Date(nowMs);
+    return ((n.getHours() * 60 + n.getMinutes()) / 60) * HOUR_PX;
+  });
+
+  // Tick the clock every 60s while mounted; refreshes now-line + isToday.
+  $effect(() => {
+    const id = setInterval(() => {
+      nowMs = Date.now();
+    }, 60000);
+    return () => clearInterval(id);
+  });
+
+  // Auto-scroll the timeline so the current hour (or 8 AM) is in view whenever
+  // we (re)enter day view or change the selected day.
+  let gridEl = $state<HTMLDivElement | null>(null);
+  $effect(() => {
+    if (mode !== "day" || !selectedDay || !gridEl) return;
+    // Track selectedDay so switching days re-scrolls.
+    void selectedDay;
+    const el = gridEl;
+    const hour = selectedIsToday ? new Date(nowMs).getHours() : 8;
+    const target = Math.max(0, hour * HOUR_PX - HOUR_PX); // a little context above
+    queueMicrotask(() => {
+      el.scrollTo({ top: target });
+    });
+  });
+
+  // Create an event prefilled to a clicked hour on the selected day.
+  function openCreateAtHour(h: number) {
+    if (!selectedDay) return;
+    const d = new Date(selectedDay);
+    d.setHours(h, 0, 0, 0);
+    editEvent = null;
+    modalDefaultMs = d.getTime();
+    modalOpen = true;
+  }
+
   // Precomputed subject→color map so pill rendering is a constant-time lookup
   // (rather than a linear find per pill on every re-render).
   const subjectColorMap = $derived(
@@ -353,63 +445,101 @@
     {/if}
 
   {:else}
-    <!-- ===== DAY VIEW ===== -->
+    <!-- ===== DAY VIEW (Google-style timeline) ===== -->
     <div class="cal-day">
-      {#if selectedDayEvents.length === 0}
-        <div class="cal-day-empty">
-          <div class="cal-day-empty-msg">No events on this day.</div>
-          <button
-            class="btn btn--primary btn--sm"
-            type="button"
-            onclick={() => selectedDay && openCreate(selectedDay)}
-          >
-            <Icon name="plus" size={12} />
-            <span>Add event</span>
-          </button>
+      <!-- all-day strip -->
+      {#if allDayEvents.length > 0}
+        <div class="day-allday">
+          <div class="day-allday-lbl">All day</div>
+          <div class="day-allday-list">
+            {#each allDayEvents as e (e.id)}
+              <button
+                type="button"
+                class={"ad-pill" + (e.kind === "task" && e.done ? " done" : "")}
+                style:--blk-color={pillColor(e)}
+                onclick={(ev) => openEdit(e, ev)}
+                title={e.title}
+              >
+                {#if e.kind === "task"}
+                  <span
+                    class={"pill-check ad-check" + (e.done ? " on" : "")}
+                    role="checkbox"
+                    aria-checked={e.done}
+                    aria-label="Toggle done"
+                    tabindex="-1"
+                    onclick={(ev) => toggleDone(e, ev)}
+                    onkeydown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleDone(e, ev); } }}
+                  >
+                    {#if e.done}<Icon name="check" size={9} />{/if}
+                  </span>
+                {/if}
+                <span class="ad-title">{e.title}</span>
+              </button>
+            {/each}
+          </div>
         </div>
-      {:else}
-        <div class="cal-day-events">
-          {#each selectedDayEvents as e (e.id)}
+      {/if}
+
+      <!-- scrollable hour grid -->
+      <div class="day-grid-scroll" bind:this={gridEl}>
+        <div class="day-grid" style:height={`${HOUR_PX * 24}px`}>
+          <!-- hour rows / gutter -->
+          {#each HOURS as h (h)}
+            <div class="day-hour" style:top={`${h * HOUR_PX}px`} style:height={`${HOUR_PX}px`}>
+              <div class="day-hour-lbl">{hourLabel(h)}</div>
+              <button
+                type="button"
+                class="day-hour-cell"
+                aria-label={`Create event at ${hourLabel(h)}`}
+                onclick={() => openCreateAtHour(h)}
+              ></button>
+            </div>
+          {/each}
+
+          <!-- timed event blocks -->
+          {#each timedBlocks as b (b.e.id)}
+            {@const e = b.e}
             {@const startLbl = timeLabel(e)}
             {@const endLbl = timeLabelEnd(e)}
             <button
               type="button"
-              class={"dey" + (e.kind === "task" && e.done ? " dey--done" : "")}
-              style:--dey-color={pillColor(e)}
+              class={"blk" + (e.kind === "task" && e.done ? " blk--done" : "")}
+              style:--blk-color={pillColor(e)}
+              style:top={`${b.top}px`}
+              style:height={`${b.height}px`}
               onclick={(ev) => openEdit(e, ev)}
             >
-              <div class="dey-accent"></div>
-              <div class="dey-body">
-                <div class="dey-header">
-                  <span class="dey-time">
-                    {e.all_day ? "All day" : startLbl}{endLbl ? ` – ${endLbl}` : ""}
+              <div class="blk-head">
+                {#if e.kind === "task"}
+                  <span
+                    class={"pill-check blk-check" + (e.done ? " on" : "")}
+                    role="checkbox"
+                    aria-checked={e.done}
+                    aria-label="Toggle done"
+                    tabindex="-1"
+                    onclick={(ev) => toggleDone(e, ev)}
+                    onkeydown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleDone(e, ev); } }}
+                  >
+                    {#if e.done}<Icon name="check" size={10} />{/if}
                   </span>
-                  {#if e.kind === "task"}
-                    <span
-                      class={"pill-check dey-check" + (e.done ? " on" : "")}
-                      role="checkbox"
-                      aria-checked={e.done}
-                      aria-label="Toggle done"
-                      tabindex="-1"
-                      onclick={(ev) => toggleDone(e, ev)}
-                      onkeydown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleDone(e, ev); } }}
-                    >
-                      {#if e.done}<Icon name="check" size={10} />{/if}
-                    </span>
-                  {/if}
-                </div>
-                <div class="dey-title">{e.title}</div>
-                {#if e.location}
-                  <div class="dey-loc">{e.location}</div>
                 {/if}
-                {#if e.description}
-                  <div class="dey-desc">{e.description}</div>
-                {/if}
+                <span class="blk-title">{e.title}</span>
               </div>
+              <div class="blk-time">{startLbl}{endLbl ? ` – ${endLbl}` : ""}</div>
+              {#if e.location}
+                <div class="blk-loc">{e.location}</div>
+              {/if}
             </button>
           {/each}
+
+          <!-- red current-time line -->
+          {#if selectedIsToday}
+            <div class="now-line" style:top={`${nowTop}px`} aria-hidden="true">
+              <span class="now-dot"></span>
+            </div>
+          {/if}
         </div>
-      {/if}
+      </div>
     </div>
   {/if}
 </div>
@@ -659,7 +789,7 @@
     color: var(--fg-faint);
   }
 
-  /* ===== DAY VIEW ===== */
+  /* ===== DAY VIEW (Google-style timeline) ===== */
   .cal-day {
     flex: 1;
     min-height: 0;
@@ -671,106 +801,209 @@
     background: var(--surface);
   }
 
-  .cal-day-events {
-    flex: 1;
-    overflow-y: auto;
-    padding: 10px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+  /* gutter width shared by the hour labels + the all-day strip label */
+  .cal-day {
+    --gutter: 58px;
   }
 
-  /* Day event row */
-  .dey {
-    appearance: none;
+  /* all-day strip */
+  .day-allday {
     display: flex;
-    align-items: stretch;
-    background: color-mix(in oklab, var(--dey-color) 10%, var(--surface));
-    border: 1px solid color-mix(in oklab, var(--dey-color) 20%, var(--border));
-    border-radius: 8px;
-    cursor: pointer;
-    text-align: left;
-    width: 100%;
-    transition: background 0.1s ease;
-    overflow: hidden;
-  }
-  .dey:hover {
-    background: color-mix(in oklab, var(--dey-color) 20%, var(--surface));
-  }
-  .dey--done {
-    opacity: 0.55;
-  }
-  .dey--done .dey-title {
-    text-decoration: line-through;
-  }
-  .dey-accent {
-    width: 4px;
+    align-items: flex-start;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    padding: 6px 0;
+    max-height: 96px;
+    overflow-y: auto;
     flex: none;
-    background: var(--dey-color);
   }
-  .dey-body {
+  .day-allday-lbl {
+    width: var(--gutter);
+    flex: none;
+    padding: 2px 8px 0 0;
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: var(--t-2xs, 10.5px);
+    color: var(--fg-faint);
+  }
+  .day-allday-list {
     flex: 1;
     min-width: 0;
-    padding: 8px 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-right: 10px;
+  }
+  .ad-pill {
+    appearance: none;
+    border: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 100%;
+    padding: 3px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--t-2xs, 10.5px);
+    color: var(--fg-bright);
+    background: color-mix(in oklab, var(--blk-color) 22%, var(--surface));
+    border-left: 2px solid var(--blk-color);
+    transition: background 0.1s ease;
+  }
+  .ad-pill:hover {
+    background: color-mix(in oklab, var(--blk-color) 34%, var(--surface));
+  }
+  .ad-pill.done {
+    opacity: 0.5;
+  }
+  .ad-pill.done .ad-title {
+    text-decoration: line-through;
+  }
+  .ad-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .ad-check {
+    border-color: var(--blk-color);
+  }
+  .ad-check.on {
+    background: var(--blk-color);
+  }
+
+  /* scrollable hour grid */
+  .day-grid-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    position: relative;
+  }
+  .day-grid {
+    position: relative;
+    width: 100%;
+  }
+
+  /* one hour row: gutter label + clickable empty cell */
+  .day-hour {
+    position: absolute;
+    left: 0;
+    right: 0;
+    display: flex;
+    border-top: 1px solid var(--border);
+  }
+  .day-hour-lbl {
+    width: var(--gutter);
+    flex: none;
+    padding: 2px 8px 0 0;
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: var(--t-2xs, 10.5px);
+    color: var(--fg-faint);
+    transform: translateY(-7px); /* sit on the hour line */
+    user-select: none;
+  }
+  .day-hour-cell {
+    appearance: none;
+    border: none;
+    background: transparent;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    cursor: pointer;
+    border-left: 1px solid var(--border);
+    transition: background 0.1s ease;
+  }
+  .day-hour-cell:hover {
+    background: color-mix(in oklab, var(--accent) 6%, transparent);
+  }
+
+  /* timed event block */
+  .blk {
+    appearance: none;
+    position: absolute;
+    left: calc(var(--gutter) + 4px);
+    right: 8px;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
+    padding: 3px 7px;
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
+    text-align: left;
+    z-index: 2;
+    background: color-mix(in oklab, var(--blk-color) 24%, var(--surface));
+    border-left: 3px solid var(--blk-color);
+    transition: background 0.1s ease;
   }
-  .dey-header {
+  .blk:hover {
+    background: color-mix(in oklab, var(--blk-color) 36%, var(--surface));
+  }
+  .blk--done {
+    opacity: 0.55;
+  }
+  .blk--done .blk-title {
+    text-decoration: line-through;
+  }
+  .blk-head {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 1px;
+    gap: 6px;
+    min-width: 0;
   }
-  .dey-time {
+  .blk-title {
     font-family: var(--font-mono);
     font-size: var(--t-xs, 11.5px);
-    color: var(--fg-muted);
-    flex: none;
-  }
-  .dey-check {
-    border-color: var(--dey-color);
-  }
-  .dey-check.on {
-    background: var(--dey-color);
-  }
-  .dey-title {
-    font-family: var(--font-mono);
-    font-size: var(--t-sm, 12.5px);
     font-weight: 600;
     color: var(--fg-bright);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    min-width: 0;
   }
-  .dey-loc {
-    font-size: var(--t-xs, 11.5px);
+  .blk-check {
+    border-color: var(--blk-color);
+  }
+  .blk-check.on {
+    background: var(--blk-color);
+  }
+  .blk-time {
+    font-family: var(--font-mono);
+    font-size: var(--t-2xs, 10.5px);
+    color: var(--fg-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .blk-loc {
+    font-size: var(--t-2xs, 10.5px);
     color: var(--fg-faint);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .dey-desc {
-    font-size: var(--t-xs, 11.5px);
-    color: var(--fg-muted);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    line-height: 1.4;
-  }
 
-  .cal-day-empty {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 14px;
+  /* red current-time line */
+  .now-line {
+    position: absolute;
+    left: calc(var(--gutter) - 5px);
+    right: 0;
+    height: 0;
+    border-top: 2px solid #ea4335;
+    z-index: 5;
+    pointer-events: none;
   }
-  .cal-day-empty-msg {
-    font-size: var(--t-sm, 12.5px);
-    color: var(--fg-faint);
+  .now-dot {
+    position: absolute;
+    left: -1px;
+    top: -5px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #ea4335;
   }
 </style>

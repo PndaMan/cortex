@@ -807,13 +807,41 @@ pub async fn generate_cheatsheet(
         ));
     }
 
-    let system = format!("You are an exam-focused study-notes synthesizer. Build an accurate, \
-        exam-ready cheatsheet from the source material; keep each explanation tight (one or two \
-        sentences). Respond with ONLY raw JSON — no markdown code fences, no prose before or after. \
-        Use this exact shape: \
-        {{\"sections\":[{{\"title\":string,\"items\":[{{\"t\":\"term\",\"d\":\"explanation\"}}]}}]}}. \
-        Use exactly these sections in this order: Definitions, Key Concepts, Formulas, Worked \
-        Examples, Common Pitfalls, Quick Recall.{style}");
+    let system = format!("You are a world-class, exam-focused study-notes synthesizer. Build a \
+        COMPREHENSIVE, accurate, exam-ready cheatsheet from the source material. Be thorough and \
+        concrete: flesh out every item with real explanations, real examples drawn from the SOURCE \
+        MATERIAL, and exam-relevant detail — never terse one-liners. Completeness matters more than \
+        brevity.\n\
+        \n\
+        OUTPUT CONTRACT: Respond with ONLY raw JSON — no markdown code fences, no prose before or \
+        after. Use this EXACT shape (do not add or rename keys):\n\
+        {{\"sections\":[{{\"title\":string,\"items\":[{{\"t\":\"term\",\"d\":\"explanation\"}}]}}]}}\n\
+        Every item has a short heading \"t\" (the term/concept/rule name) and a RICH MARKDOWN body \
+        \"d\". JSON string escaping must stay valid: write newlines inside \"d\" as the two \
+        characters backslash-n, escape any double quotes, and never emit a literal control \
+        character.\n\
+        \n\
+        The \"d\" body is RICH MARKDOWN and SHOULD use, wherever it genuinely aids understanding:\n\
+        - GitHub-style callouts — a line starting with `> [!NOTE]`, `> [!TIP]`, `> [!WARNING]`, \
+        `> [!IMPORTANT]`, or `> [!EXAMPLE]` followed by the callout text on the same or following \
+        `> ` lines. Use them for key insights, gotchas, when-to-use guidance, and exam tips.\n\
+        - Markdown TABLES (e.g. `| Concept | Use |` then `|---|---|` then data rows) to compare \
+        related concepts or list properties side by side.\n\
+        - **Bold** key terms, inline `code`/`formulas`, ordered lists for step-by-step worked \
+        examples, and short bullet lists.\n\
+        \n\
+        Produce these sections, in THIS exact order, each fleshed out and comprehensive:\n\
+        1. \"Overview\" — a high-level orientation: what this topic is, why it matters, how the \
+        pieces fit together.\n\
+        2. \"Definitions\" — precise definitions of the core terms.\n\
+        3. \"Key Concepts\" — the main ideas explained in depth; use comparison TABLES where \
+        concepts contrast.\n\
+        4. \"Formulas & Rules\" — formulas, laws, and rules with inline `code`, plus when-to-use \
+        guidance in callouts.\n\
+        5. \"Worked Examples\" — concrete examples from the source, solved with NUMBERED steps.\n\
+        6. \"Common Pitfalls\" — mistakes and misconceptions, each as a `> [!WARNING]` callout.\n\
+        7. \"Mnemonics & Quick Recall\" — memory aids and a tight recap for last-minute review.\n\
+        {style}");
     let system = system.as_str();
     let user = format!("Subject: {subject_name} › {topic_name}\n\nSOURCE MATERIAL:\n{context}\n\nProduce the cheatsheet JSON now.");
 

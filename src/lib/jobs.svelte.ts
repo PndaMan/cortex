@@ -16,7 +16,8 @@ export type JobKind =
   | "flashcards"
   | "audio"
   | "infographic"
-  | "slideshow";
+  | "slideshow"
+  | "source";
 
 export type JobStatus = "running" | "done" | "error";
 
@@ -45,6 +46,7 @@ const KIND_LABEL: Record<JobKind, string> = {
   audio: "audio overview",
   infographic: "infographic",
   slideshow: "slideshow",
+  source: "source",
 };
 
 export function jobKindLabel(kind: JobKind): string {
@@ -103,7 +105,7 @@ class Jobs {
         this.#settle(id, (j) => ({ ...j, status: "done", result }));
         app.pushToast({
           kind: "success",
-          title: "Generated",
+          title: opts.kind === "source" ? "Source added" : "Generated",
           body: `${opts.label} is ready.`,
         });
         try {

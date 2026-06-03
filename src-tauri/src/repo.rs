@@ -1237,16 +1237,19 @@ pub fn record_attempt(
 /// Distinct items (by item_key) whose MOST RECENT attempt was incorrect — the
 /// set to re-study. One row per item_key, carrying its item_index.
 pub fn wrong_items(conn: &Connection, subject_id: &str, kind: &str) -> Result<Vec<ReviewItem>> {
+    // Use rowid (insertion order) as the "latest" key, not created_at — two
+    // attempts can share a millisecond, and a created_at tie would match BOTH
+    // rows and wrongly keep an already-corrected item in the review set.
     let mut stmt = conn.prepare(
         "SELECT a.item_index, a.item_key
          FROM attempts a
          JOIN (
-             SELECT item_key, MAX(created_at) AS latest
+             SELECT item_key, MAX(rowid) AS latest_row
              FROM attempts
              WHERE subject_id=?1 AND kind=?2
              GROUP BY item_key
-         ) m ON m.item_key = a.item_key AND m.latest = a.created_at
-         WHERE a.subject_id=?1 AND a.kind=?2 AND a.correct = 0
+         ) m ON m.item_key = a.item_key AND m.latest_row = a.rowid
+         WHERE a.correct = 0
          ORDER BY a.item_index",
     )?;
     let rows = stmt.query_map(params![subject_id, kind], |r| {

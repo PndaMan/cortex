@@ -340,7 +340,7 @@ pub fn extract_json(text: &str) -> Result<serde_json::Value> {
                     depth -= 1;
                     if depth == 0 {
                         let slice = &t[s..s + i + ch.len_utf8()];
-                        return Ok(serde_json::from_str(slice)?);
+                        return parse_lenient(slice);
                     }
                 }
                 _ => {}
@@ -348,6 +348,54 @@ pub fn extract_json(text: &str) -> Result<serde_json::Value> {
         }
     }
     Err(Error::Other("no JSON found in LLM reply".into()))
+}
+
+/// Parse a JSON slice, retrying once with control-char repair. LLMs producing
+/// rich content (tables, callouts, multi-line explanations) routinely emit
+/// LITERAL newlines/tabs inside string values, which is invalid JSON and was the
+/// cause of "Model returned unstructured output" for rich cheatsheets.
+fn parse_lenient(slice: &str) -> Result<serde_json::Value> {
+    match serde_json::from_str(slice) {
+        Ok(v) => Ok(v),
+        Err(_) => Ok(serde_json::from_str(&escape_unescaped_controls(slice))?),
+    }
+}
+
+/// Escape raw control characters (newline, CR, tab, other <0x20) that appear
+/// INSIDE JSON string literals. Already-escaped sequences (`\n` as two chars)
+/// and structural whitespace outside strings are left untouched.
+fn escape_unescaped_controls(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 16);
+    let mut in_str = false;
+    let mut esc = false;
+    for ch in s.chars() {
+        if in_str {
+            if esc {
+                out.push(ch);
+                esc = false;
+            } else if ch == '\\' {
+                out.push(ch);
+                esc = true;
+            } else if ch == '"' {
+                out.push(ch);
+                in_str = false;
+            } else {
+                match ch {
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    '\t' => out.push_str("\\t"),
+                    c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                    c => out.push(c),
+                }
+            }
+        } else {
+            if ch == '"' {
+                in_str = true;
+            }
+            out.push(ch);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -373,6 +421,19 @@ mod tests {
         let reply = "```json\n[{\"q\":\"x\",\"a\":\"y\"}]\n```\nHope this helps!";
         let v = extract_json(reply).unwrap();
         assert_eq!(v[0]["a"], "y");
+    }
+
+    #[test]
+    fn extract_json_repairs_literal_newlines_in_strings() {
+        // Rich cheatsheet content: a `d` value with LITERAL newlines + tab (invalid
+        // JSON until repaired). This previously produced "unstructured output".
+        let reply = "{\"sections\":[{\"title\":\"T\",\"items\":[{\"t\":\"Term\",\"d\":\"Line one\n> [!NOTE]\nLine two\twith tab\"}]}]}";
+        let v = extract_json(reply).unwrap();
+        assert_eq!(v["sections"][0]["items"][0]["t"], "Term");
+        assert!(v["sections"][0]["items"][0]["d"]
+            .as_str()
+            .unwrap()
+            .contains("NOTE"));
     }
 
     #[test]

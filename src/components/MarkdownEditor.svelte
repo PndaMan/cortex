@@ -2,6 +2,7 @@
   // Markdown editor with a formatting toolbar and a Write|Preview toggle.
   // Wraps/prefixes the current textarea selection for each format, then calls
   // onChange. Preview reuses the app's RichText renderer. Fully themed.
+  // Supports keyboard shortcuts: Ctrl/Cmd+B/I/K/E/1/2.
   import Icon from "./Icon.svelte";
   import RichText from "./RichText.svelte";
 
@@ -67,17 +68,38 @@
     });
   }
 
+  function bold()   { wrap("**", "bold"); }
+  function italic() { wrap("*", "italic"); }
+  function code()   { wrap("`", "code"); }
+  function h1()     { prefixLines((l) => "# " + l, "Heading 1"); }
+  function h2()     { prefixLines((l) => "## " + l, "Heading 2"); }
+
+  // Keyboard shortcut handler for the textarea.
+  function handleKeydown(e: KeyboardEvent) {
+    const mod = e.ctrlKey || e.metaKey;
+    if (!mod) return;
+    switch (e.key) {
+      case "b": case "B": e.preventDefault(); bold(); break;
+      case "i": case "I": e.preventDefault(); italic(); break;
+      case "k": case "K": e.preventDefault(); link(); break;
+      case "e": case "E": e.preventDefault(); code(); break;
+      case "1":           e.preventDefault(); h1(); break;
+      case "2":           e.preventDefault(); h2(); break;
+    }
+  }
+
   type Tool = { id: string; label: string; icon?: string; glyph?: string; run: () => void };
   const tools: Tool[] = [
-    { id: "bold", label: "Bold", glyph: "B", run: () => wrap("**", "bold") },
-    { id: "italic", label: "Italic", glyph: "I", run: () => wrap("*", "italic") },
-    { id: "h2", label: "Heading", glyph: "H2", run: () => prefixLines((l) => "## " + l, "Heading") },
-    { id: "ul", label: "Bullet list", glyph: "•", run: () => prefixLines((l) => "- " + l, "List item") },
-    { id: "ol", label: "Numbered list", glyph: "1.", run: () => prefixLines((l, i) => `${i + 1}. ` + l, "List item") },
-    { id: "code", label: "Inline code", glyph: "`", run: () => wrap("`", "code") },
-    { id: "codeblock", label: "Code block", glyph: "{ }", run: codeBlock },
-    { id: "link", label: "Link", icon: "link", run: link },
-    { id: "quote", label: "Quote", glyph: "❝", run: () => prefixLines((l) => "> " + l, "Quote") },
+    { id: "bold",      label: "Bold (⌘B)",         glyph: "B",   run: bold },
+    { id: "italic",    label: "Italic (⌘I)",        glyph: "I",   run: italic },
+    { id: "h1",        label: "Heading 1 (⌘1)",     glyph: "H1",  run: h1 },
+    { id: "h2",        label: "Heading 2 (⌘2)",     glyph: "H2",  run: h2 },
+    { id: "ul",        label: "Bullet list",         glyph: "•",   run: () => prefixLines((l) => "- " + l, "List item") },
+    { id: "ol",        label: "Numbered list",       glyph: "1.",  run: () => prefixLines((l, i) => `${i + 1}. ` + l, "List item") },
+    { id: "code",      label: "Inline code (⌘E)",   glyph: "`",   run: code },
+    { id: "codeblock", label: "Code block",          glyph: "{ }", run: codeBlock },
+    { id: "link",      label: "Link (⌘K)",           icon: "link", run: link },
+    { id: "quote",     label: "Quote",               glyph: "❝",  run: () => prefixLines((l) => "> " + l, "Quote") },
   ];
 </script>
 
@@ -123,6 +145,7 @@
       placeholder="Write your notes in Markdown…"
       value={value}
       oninput={(e) => onChange((e.target as HTMLTextAreaElement).value)}
+      onkeydown={handleKeydown}
     ></textarea>
   {:else}
     <div class="md-preview">

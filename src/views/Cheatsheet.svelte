@@ -5,6 +5,7 @@
   import Icon from "../components/Icon.svelte";
   import { jobs } from "../lib/jobs.svelte";
   import GeneratingCard from "../components/GeneratingCard.svelte";
+  import RichText from "../components/RichText.svelte";
 
   // Background cheatsheet jobs for the active subject (running + any errors to surface).
   const csJobs = $derived(
@@ -143,6 +144,9 @@
           </div>
         </div>
         <div class="cs-doc-actions">
+          <button class="btn btn--sm" onclick={() => window.print()} title="Export / print this cheatsheet as PDF">
+            <Icon name="doc" size={13} /> Export PDF
+          </button>
           <button class="btn btn--sm" onclick={generate} disabled={csGenerating}>
             <Icon name="refresh" size={13} /> {csGenerating ? "Synthesizing…" : "Regenerate"}
           </button>
@@ -180,7 +184,7 @@
               {#each sec.items as item, i (i)}
                 <div class="cs-item{(item as any).flag === 'changed' ? ' item-changed' : ''}">
                   <dt>{item.t}</dt>
-                  <dd>{item.d}</dd>
+                  <dd><RichText text={item.d} /></dd>
                 </div>
               {/each}
             </dl>
@@ -231,5 +235,57 @@
   }
   .cs-working .btn {
     margin-top: 4px;
+  }
+
+  /* ── PRINT / EXPORT PDF ─────────────────────────────────────
+     window.print() exports the cheatsheet. Hide all app chrome and
+     show only the cheatsheet document, black-on-white, full width. */
+  @media print {
+    :global(.sidebar),
+    :global(.statusbar),
+    :global(.chatdock),
+    :global(.chat-fab) {
+      display: none !important;
+    }
+    :global(html),
+    :global(body),
+    :global(.app-shell),
+    :global(.app-main),
+    :global(.workspace) {
+      display: block !important;
+      height: auto !important;
+      overflow: visible !important;
+      background: #fff !important;
+      color: #000 !important;
+      margin: 0 !important;
+    }
+    :global(.app-shell) { grid-template-columns: 1fr !important; }
+    .workspace-scroll {
+      overflow: visible !important;
+      height: auto !important;
+      padding: 0 !important;
+    }
+    .cs-doc {
+      max-width: none !important;
+      width: 100% !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      color: #000 !important;
+    }
+    /* hide the action buttons (regenerate / export) when printing */
+    .cs-doc-actions { display: none !important; }
+    /* keep each section from splitting awkwardly across pages */
+    :global(.cs-section) { break-inside: avoid; }
+    :global(.cs-item) { break-inside: avoid; }
+    :global(.cs-title),
+    :global(.cs-sec-title) { color: #000 !important; }
+    /* readable tables/callouts on white paper */
+    :global(.rt-table th) { background: #f0f0f0 !important; color: #000 !important; }
+    :global(.rt-callout-label) { color: #000 !important; }
+    :global(.rt-callout) { background: #f6f6f6 !important; }
+    :global(.workspace-scroll), :global(.cs-doc), :global(.rt-callout-body),
+    :global(.rt-table td), :global(.rt-p), :global(.cs-item dt), :global(.cs-item dd) {
+      color: #000 !important;
+    }
   }
 </style>

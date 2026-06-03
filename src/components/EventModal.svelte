@@ -79,9 +79,17 @@
       title = "";
       description = "";
       location = "";
-      // Default to 9:00 AM on the clicked day (or now if none provided).
+      // Default to the clicked time, or 9:00 AM if only a day (midnight) was
+      // given, or now when nothing was provided.
       const base = defaultDateMs != null ? new Date(defaultDateMs) : new Date();
-      if (defaultDateMs != null) base.setHours(9, 0, 0, 0);
+      if (defaultDateMs != null) {
+        const atMidnight =
+          base.getHours() === 0 &&
+          base.getMinutes() === 0 &&
+          base.getSeconds() === 0 &&
+          base.getMilliseconds() === 0;
+        if (atMidnight) base.setHours(9, 0, 0, 0);
+      }
       startVal = msToLocalInput(base.getTime());
       endVal = "";
       allDay = false;
