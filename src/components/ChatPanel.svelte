@@ -281,22 +281,35 @@
       });
   }
 
-  // Start a fresh conversation — history persists per subject, so this clears
-  // the saved thread and the on-screen messages.
-  async function clearConversation() {
+  // ── chat sessions / history ────────────────────────────────────────────
+  let historyOpen = $state(false);
+  let threads = $state<api.ThreadInfo[]>([]);
+
+  async function startNewConversation() {
     const sid = app.activeSubject?.id;
     if (!sid) return;
-    const ok = await app.confirm({
-      title: "Start a new conversation?",
-      body: "This clears the saved chat history for this subject.",
-      danger: true,
-      okLabel: "Clear",
-    });
-    if (!ok) return;
-    await api.clearChat(sid).catch(() => {});
+    await api.newChat(sid).catch(() => {});
     messages = [];
     suggestions = [];
     queued = [];
+    composeEl?.focus();
+  }
+
+  async function openHistory() {
+    const sid = app.activeSubject?.id;
+    if (!sid) return;
+    threads = await api.listChatThreads(sid).catch(() => [] as api.ThreadInfo[]);
+    historyOpen = true;
+  }
+
+  async function pickThread(id: string) {
+    const sid = app.activeSubject?.id;
+    if (!sid) return;
+    await api.openChatThread(sid, id).catch(() => {});
+    const ms = await api.listChatMessages(sid).catch(() => []);
+    messages = ms.map((m) => ({ role: m.role as ChatMessage["role"], text: m.text }));
+    suggestions = [];
+    historyOpen = false;
   }
 
   // Send the next queued message (if any) once the current one finishes.
@@ -394,8 +407,11 @@
     <div class="chat-model-pick" title="Chat model">
       <Picker value={chatModel} onChange={setChatModel} options={modelOptions} icon="bolt" placeholder="Model" />
     </div>
-    <button class="btn btn--icon btn--sm btn--ghost" title="New conversation (clears history)" onclick={clearConversation}>
-      <Icon name="refresh" size={13} />
+    <button class="btn btn--icon btn--sm btn--ghost" title="Chat history" onclick={openHistory}>
+      <Icon name="book" size={13} />
+    </button>
+    <button class="btn btn--icon btn--sm btn--ghost" title="New conversation" onclick={startNewConversation}>
+      <Icon name="plus" size={13} />
     </button>
     {#if onClose}
       <button class="btn btn--icon btn--sm btn--ghost" onclick={onClose} title="Close chat">
@@ -555,9 +571,65 @@
       </div>
     </div>
   {/if}
+
+  <!-- ── chat history (past conversation sessions) ─────────────────────────── -->
+  {#if historyOpen}
+    <div class="hist-overlay" role="presentation" onmousedown={() => (historyOpen = false)}>
+      <div class="hist-panel" role="dialog" aria-modal="true" tabindex="-1" onmousedown={(e) => e.stopPropagation()}>
+        <div class="hist-head">
+          <span class="hist-title">Chat history</span>
+          <div class="grow"></div>
+          <button class="btn btn--sm btn--ghost" onclick={startNewConversation} title="New conversation">
+            <Icon name="plus" size={12} /> New
+          </button>
+          <button class="btn btn--icon btn--sm btn--ghost" onclick={() => (historyOpen = false)} title="Close">
+            <Icon name="x" size={12} />
+          </button>
+        </div>
+        {#if threads.length === 0}
+          <div class="hist-empty mono faint">No past conversations yet.</div>
+        {:else}
+          <div class="hist-list">
+            {#each threads as th}
+              <button type="button" class="hist-item" onclick={() => pickThread(th.id)}>
+                <Icon name="chat" size={13} color="var(--fg-faint)" />
+                <span class="hist-item-title">{th.title || "New conversation"}</span>
+                <span class="hist-item-meta mono faint">{th.count} msg</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
+  /* ── chat history panel ────────────────────────────────────────────────── */
+  .hist-overlay {
+    position: absolute; inset: 0; z-index: 80; display: flex;
+    align-items: flex-start; justify-content: center; padding-top: 56px;
+    background: color-mix(in oklab, var(--bg) 55%, transparent); backdrop-filter: blur(2px);
+  }
+  .hist-panel {
+    width: min(440px, calc(100% - 32px)); max-height: 70%;
+    display: flex; flex-direction: column;
+    background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,0.45); padding: 12px;
+  }
+  .hist-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .hist-title { font-family: var(--font-mono); font-weight: 600; color: var(--fg-bright); font-size: 13px; }
+  .hist-empty { padding: 24px; text-align: center; font-size: 12px; }
+  .hist-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .hist-item {
+    display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+    padding: 9px 10px; border-radius: 8px; border: 1px solid transparent;
+    background: none; color: var(--fg); font: inherit; cursor: pointer;
+  }
+  .hist-item:hover { background: var(--surface-2); border-color: var(--border); }
+  .hist-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-bright); font-size: 12.5px; }
+  .hist-item-meta { flex: none; font-size: 10.5px; }
+
   /* ── next-step suggestion chips + queue + stop + model picker ──────────── */
   .chat-suggest {
     display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px;

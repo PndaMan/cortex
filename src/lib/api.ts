@@ -208,6 +208,14 @@ export const addChatMessage = (subjectId: string, role: string, text: string) =>
   invoke<void>("add_chat_message", { subjectId, role, text });
 export const clearChat = (subjectId: string) => invoke<void>("clear_chat", { subjectId });
 
+// chat sessions (history)
+export interface ThreadInfo { id: string; title: string; updated_at: number; count: number }
+export const newChat = (subjectId: string) => invoke<void>("new_chat", { subjectId });
+export const listChatThreads = (subjectId: string) =>
+  invoke<ThreadInfo[]>("list_chat_threads", { subjectId });
+export const openChatThread = (subjectId: string, threadId: string) =>
+  invoke<void>("open_chat_thread", { subjectId, threadId });
+
 // ---- web search (SearXNG on the user's homelab) ----
 export interface WebResult {
   title: string;
