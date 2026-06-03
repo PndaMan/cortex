@@ -1,0 +1,105 @@
+<script lang="ts">
+  import { app } from "../lib/store.svelte";
+  import * as api from "../lib/api";
+  import Icon from "../components/Icon.svelte";
+
+  let name = $state("");
+  let code = $state("");
+  let color = $state("#2dd5b7");
+  let topics = $state(["", "", ""]);
+
+  const colors = ["#2dd5b7", "#7aa2f7", "#cba6f7", "#e0af68", "#f7768e", "#9ece6a"];
+
+  function setTopic(i: number, v: string) {
+    topics = topics.map((x, idx) => (idx === i ? v : x));
+  }
+
+  const ready = $derived(name.trim().length > 0);
+
+  async function create() {
+    if (!ready) return;
+    try {
+      await api.createSubject(name.trim(), code.trim() || undefined);
+      await app.refresh();
+      app.pushToast({ kind: "success", title: "Subject created", body: name.trim() + " is ready." });
+      app.setView("dashboard");
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Failed to create subject", body: String(e) });
+    }
+  }
+</script>
+
+<div class="workspace-scroll">
+  <div class="addpage addpage--subject">
+    <div class="addpage-head">
+      <button class="btn btn--icon btn--sm btn--ghost" onclick={() => app.setView("dashboard")} title="Back">
+        <Icon name="chevron" size={14} style="transform:rotate(180deg)" />
+      </button>
+      <div>
+        <div class="eyebrow">New subject</div>
+        <h1 class="addpage-title read">Create a subject</h1>
+        <div class="mono faint" style="font-size:var(--t-xs)">holds topics, sources and one living cheatsheet</div>
+      </div>
+    </div>
+
+    <div class="addsubj-preview">
+      <span class="subj-glyph" style="border-color:{color}">
+        <Icon name="diamond" size={15} color={color} />
+      </span>
+      <div>
+        <div class="read" style="font-size:var(--r-lg);color:var(--fg-bright)">{name || "Untitled subject"}</div>
+        <div class="mono faint" style="font-size:var(--t-2xs)">{code || "no code"} · {topics.filter(t => t.trim()).length} topics</div>
+      </div>
+    </div>
+
+    <div class="addsubj-form">
+      <div class="field">
+        <label class="onb-label mono">SUBJECT NAME</label>
+        <input class="input" autofocus bind:value={name} placeholder="e.g. Algorithms" />
+      </div>
+
+      <div class="field">
+        <label class="onb-label mono">COURSE CODE <span class="faint">optional</span></label>
+        <input class="input mono" bind:value={code} placeholder="CS-3490" />
+      </div>
+
+      <div class="field">
+        <label class="onb-label mono">COLOR</label>
+        <div class="color-row">
+          {#each colors as c}
+            <button
+              class={"color-dot" + (color === c ? " on" : "")}
+              style="background:{c}"
+              onclick={() => (color = c)}
+            >
+              {#if color === c}
+                <Icon name="check" size={12} color="#07140f" />
+              {/if}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="onb-label mono">FIRST TOPICS <span class="faint">optional — add lectures into these</span></label>
+        <div class="topic-inputs">
+          {#each topics as t, i}
+            <input
+              class="input"
+              value={t}
+              oninput={e => setTopic(i, (e.target as HTMLInputElement).value)}
+              placeholder={["Recursion", "Dynamic programming", "Graphs"][i] || "Topic"}
+            />
+          {/each}
+        </div>
+      </div>
+    </div>
+
+    <div class="add-foot">
+      <button class="btn btn--ghost" onclick={() => app.setView("dashboard")}>Cancel</button>
+      <button class="btn btn--primary" disabled={!ready} onclick={create}>
+        <Icon name="check" size={13} /> Create subject
+      </button>
+    </div>
+  </div>
+</div>

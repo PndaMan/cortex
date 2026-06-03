@@ -1,0 +1,235 @@
+//! LLM providers behind one trait, mirroring embed.rs. Default is an offline
+//! `stub` that returns a clearly-marked placeholder so the app works with zero
+//! config; Gemini `generateContent` (BYOK) is the real path. Per-task model is
+//! read from settings as `model_<task>` = "provider:model" (e.g. "gemini:gemini-2.5-flash").
+
+use crate::error::{Error, Result};
+
+pub trait Llm: Send + Sync {
+    fn complete(&self, system: &str, user: &str) -> Result<String>;
+    fn name(&self) -> String;
+}
+
+/// Offline placeholder — no network, no key. Produces something usable so the
+/// UI flow works, while telling the user to connect a model for real output.
+#[allow(dead_code)]
+pub struct StubLlm;
+
+impl Llm for StubLlm {
+    fn complete(&self, _system: &str, user: &str) -> Result<String> {
+        let preview: String = user.chars().take(280).collect();
+        Ok(format!(
+            "[Offline draft — connect a model in Settings → API keys for real generation.]\n\n\
+             Based on the provided sources:\n{preview}…"
+        ))
+    }
+    fn name(&self) -> String {
+        "stub".into()
+    }
+}
+
+/// Google Gemini `generateContent` (BYOK).
+pub struct GeminiLlm {
+    pub api_key: String,
+    pub model: String,
+}
+
+impl Llm for GeminiLlm {
+    fn complete(&self, system: &str, user: &str) -> Result<String> {
+        let client = reqwest::blocking::Client::new();
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            self.model, self.api_key
+        );
+        let body = serde_json::json!({
+            "system_instruction": { "parts": [{ "text": system }] },
+            "contents": [{ "role": "user", "parts": [{ "text": user }] }],
+            "generationConfig": { "temperature": 0.3, "maxOutputTokens": 4096 }
+        });
+        let resp = client.post(&url).json(&body).send()?;
+        if !resp.status().is_success() {
+            let code = resp.status();
+            let txt = resp.text().unwrap_or_default();
+            return Err(Error::Other(format!("gemini {code}: {}", truncate(&txt, 300))));
+        }
+        let json: serde_json::Value = resp.json()?;
+        let text = json["candidates"][0]["content"]["parts"][0]["text"]
+            .as_str()
+            .ok_or_else(|| Error::Other("gemini: empty response".into()))?
+            .to_string();
+        Ok(text)
+    }
+    fn name(&self) -> String {
+        format!("gemini:{}", self.model)
+    }
+}
+
+fn truncate(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
+
+/// OpenAI-compatible chat provider — used for OpenRouter and OpenAI (and any
+/// custom OpenAI-compatible gateway). One code path, different base URL/key.
+pub struct OpenAiCompatLlm {
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub label: &'static str,
+}
+
+impl Llm for OpenAiCompatLlm {
+    fn complete(&self, system: &str, user: &str) -> Result<String> {
+        let client = reqwest::blocking::Client::new();
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": self.model,
+            "messages": [
+                { "role": "system", "content": system },
+                { "role": "user", "content": user }
+            ],
+            "temperature": 0.3
+        });
+        let resp = client
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            // OpenRouter likes these; harmless elsewhere.
+            .header("HTTP-Referer", "https://cortex.study")
+            .header("X-Title", "Cortex")
+            .json(&body)
+            .send()?;
+        if !resp.status().is_success() {
+            let code = resp.status();
+            let txt = resp.text().unwrap_or_default();
+            return Err(Error::Other(format!("{} {code}: {}", self.label, truncate(&txt, 300))));
+        }
+        let json: serde_json::Value = resp.json()?;
+        let text = json["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| Error::Other(format!("{}: empty response", self.label)))?
+            .to_string();
+        Ok(text)
+    }
+    fn name(&self) -> String {
+        format!("{}:{}", self.label, self.model)
+    }
+}
+
+/// API keys available from settings.
+#[derive(Default)]
+pub struct Keys {
+    pub gemini: Option<String>,
+    pub openrouter: Option<String>,
+    pub openai: Option<String>,
+    pub custom_endpoint: Option<String>,
+}
+
+fn nonempty(o: &Option<String>) -> Option<&str> {
+    o.as_deref().filter(|s| !s.is_empty())
+}
+
+/// Build an LLM from a "provider:model" spec + the available keys. Returns
+/// `None` when no usable provider/key is configured — callers turn that into a
+/// clear "add an API key" error instead of silently producing fake output.
+pub fn from_spec(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
+    let (provider, model) = spec.split_once(':').unwrap_or(("gemini", spec));
+    let model = model.to_string();
+    match provider {
+        "gemini" => nonempty(&keys.gemini).map(|k| {
+            Box::new(GeminiLlm { api_key: k.to_string(), model }) as Box<dyn Llm>
+        }),
+        "openrouter" => nonempty(&keys.openrouter).map(|k| {
+            Box::new(OpenAiCompatLlm {
+                base_url: "https://openrouter.ai/api/v1".into(),
+                api_key: k.to_string(),
+                model,
+                label: "openrouter",
+            }) as Box<dyn Llm>
+        }),
+        "openai" => nonempty(&keys.openai).map(|k| {
+            Box::new(OpenAiCompatLlm {
+                base_url: "https://api.openai.com/v1".into(),
+                api_key: k.to_string(),
+                model,
+                label: "openai",
+            }) as Box<dyn Llm>
+        }),
+        "custom" => nonempty(&keys.custom_endpoint).map(|base| {
+            Box::new(OpenAiCompatLlm {
+                base_url: base.to_string(),
+                api_key: nonempty(&keys.openai).unwrap_or("").to_string(),
+                model,
+                label: "custom",
+            }) as Box<dyn Llm>
+        }),
+        // ollama / claude land in a later slice.
+        _ => None,
+    }
+}
+
+/// Extract the first JSON value (object or array) from an LLM reply that may be
+/// wrapped in prose or ```json fences.
+pub fn extract_json(text: &str) -> Result<serde_json::Value> {
+    let t = text.trim();
+    // strip code fences
+    let t = t.strip_prefix("```json").or_else(|| t.strip_prefix("```")).unwrap_or(t);
+    let t = t.trim_start_matches("```").trim();
+    // find the first { or [ and matching close
+    let start = t.find(['{', '[']);
+    if let Some(s) = start {
+        let open = t.as_bytes()[s] as char;
+        let close = if open == '{' { '}' } else { ']' };
+        let mut depth = 0i32;
+        let mut in_str = false;
+        let mut esc = false;
+        for (i, ch) in t[s..].char_indices() {
+            if in_str {
+                if esc {
+                    esc = false;
+                } else if ch == '\\' {
+                    esc = true;
+                } else if ch == '"' {
+                    in_str = false;
+                }
+                continue;
+            }
+            match ch {
+                '"' => in_str = true,
+                c if c == open => depth += 1,
+                c if c == close => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let slice = &t[s..s + i + ch.len_utf8()];
+                        return Ok(serde_json::from_str(slice)?);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Err(Error::Other("no JSON found in LLM reply".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_json_from_fenced_prose() {
+        let reply = "Sure! Here it is:\n```json\n{\"sections\":[{\"title\":\"Defs\",\"items\":[]}]}\n```\nDone.";
+        let v = extract_json(reply).unwrap();
+        assert_eq!(v["sections"][0]["title"], "Defs");
+    }
+
+    #[test]
+    fn extract_json_array() {
+        let v = extract_json("[{\"q\":\"a\",\"a\":\"b\"}]").unwrap();
+        assert_eq!(v[0]["q"], "a");
+    }
+
+    #[test]
+    fn stub_is_offline_safe() {
+        let s = StubLlm;
+        let out = s.complete("sys", "hello world").unwrap();
+        assert!(out.contains("Offline draft"));
+    }
+}

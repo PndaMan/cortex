@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="osaka-jade">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cortex — study OS</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- DEV diagnostic: surface any webview JS error on-screen (terminal won't show webview errors). -->
+    <script>
+      (function () {
+        function show(msg) {
+          var r = document.getElementById("root");
+          // Only take over the screen if the app never mounted (white-screen
+          // catcher) — never hijack an already-rendered UI on a stray error.
+          if (r && r.childElementCount === 0)
+            r.innerHTML =
+              '<pre style="color:#ff8d7a;background:#0e1813;font:12px/1.5 monospace;padding:24px;white-space:pre-wrap;margin:0;height:100vh;overflow:auto">CORTEX RUNTIME ERROR\n\n' +
+              String(msg).replace(/[<>&]/g, function (c) {
+                return { "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c];
+              }) +
+              "</pre>";
+        }
+        window.addEventListener("error", function (e) {
+          show((e.error && e.error.stack) || e.message || e);
+        });
+        window.addEventListener("unhandledrejection", function (e) {
+          show("unhandledrejection: " + ((e.reason && e.reason.stack) || e.reason));
+        });
+      })();
+    </script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

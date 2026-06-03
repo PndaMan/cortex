@@ -1,0 +1,48 @@
+/* Cortex Tailwind entry. The verbatim design-system CSS (tokens + components in
+   cortex.css, app-shell layout in app.css) is imported from main.ts so Vite
+   controls ordering. Semantic token utilities are defined in tailwind.config.js. */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  overflow: hidden;
+  height: 100%;
+}
+#root {
+  height: 100vh;
+}
+
+/* Keyboard-first app with custom .on/.sel/.kb-focus states — suppress the
+   webview's default blue focus ring everywhere (inputs use box-shadow focus). */
+:focus {
+  outline: none;
+}
+
+/* Chat scope source-switch menu: anchor to the right so it can't clip off the
+   narrow chat dock's right edge. */
+.src-menu {
+  left: auto;
+  right: 0;
+  max-width: min(280px, 80vw);
+}
+
+/* Truncate long subject names everywhere instead of squishing the layout. */
+.sb-subj-row { min-width: 0; }
+.sb-subj-row .s-name,
+.sb-src > span:last-child,
+.subj-card .subj-name,
+.st-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+/* Subject view header: let the id block shrink + truncate, keep tabs visible. */
+.subj-tabs { overflow: hidden; }
+.subj-tabs .st-id { min-width: 0; flex: 0 1 auto; overflow: hidden; }
+.subj-tabs .st-id > div { min-width: 0; overflow: hidden; }
+.st-code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subj-tab { flex: none; }
