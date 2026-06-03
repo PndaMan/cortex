@@ -648,20 +648,15 @@ pub fn list_materials(conn: &Connection, subject_id: &str) -> Result<Vec<Materia
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-// ---- chat history (one rolling thread per subject) ---------------------
+// ---- chat history (multiple conversation threads per subject) ----------
 
-/// Return the subject's rolling chat thread id, creating it on first use.
-pub fn subject_thread(conn: &Connection, subject_id: &str) -> Result<String> {
-    if let Some(id) = conn
-        .query_row(
-            "SELECT id FROM chat_threads WHERE subject_id=?1 ORDER BY created_at LIMIT 1",
-            params![subject_id],
-            |r| r.get::<_, String>(0),
-        )
-        .optional()?
-    {
-        return Ok(id);
-    }
+/// Settings key holding the active thread id for a subject.
+fn active_thread_key(subject_id: &str) -> String {
+    format!("active_thread_{subject_id}")
+}
+
+/// Insert a brand-new (empty) conversation thread for the subject and return its id.
+fn insert_thread(conn: &Connection, subject_id: &str) -> Result<String> {
     let id = new_id();
     let ts = now_ms();
     conn.execute(
@@ -672,14 +667,63 @@ pub fn subject_thread(conn: &Connection, subject_id: &str) -> Result<String> {
     Ok(id)
 }
 
-/// Append a message to the subject's thread and bump the thread's updated_at.
+/// Resolve the subject's currently active thread, creating one if needed.
+///
+/// Order of preference: the thread recorded in the `active_thread_<subject>`
+/// setting (if it still exists) → the most recently updated thread → a fresh
+/// thread. The resolved id is always persisted back to the setting.
+pub fn current_thread(conn: &Connection, subject_id: &str) -> Result<String> {
+    // 1. Honour the recorded active thread if its row still exists.
+    if let Some(saved) = get_setting(conn, &active_thread_key(subject_id))? {
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM chat_threads WHERE id=?1 AND subject_id=?2",
+                params![saved, subject_id],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+        if exists {
+            return Ok(saved);
+        }
+    }
+    // 2. Fall back to the most recent thread for the subject.
+    let recent: Option<String> = conn
+        .query_row(
+            "SELECT id FROM chat_threads WHERE subject_id=?1 ORDER BY updated_at DESC LIMIT 1",
+            params![subject_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()?;
+    // 3. Otherwise create a fresh thread.
+    let id = match recent {
+        Some(id) => id,
+        None => insert_thread(conn, subject_id)?,
+    };
+    set_setting(conn, &active_thread_key(subject_id), &id)?;
+    Ok(id)
+}
+
+/// Start a fresh conversation thread for the subject and make it active.
+pub fn new_thread(conn: &Connection, subject_id: &str) -> Result<String> {
+    let id = insert_thread(conn, subject_id)?;
+    set_setting(conn, &active_thread_key(subject_id), &id)?;
+    Ok(id)
+}
+
+/// Mark an existing thread as the subject's active conversation.
+pub fn set_active_thread(conn: &Connection, subject_id: &str, thread_id: &str) -> Result<()> {
+    set_setting(conn, &active_thread_key(subject_id), thread_id)
+}
+
+/// Append a message to the subject's active thread and bump its updated_at.
 pub fn add_chat_message(
     conn: &Connection,
     subject_id: &str,
     role: &str,
     text: &str,
 ) -> Result<()> {
-    let tid = subject_thread(conn, subject_id)?;
+    let tid = current_thread(conn, subject_id)?;
     let ts = now_ms();
     conn.execute(
         "INSERT INTO chat_messages (id, thread_id, role, text, created_at)
@@ -693,9 +737,9 @@ pub fn add_chat_message(
     Ok(())
 }
 
-/// All messages in the subject's thread, oldest first.
+/// All messages in the subject's active thread, oldest first.
 pub fn list_chat_messages(conn: &Connection, subject_id: &str) -> Result<Vec<ChatMsg>> {
-    let tid = subject_thread(conn, subject_id)?;
+    let tid = current_thread(conn, subject_id)?;
     let mut stmt = conn.prepare(
         "SELECT role, text, created_at FROM chat_messages
          WHERE thread_id=?1 ORDER BY created_at ASC",
@@ -710,11 +754,58 @@ pub fn list_chat_messages(conn: &Connection, subject_id: &str) -> Result<Vec<Cha
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Delete every message in the subject's thread (keeps the thread row).
+/// Delete every message in the subject's active thread (keeps the thread row).
 pub fn clear_chat(conn: &Connection, subject_id: &str) -> Result<()> {
-    let tid = subject_thread(conn, subject_id)?;
+    let tid = current_thread(conn, subject_id)?;
     conn.execute("DELETE FROM chat_messages WHERE thread_id=?1", params![tid])?;
     Ok(())
+}
+
+/// Summaries of every conversation thread for a subject, newest first.
+pub fn list_threads(conn: &Connection, subject_id: &str) -> Result<Vec<ThreadInfo>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, updated_at FROM chat_threads WHERE subject_id=?1 ORDER BY updated_at DESC",
+    )?;
+    let rows = stmt.query_map(params![subject_id], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })?;
+    let threads: Vec<(String, i64)> = rows.collect::<rusqlite::Result<_>>()?;
+    let mut out = Vec::with_capacity(threads.len());
+    for (id, updated_at) in threads {
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM chat_messages WHERE thread_id=?1",
+            params![id],
+            |r| r.get(0),
+        )?;
+        // Title = first user message, truncated; else a placeholder.
+        let first: Option<String> = conn
+            .query_row(
+                "SELECT text FROM chat_messages WHERE thread_id=?1 AND role='user'
+                 ORDER BY created_at ASC LIMIT 1",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let title = match first {
+            Some(t) => {
+                let t = t.trim();
+                if t.chars().count() > 48 {
+                    let truncated: String = t.chars().take(48).collect();
+                    format!("{truncated}…")
+                } else {
+                    t.to_string()
+                }
+            }
+            None => "New conversation".to_string(),
+        };
+        out.push(ThreadInfo {
+            id,
+            title,
+            updated_at,
+            count,
+        });
+    }
+    Ok(out)
 }
 
 // ---- settings ----------------------------------------------------------

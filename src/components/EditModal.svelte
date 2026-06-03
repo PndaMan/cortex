@@ -1,8 +1,9 @@
 <script lang="ts">
   // Rich, fully-themed edit modal — subjects/topics/sources with all their
   // fields. Driven by app.editing; saves through the store's update actions.
-  import { app, SUBJECT_COLORS, GLYPHS, TOPIC_GLYPHS } from "../lib/store.svelte";
+  import { app, SUBJECT_COLORS, TOPIC_GLYPHS } from "../lib/store.svelte";
   import Picker from "./Picker.svelte";
+  import EmojiPicker from "./EmojiPicker.svelte";
 
   // Local form state, seeded whenever a new target opens.
   let name = $state("");
@@ -87,15 +88,7 @@
       {#if t.kind === "topic"}
         <div class="edit-field">
           <span class="edit-lbl">Icon</span>
-          <div style="display:flex;flex-wrap:wrap;gap:6px">
-            {#each TOPIC_GLYPHS as g}
-              <button
-                type="button"
-                style="width:28px;height:28px;border-radius:7px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;background:var(--surface-2);border:1px solid {glyph === g ? 'var(--accent)' : 'var(--border-strong)'}"
-                onclick={() => (glyph = g)}
-              >{g}</button>
-            {/each}
-          </div>
+          <EmojiPicker value={glyph} onPick={(e) => (glyph = e)} />
         </div>
       {/if}
 
@@ -106,15 +99,7 @@
         </label>
         <div class="edit-field">
           <span class="edit-lbl">Glyph</span>
-          <div style="display:flex;flex-wrap:wrap;gap:6px">
-            {#each GLYPHS as g}
-              <button
-                type="button"
-                style="width:28px;height:28px;border-radius:7px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;background:var(--surface-2);border:1px solid {glyph === g ? color : 'var(--border-strong)'};color:{glyph === g ? color : 'var(--fg-muted)'}"
-                onclick={() => (glyph = g)}
-              >{g}</button>
-            {/each}
-          </div>
+          <EmojiPicker value={glyph} onPick={(e) => (glyph = e)} />
         </div>
         <div class="edit-field">
           <span class="edit-lbl">Color</span>

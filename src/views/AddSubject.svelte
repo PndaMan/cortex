@@ -2,6 +2,7 @@
   import { app, SUBJECT_COLORS, GLYPHS } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import Icon from "../components/Icon.svelte";
+  import EmojiPicker from "../components/EmojiPicker.svelte";
 
   let name = $state("");
   let code = $state("");
@@ -99,15 +100,7 @@
       <div class="field">
         <!-- svelte-ignore a11y_label_has_associated_control -->
         <label class="onb-label mono">GLYPH</label>
-        <div style="display:flex;flex-wrap:wrap;gap:6px">
-          {#each GLYPHS as g}
-            <button
-              type="button"
-              style="width:28px;height:28px;border-radius:7px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;background:var(--surface-2);border:1px solid {glyph === g ? color : 'var(--border-strong)'};color:{glyph === g ? color : 'var(--fg-muted)'}"
-              onclick={() => (glyph = g)}
-            >{g}</button>
-          {/each}
-        </div>
+        <EmojiPicker value={glyph} onPick={(e) => (glyph = e)} />
       </div>
 
       <div class="field">

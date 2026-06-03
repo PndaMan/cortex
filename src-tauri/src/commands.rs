@@ -697,6 +697,29 @@ pub fn clear_chat(state: State<AppState>, subject_id: String) -> Result<()> {
     repo::clear_chat(&c, &subject_id)
 }
 
+#[tauri::command]
+pub fn new_chat(state: State<AppState>, subject_id: String) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    repo::new_thread(&c, &subject_id)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn list_chat_threads(state: State<AppState>, subject_id: String) -> Result<Vec<ThreadInfo>> {
+    let c = state.db.lock().unwrap();
+    repo::list_threads(&c, &subject_id)
+}
+
+#[tauri::command]
+pub fn open_chat_thread(
+    state: State<AppState>,
+    subject_id: String,
+    thread_id: String,
+) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    repo::set_active_thread(&c, &subject_id, &thread_id)
+}
+
 // ---- AI: cheatsheet synthesis ----------------------------------------
 
 fn parse_cheatsheet(raw: &str) -> Vec<CsSection> {
