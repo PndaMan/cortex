@@ -178,14 +178,17 @@
   let testState  = $state<null | "testing" | "ok" | "fail">(null);
   let searxState = $state<null | "testing" | "ok" | "fail">(null);
 
+  async function testEndpoint(url: string): Promise<"ok" | "fail"> {
+    try {
+      return (await api.pingUrl(url)) ? "ok" : "fail";
+    } catch {
+      return "fail";
+    }
+  }
+
   async function testConnection() {
     testState = "testing";
-    try {
-      const ok = await api.pingUrl(endpoint);
-      testState = ok ? "ok" : "fail";
-    } catch {
-      testState = "fail";
-    }
+    testState = await testEndpoint(endpoint);
   }
 
   function saveSearxng() {
@@ -195,12 +198,7 @@
   async function testSearxng() {
     if (!searxng.trim()) return;
     searxState = "testing";
-    try {
-      const ok = await api.pingUrl(searxng);
-      searxState = ok ? "ok" : "fail";
-    } catch {
-      searxState = "fail";
-    }
+    searxState = await testEndpoint(searxng);
   }
 
   // persist homelab on change
@@ -285,7 +283,13 @@
 
   // ---- mount: hydrate from backend ----
   $effect(() => {
-    api.getAllSettings().then((s) => {
+    // All three are independent; issue them concurrently.
+    (async () => {
+      const [s] = await Promise.all([
+        api.getAllSettings().catch(() => ({}) as Record<string, string>),
+        loadMemory(),
+        loadStats(),
+      ]);
       // API keys
       if (s.openrouter_api_key) keys = { ...keys, openrouter: s.openrouter_api_key };
       if (s.gemini_api_key)     keys = { ...keys, gemini: s.gemini_api_key };
@@ -338,11 +342,7 @@
       if (s.profile_about)     about    = s.profile_about;
       if (s.profile_style)     style    = s.profile_style;
       if (s.profile_explain)   explain  = s.profile_explain.split(",").filter(Boolean);
-    }).catch(() => {});
-
-    // long-term memory + db stats
-    loadMemory();
-    loadStats();
+    })();
   });
 
   // ---- helpers ----

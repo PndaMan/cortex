@@ -93,7 +93,7 @@ class AppStore {
       const savedTheme = all["theme"] as Theme | undefined;
       if (savedTheme && THEMES.includes(savedTheme)) this.setTheme(savedTheme);
       else this.applyTheme(this.theme);
-      await keybinds.load();
+      await keybinds.load(all); // reuse the settings we already fetched
       if (all["default_station"]) this.music = { ...this.music, current: all["default_station"] };
       if (all["autoplay"] === "true") this.toggleMusic();
     } catch {

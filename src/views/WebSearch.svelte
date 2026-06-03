@@ -20,7 +20,7 @@
     favBg: string;
     cat: string;
     engines: string[];
-    reader: string[];
+    reader: string;
   };
 
   type SerpState = "idle" | "loading" | "results" | "error" | "setup";
@@ -66,8 +66,8 @@
   function toResult(w: WebResult, i: number): Result {
     const host = w.host || w.url.replace(/^https?:\/\//, "").split("/")[0];
     const reader = w.snippet
-      ? [w.snippet]
-      : ["No preview text was returned for this result. Open it in your browser or add it as a source to extract the full page."];
+      ? w.snippet
+      : "No preview text was returned for this result. Open it in your browser or add it as a source to extract the full page.";
     return {
       id: "w" + i + "-" + w.url,
       title: w.title || host,
@@ -196,13 +196,10 @@
     });
   }
 
-  // Run a real web search for the active tab and stream the result into its
-  // current serp entry. Sets loading first, then results / setup / error.
-  async function runSearch(q: string) {
-    const query = q.trim();
-    if (!query) return;
-    navigate(makeSerp(query));
-    const tabId = activeId;
+  // Fetch a query through SearXNG and stream the outcome into the given tab's
+  // current serp entry: loading first, then results / setup / error. Patches
+  // are guarded by tab id + query so stale/parallel searches don't clobber.
+  async function fetchIntoEntry(tabId: string, query: string) {
     patchEntry(tabId, (e) =>
       e.kind === "serp" ? { ...e, state: "loading", results: [], error: "" } : e
     );
@@ -223,6 +220,15 @@
           : e
       );
     }
+  }
+
+  // Run a real web search for the active tab and stream the result into its
+  // current serp entry.
+  function runSearch(q: string) {
+    const query = q.trim();
+    if (!query) return;
+    navigate(makeSerp(query));
+    void fetchIntoEntry(activeId, query);
   }
 
   function openResult(r: Result) {
@@ -249,10 +255,8 @@
         favBg: favBgFor(host),
         cat: "General",
         engines: [],
-        reader: [
-          "Reader view of " + url + ". In the desktop build, Cortex fetches the page through your self-hosted instance.",
-          "Use the 'Add as source' button to ingest it.",
-        ],
+        reader:
+          "Reader view of " + url + ". In the desktop build, Cortex fetches the page through your self-hosted instance. Use the 'Add as source' button to ingest it.",
       },
     });
   }
@@ -283,30 +287,7 @@
   // Reload re-runs the current serp query (or no-ops on a reader page).
   function reload() {
     if (entry.kind === "serp" && entry.query.trim()) {
-      const q = entry.query;
-      const tabId = activeId;
-      patchEntry(tabId, (e) =>
-        e.kind === "serp" ? { ...e, state: "loading", results: [], error: "" } : e
-      );
-      void (async () => {
-        try {
-          const raw = await api.webSearch(q);
-          const mapped = raw.map((w, i) => toResult(w, i));
-          patchEntry(tabId, (e) =>
-            e.kind === "serp" && e.query === q
-              ? { ...e, state: "results", results: mapped, error: "" }
-              : e
-          );
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          const isSetup = /searxng_url not configured/i.test(msg);
-          patchEntry(tabId, (e) =>
-            e.kind === "serp" && e.query === q
-              ? { ...e, state: isSetup ? "setup" : "error", results: [], error: msg }
-              : e
-          );
-        }
-      })();
+      void fetchIntoEntry(activeId, entry.query);
     } else {
       patchActive(() => ({}));
     }
@@ -606,9 +587,7 @@
           </div>
           <div class="prev-title read">{prev.title}</div>
           <div class="prev-body">
-            {#each prev.reader.slice(0, 2) as p, i (i)}
-              <p class="read">{p}</p>
-            {/each}
+            <p class="read">{prev.reader}</p>
           </div>
           <button class="btn btn--sm btn--primary prev-open" onclick={() => openResult(prev)}>
             Open reader <Icon name="arrowR" size={12} />
@@ -643,9 +622,7 @@
             Reader view · extracted by Cortex
             {#if cur.engines.length > 0}· via {cur.engines[0]}{/if}
           </div>
-          {#each cur.reader as p, i (i)}
-            <p class="reader-p read">{p}</p>
-          {/each}
+          <p class="reader-p read">{cur.reader}</p>
           <div class="reader-end mono faint">— end of extracted article —</div>
         </article>
       </div>

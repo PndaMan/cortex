@@ -20,13 +20,12 @@
       ? convertFileSrc(app.activeSource.stored_path)
       : null
   );
-  // A document renders as an embedded PDF when the kind says so OR whenever the
-  // stored file is a .pdf — this catches pptx/docx that the backend rendered to
-  // PDF for slide preview.
+  // A document renders as an embedded PDF when its kind is a PDF-previewable
+  // document. pptx/docx are rendered to PDF by the backend (their stored_path
+  // points at that PDF), so they preview as slides via the same iframe.
+  const PDF_KINDS = ["pdf", "pptx", "docx"];
   const isPdfDoc = $derived(
-    !!app.activeSource &&
-      (app.activeSource.kind === "pdf" ||
-        !!app.activeSource.stored_path?.toLowerCase().endsWith(".pdf"))
+    !!app.activeSource && PDF_KINDS.includes(app.activeSource.kind) && !!assetUrl
   );
   const isImage = $derived(app.activeSource?.kind === "image" && !!assetUrl);
   const isAudio = $derived(app.activeSource?.kind === "audio" && !!assetUrl);

@@ -68,9 +68,10 @@ class Keybinds {
   map = $state<Record<Action, string>>({ ...HELIX_BINDS });
   preset = $state<Preset | "custom">("helix");
 
-  /** Hydrate from persisted settings (call once on app init). */
-  async load() {
-    const all = await api.getAllSettings().catch(() => ({}) as Record<string, string>);
+  /** Hydrate from persisted settings (call once on app init). Pass an already
+   *  fetched settings map to avoid a second getAllSettings round-trip. */
+  async load(preloaded?: Record<string, string>) {
+    const all = preloaded ?? (await api.getAllSettings().catch(() => ({}) as Record<string, string>));
     let anyCustom = false;
     for (const a of ACTION_ORDER) {
       const v = all["keybind_" + a];

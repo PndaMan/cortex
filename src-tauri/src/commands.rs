@@ -21,6 +21,15 @@ fn truncate(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
+/// Build a blocking reqwest client with a request timeout. Shared by the
+/// network-touching commands (web_search, ping_url) and ingest's web fetch.
+pub fn http_client(timeout_secs: u64) -> reqwest::blocking::Client {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .unwrap_or_default()
+}
+
 /// Read all configured provider keys from settings.
 fn read_keys(c: &Connection) -> Result<llm::Keys> {
     Ok(llm::Keys {
@@ -251,14 +260,15 @@ pub fn add_source(
 
     // 1b. persist the ORIGINAL bytes for file-based kinds so the frontend can
     //     render a real preview (txt/md/url keep stored_path NULL — their text
-    //     lives in `content`). For pptx/docx we ALSO render a PDF below.
+    //     lives in `content`). pptx/docx are excluded here: they have no inline
+    //     original renderer, so only the rendered PDF (step 2b) is persisted.
     let sources_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| Error::Other(e.to_string()))?
         .join("sources");
-    let is_file_kind = matches!(kind.as_str(), "pdf" | "image" | "pptx" | "docx" | "audio");
-    if is_file_kind {
+    let copies_original = matches!(kind.as_str(), "pdf" | "image" | "audio");
+    if copies_original {
         if let Some(src_path) = input.path.as_deref() {
             let ext = Path::new(src_path)
                 .extension()
@@ -1015,9 +1025,7 @@ pub fn web_search(
     let base = base.trim_end_matches('/');
     let cats = categories.filter(|s| !s.is_empty()).unwrap_or_else(|| "general".into());
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()?;
+    let client = http_client(15);
     let resp = client
         .get(format!("{base}/search"))
         .query(&[
@@ -1108,9 +1116,7 @@ pub fn delete_all_data(app: AppHandle, state: State<AppState>) -> Result<()> {
 /// Reachability check for the homelab "Test connection" button.
 #[tauri::command]
 pub fn ping_url(url: String) -> Result<bool> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()?;
+    let client = http_client(5);
     match client.get(&url).send() {
         Ok(resp) => Ok(resp.status().is_success()),
         Err(_) => Ok(false),

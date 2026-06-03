@@ -7,7 +7,6 @@ use crate::embed::Embedder;
 use crate::error::{Error, Result};
 use crate::models::AddSourceInput;
 use std::path::Path;
-use std::time::Duration;
 
 /// Detect the source kind from explicit input, then path/url extension.
 pub fn detect_kind(input: &AddSourceInput) -> String {
@@ -61,9 +60,7 @@ pub fn parse(kind: &str, input: &AddSourceInput) -> Result<(String, Option<Strin
                 .url
                 .as_deref()
                 .ok_or_else(|| Error::Other("web source needs a url".into()))?;
-            let client = reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()?;
+            let client = crate::commands::http_client(30);
             let html = client.get(url).send()?.text()?;
             Ok((html_to_text(&html), None))
         }
