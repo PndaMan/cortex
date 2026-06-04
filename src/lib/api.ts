@@ -142,6 +142,10 @@ export const createTopic = (subjectId: string, name: string, glyph?: string, tag
   invoke<Subject>("create_topic", { subjectId, name, glyph, tags });
 export const updateTopic = (id: string, name: string, subjectId: string, glyph?: string, tags?: string[]) =>
   invoke<Subject>("update_topic", { id, name, subjectId, glyph, tags });
+export const reorderSubjects = (ids: string[]) =>
+  invoke<Subject[]>("reorder_subjects", { ids });
+export const reorderTopics = (subjectId: string, ids: string[]) =>
+  invoke<Subject>("reorder_topics", { subjectId, ids });
 export const deleteTopic = (id: string, subjectId: string) =>
   invoke<Subject>("delete_topic", { id, subjectId });
 

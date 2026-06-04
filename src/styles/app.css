@@ -941,6 +941,11 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
   .set-row-r { min-width: 0; }
 }
 
+/* ============ DRAG-AND-DROP REORDER FEEDBACK ============ */
+.subj-card[draggable="true"] { cursor: grab; }
+.subj-card.dragging { opacity: 0.45; }
+.subj-card.drop-over { outline: 2px solid var(--accent); outline-offset: -2px; }
+
 /* ============ RESPONSIVE SPACING SCALE ============ */
 /* Every view builds its padding from var(--sp-*), so shrinking the scale as the
    window narrows tightens the whole app together — content stops getting cut off

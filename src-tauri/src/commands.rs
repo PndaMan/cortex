@@ -218,6 +218,24 @@ pub fn update_topic(
 }
 
 #[tauri::command]
+pub fn reorder_subjects(state: State<AppState>, ids: Vec<String>) -> Result<Vec<Subject>> {
+    let c = state.db.lock().unwrap();
+    repo::reorder_subjects(&c, &ids)?;
+    repo::list_subjects(&c)
+}
+
+#[tauri::command]
+pub fn reorder_topics(
+    state: State<AppState>,
+    subject_id: String,
+    ids: Vec<String>,
+) -> Result<Subject> {
+    let c = state.db.lock().unwrap();
+    repo::reorder_topics(&c, &subject_id, &ids)?;
+    repo::get_subject(&c, &subject_id)
+}
+
+#[tauri::command]
 pub fn delete_topic(state: State<AppState>, id: String, subject_id: String) -> Result<Subject> {
     let c = state.db.lock().unwrap();
     repo::delete_topic(&c, &id)?;

@@ -72,6 +72,8 @@ pub fn run() {
             commands::create_topic,
             commands::update_topic,
             commands::delete_topic,
+            commands::reorder_subjects,
+            commands::reorder_topics,
             commands::list_sources,
             commands::get_source,
             commands::update_source,

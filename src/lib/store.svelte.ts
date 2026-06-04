@@ -489,6 +489,33 @@ class AppStore {
     }
   }
 
+  // Reorder subjects (sidebar / dashboard drag-and-drop). Optimistic, then persist.
+  async reorderSubjects(ids: string[]) {
+    const byId = new Map(this.subjects.map((s) => [s.id, s]));
+    this.subjects = ids.map((id) => byId.get(id)).filter(Boolean) as typeof this.subjects;
+    try {
+      await api.reorderSubjects(ids);
+    } catch (e) {
+      this.pushToast({ kind: "error", title: "Reorder failed", body: String(e) });
+      await this.refresh();
+    }
+  }
+
+  // Reorder a subject's topics (sidebar drag-and-drop). Optimistic, then persist.
+  async reorderTopics(subjectId: string, ids: string[]) {
+    this.subjects = this.subjects.map((s) => {
+      if (s.id !== subjectId) return s;
+      const byId = new Map(s.topics.map((t) => [t.id, t]));
+      return { ...s, topics: ids.map((id) => byId.get(id)).filter(Boolean) as typeof s.topics };
+    });
+    try {
+      await api.reorderTopics(subjectId, ids);
+    } catch (e) {
+      this.pushToast({ kind: "error", title: "Reorder failed", body: String(e) });
+      await this.refresh();
+    }
+  }
+
   async updateSource(id: string, name: string, topicId?: string | null, tags?: string[]) {
     try {
       const updated = await api.updateSource(id, name, topicId ?? null, tags);

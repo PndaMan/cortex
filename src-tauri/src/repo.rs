@@ -154,6 +154,33 @@ pub fn delete_topic(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Persist a new ordering: each id's `position` becomes its index in `ids`.
+pub fn reorder_subjects(conn: &Connection, ids: &[String]) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    let ts = now_ms();
+    for (i, id) in ids.iter().enumerate() {
+        tx.execute(
+            "UPDATE subjects SET position=?2, updated_at=?3 WHERE id=?1",
+            params![id, i as i64, ts],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn reorder_topics(conn: &Connection, subject_id: &str, ids: &[String]) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    let ts = now_ms();
+    for (i, id) in ids.iter().enumerate() {
+        tx.execute(
+            "UPDATE topics SET position=?2, updated_at=?3 WHERE id=?1 AND subject_id=?4",
+            params![id, i as i64, ts, subject_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn list_topics(conn: &Connection, subject_id: &str) -> Result<Vec<Topic>> {
     let mut stmt = conn.prepare(
         "SELECT id, subject_id, name, glyph, position, tags FROM topics
