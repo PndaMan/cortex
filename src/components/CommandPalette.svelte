@@ -74,6 +74,17 @@
       icon: "diamond",
       run: () => app.openSubject(s.id),
     })),
+    // Topics — type a topic name in ":" to jump straight to its subject.
+    ...app.subjects.flatMap((s) =>
+      s.topics.map((t) => ({
+        id: "topic-" + t.id,
+        group: "Topics",
+        label: t.name,
+        kind: s.name,
+        icon: "chevron",
+        run: () => { app.openSubject(s.id); app.setTab("cheatsheet"); },
+      }))
+    ),
     { id: "a-record", group: "Actions", label: "Record lecture", kind: "command", icon: "record", hint: kh(keybinds.map.recorder), run: () => app.setView("recorder") },
     { id: "a-source", group: "Actions", label: "Add source", kind: "command", icon: "plus", hint: kh(keybinds.map.leader) + " s", run: () => app.setView("add-source") },
     { id: "a-diff", group: "Actions", label: "Review cheatsheet diff", kind: "command", icon: "book", hint: app.pending ? app.pending + " pending" : kh(keybinds.map.leader) + " d", run: () => app.reviewDiff() },
