@@ -1,7 +1,8 @@
-//! Vector helpers. Embeddings are stored as little-endian f32 BLOBs and searched
-//! with a Rust-side cosine scan. This is the `VectorStore` seam: swapping in
-//! `sqlite-vec` later only touches the search query, not callers. (Decision:
-//! sqlite-vec is the locked target; Rust cosine is the foundation stand-in.)
+//! Vector helpers. Embeddings are stored as little-endian f32 BLOBs — which is
+//! exactly `sqlite-vec`'s compact float32 format — so retrieval ranks in SQL via
+//! `vec_distance_cosine` (see `repo::search_chunks`). The `cosine` helper here
+//! remains as the tolerant Rust-scan fallback and for tests. (Decision: sqlite-vec
+//! is the locked vector-search target — now in place.)
 
 pub fn f32s_to_blob(v: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(v.len() * 4);

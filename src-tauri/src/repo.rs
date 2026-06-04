@@ -398,8 +398,59 @@ pub fn clear_chunks(conn: &Connection, source_id: &str) -> Result<()> {
 }
 
 /// Cosine top-k over stored chunk vectors, optionally scoped to a subject.
-/// (sqlite-vec is the locked upgrade path; this is the foundation scan.)
+/// Uses the statically-linked `sqlite-vec` extension's `vec_distance_cosine` to
+/// rank in SQL (embeddings are stored as little-endian f32 BLOBs, which is exactly
+/// sqlite-vec's compact float32 format). Falls back to the Rust cosine scan if the
+/// SQL path fails for any reason (e.g. an unexpected dimension/format edge case).
 pub fn search_chunks(
+    conn: &Connection,
+    subject_id: Option<&str>,
+    query_vec: &[f32],
+    k: usize,
+) -> Result<Vec<ChunkHit>> {
+    let qblob = crate::vector::f32s_to_blob(query_vec);
+    match search_chunks_vec(conn, subject_id, &qblob, k) {
+        Ok(hits) => Ok(hits),
+        // sqlite-vec errors (e.g. dimension mismatch across mixed embed models)
+        // shouldn't take down retrieval — fall back to the tolerant Rust scan.
+        Err(_) => search_chunks_scan(conn, subject_id, query_vec, k),
+    }
+}
+
+/// sqlite-vec path: rank entirely in SQL via `vec_distance_cosine`. The
+/// `length` guard skips rows whose vector dimension differs from the query so a
+/// single mismatched blob can't error the whole query.
+fn search_chunks_vec(
+    conn: &Connection,
+    subject_id: Option<&str>,
+    query_blob: &[u8],
+    k: usize,
+) -> Result<Vec<ChunkHit>> {
+    let sql = "SELECT c.id, c.source_id, s.name, c.text, c.loc,
+                      vec_distance_cosine(c.embedding, ?2) AS dist
+               FROM chunks c JOIN sources s ON s.id=c.source_id
+               WHERE (?1 IS NULL OR c.subject_id=?1)
+                 AND length(c.embedding) = length(?2)
+               ORDER BY dist ASC
+               LIMIT ?3";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params![subject_id, query_blob, k as i64], |r| {
+        let dist: f64 = r.get(5)?;
+        Ok(ChunkHit {
+            id: r.get(0)?,
+            source_id: r.get(1)?,
+            source_name: r.get(2)?,
+            text: r.get(3)?,
+            loc: r.get(4)?,
+            // cosine distance → similarity, matching the prior cosine() semantics.
+            score: (1.0 - dist) as f32,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Fallback: Rust-side cosine scan over all in-scope chunk vectors.
+fn search_chunks_scan(
     conn: &Connection,
     subject_id: Option<&str>,
     query_vec: &[f32],

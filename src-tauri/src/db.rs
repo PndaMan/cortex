@@ -23,8 +23,23 @@ pub struct AppState {
     pub db: Mutex<Connection>,
 }
 
+/// Register the statically-linked `sqlite-vec` extension as an auto-extension so
+/// every connection opened afterward gets the `vec_distance_cosine` SQL function
+/// (used by `repo::search_chunks`). No runtime `.so` is loaded — the extension is
+/// compiled in and registered via SQLite's auto-extension hook. Idempotent.
+fn register_sqlite_vec() {
+    use std::sync::Once;
+    static VEC_INIT: Once = Once::new();
+    VEC_INIT.call_once(|| unsafe {
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+            sqlite_vec::sqlite3_vec_init as *const (),
+        )));
+    });
+}
+
 impl AppState {
     pub fn new(db_path: &PathBuf) -> Result<Self> {
+        register_sqlite_vec();
         let conn = Connection::open(db_path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
@@ -37,6 +52,7 @@ impl AppState {
     /// In-memory database, for tests.
     #[cfg(test)]
     pub fn in_memory() -> Result<Self> {
+        register_sqlite_vec();
         let conn = Connection::open_in_memory()?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         run_migrations(&conn)?;
@@ -75,6 +91,25 @@ pub fn new_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sqlite_vec_extension_is_registered() {
+        // Proves the statically-linked sqlite-vec auto-extension is actually live
+        // (so search_chunks uses it, not the Rust fallback). Identical vectors have
+        // cosine distance 0; orthogonal vectors distance 1.
+        let st = AppState::in_memory().unwrap();
+        let conn = st.db.lock().unwrap();
+        let a = crate::vector::f32s_to_blob(&[1.0, 0.0, 0.0]);
+        let b = crate::vector::f32s_to_blob(&[0.0, 1.0, 0.0]);
+        let same: f64 = conn
+            .query_row("SELECT vec_distance_cosine(?1, ?1)", [&a], |r| r.get(0))
+            .expect("vec_distance_cosine must be registered");
+        let orth: f64 = conn
+            .query_row("SELECT vec_distance_cosine(?1, ?2)", [&a, &b], |r| r.get(0))
+            .unwrap();
+        assert!(same.abs() < 1e-5, "identical vectors distance ~0, got {same}");
+        assert!((orth - 1.0).abs() < 1e-5, "orthogonal vectors distance ~1, got {orth}");
+    }
 
     #[test]
     fn migrations_apply_and_are_idempotent() {
