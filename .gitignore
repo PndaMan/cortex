@@ -9,3 +9,7 @@ src-tauri/gen
 
 # bundles / artifacts
 *.zip
+
+# PAI / local agent artifacts — not part of the public repo
+.claude
+MEMORY
