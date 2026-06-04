@@ -36,6 +36,24 @@
     app.init();
   });
 
+  // Chat dock / FAB visibility. Read EVERY signal into a local first so &&/||
+  // short-circuiting can't drop one from Svelte's reactive dependency set (that
+  // bug left the dock stuck visible on the notes view regardless of chatOpen).
+  const chatViewOk = $derived.by(() => {
+    const v = app.view;
+    const tab = app.subjectTab;
+    return v === "notes" || (v === "subject" && tab !== "chats");
+  });
+  const showChatDock = $derived.by(() => {
+    const open = app.chatOpen;
+    return open && chatViewOk;
+  });
+  const showChatFab = $derived.by(() => {
+    const open = app.chatOpen;
+    const v = app.view;
+    return !open && (chatViewOk || v === "source");
+  });
+
   // ---- view back-stack: Esc goes back to the previous page ----
   let viewHistory: string[] = [];
   let prevView = app.view;
@@ -72,6 +90,13 @@
       if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
         e.preventDefault();
         app.findOpen = true;
+        return;
+      }
+      // Alt+1..9 — jump to the Nth subject (like clicking it in the navbar).
+      if (e.altKey && !e.ctrlKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
+        e.preventDefault();
+        const s = app.subjects[parseInt(e.key, 10) - 1];
+        if (s) app.openSubject(s.id);
         return;
       }
 
@@ -190,13 +215,7 @@
         {/if}
       </div>
 
-      <!-- Chat dock alongside the workspace on the subject view (except the
-           Chats tab, which shows the full panel) and the notes view.
-           IMPORTANT: app.chatOpen MUST be the LAST &&-operand. When it was first,
-           a false value short-circuited the rest out of the reactive dependency
-           set and the dock got stuck open (matching the working .chat-fab below,
-           which also reads chatOpen last). -->
-      {#if (app.view === "notes" || (app.view === "subject" && app.subjectTab !== "chats")) && app.chatOpen}
+      {#if showChatDock}
         <div class="chatdock">
           <ChatPanel
             onClose={() => (app.chatOpen = false)}
@@ -205,7 +224,7 @@
         </div>
       {/if}
 
-      {#if (app.view === "notes" || app.view === "source" || (app.view === "subject" && app.subjectTab !== "chats")) && !app.chatOpen}
+      {#if showChatFab}
         <button class="chat-fab" onclick={() => (app.chatOpen = true)} title="Open chat (c)">
           Ask <span class="kbd">c</span>
         </button>

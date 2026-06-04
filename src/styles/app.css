@@ -277,6 +277,12 @@
 .flashcard.flipped .fc-back { opacity: 1; transform: scale(1); pointer-events: auto; }
 .fc-side { font-size: var(--t-2xs); letter-spacing: 0.16em; color: var(--fg-faint); }
 .fc-face p { font-family: var(--font-read); font-size: var(--r-xl); line-height: 1.4; color: var(--fg-bright); font-weight: 500; }
+/* Flashcard text now renders Markdown (bold, bullets); size down from r-xl and
+   allow scroll so formatted answers fit the card. */
+.fc-text { width: 100%; max-height: 188px; overflow-y: auto; text-align: left; font-size: var(--r-lg); line-height: 1.45; color: var(--fg-bright); }
+.fc-text .rt-p { margin: 0 0 7px; }
+.fc-text .rt-ul, .fc-text .rt-ol { margin: 0 0 7px; }
+.fc-front .fc-text { text-align: center; }
 .fc-hint { font-size: var(--t-2xs); color: var(--fg-faint); }
 .fc-rate { display: flex; gap: 9px; opacity: 0; pointer-events: none; transition: opacity var(--dur); }
 .fc-rate.show { opacity: 1; pointer-events: auto; }

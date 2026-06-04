@@ -3,6 +3,7 @@
   import * as api from "../lib/api";
   import { app } from "../lib/store.svelte";
   import Icon from "../components/Icon.svelte";
+  import RichText from "../components/RichText.svelte";
 
   let { onExit, deck: deckProp }: { onExit?: () => void; deck?: { q: string; a: string }[] } = $props();
 
@@ -155,12 +156,12 @@
     >
       <div class="fc-face fc-front">
         <div class="fc-side mono">QUESTION</div>
-        <p class="read">{activeDeck[i].q}</p>
+        <div class="read fc-text"><RichText text={activeDeck[i].q} /></div>
         <div class="fc-hint mono">click or <span class="kbd">␣</span> to flip</div>
       </div>
       <div class="fc-face fc-back">
         <div class="fc-side mono">ANSWER</div>
-        <p class="read">{activeDeck[i].a}</p>
+        <div class="read fc-text"><RichText text={activeDeck[i].a} /></div>
       </div>
     </div>
 

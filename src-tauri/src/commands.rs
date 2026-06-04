@@ -1354,7 +1354,9 @@ pub async fn generate_material(
         ),
         _ => (
             "You generate study flashcards from material. Output ONLY a JSON array of 12-18 items, \
-             each: {\"q\":\"front/question\",\"a\":\"back/answer\"}. No prose.".to_string(),
+             each {\"q\":\"front\",\"a\":\"back\"}. Keep the \"a\" CONCISE (about 15-45 words) and \
+             use light Markdown where it aids recall: **bold** the key term(s), and short `- ` \
+             bullet lists for multi-part answers. No headings, no prose outside the JSON.".to_string(),
             format!("{topic_name} flashcards"),
         ),
     };
