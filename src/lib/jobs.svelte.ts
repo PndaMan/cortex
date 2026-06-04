@@ -17,6 +17,7 @@ export type JobKind =
   | "audio"
   | "infographic"
   | "slideshow"
+  | "mindmap"
   | "source";
 
 export type JobStatus = "running" | "done" | "error";
@@ -46,6 +47,7 @@ const KIND_LABEL: Record<JobKind, string> = {
   audio: "audio overview",
   infographic: "infographic",
   slideshow: "slideshow",
+  mindmap: "mind map",
   source: "source",
 };
 

@@ -8,6 +8,7 @@
   import Quiz from "./Quiz.svelte";
   import InfographicView from "../components/InfographicView.svelte";
   import SlideshowView from "../components/SlideshowView.svelte";
+  import MindMapView from "../components/MindMapView.svelte";
   import GeneratingCard from "../components/GeneratingCard.svelte";
   import { jobs } from "../lib/jobs.svelte";
 
@@ -18,8 +19,9 @@
     audio:       { label: "Audio overview",   group: "Audio overviews",  icon: "music", color: "var(--mode-select)"  },
     slideshow:   { label: "Slides",           group: "Slides",           icon: "grid",  color: "var(--warn)"         },
     infographic: { label: "Infographic",      group: "Infographics",     icon: "grid",  color: "var(--ok)"           },
+    mindmap:     { label: "Mind map",          group: "Mind maps",        icon: "link",  color: "var(--info)"         },
   };
-  const MAT_ORDER = ["flashcards", "quiz", "audio", "slideshow", "infographic"];
+  const MAT_ORDER = ["flashcards", "quiz", "audio", "slideshow", "infographic", "mindmap"];
 
   // ── unified card shape ────────────────────────────────────────
   interface Card {
@@ -92,7 +94,7 @@
   );
 
   function isLaunchable(type: string): boolean {
-    return ["flashcards", "quiz", "audio", "infographic", "slideshow"].includes(type);
+    return ["flashcards", "quiz", "audio", "infographic", "slideshow", "mindmap"].includes(type);
   }
 
   function launchLabel(type: string): string {
@@ -102,6 +104,7 @@
       audio: "Play",
       infographic: "View",
       slideshow: "View slides",
+      mindmap: "View map",
     };
     return map[type] ?? "Open";
   }
@@ -178,6 +181,11 @@
     <SlideshowView
       slides={matLaunch.payload?.slides ?? []}
       title={matLaunch.title}
+      onExit={() => (matLaunch = null)}
+    />
+  {:else if matLaunch.type === "mindmap"}
+    <MindMapView
+      data={matLaunch.payload ?? undefined}
       onExit={() => (matLaunch = null)}
     />
   {/if}

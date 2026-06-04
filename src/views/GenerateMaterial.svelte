@@ -11,6 +11,7 @@
     { id: "audio",      label: "Audio overview",   ico: "music", desc: "Two-host podcast",           color: "var(--mode-select)" },
     { id: "slideshow",  label: "Slides",           ico: "grid",  desc: "Presentation slide deck",     color: "var(--warn)"        },
     { id: "infographic",label: "Infographic",      ico: "grid",  desc: "One-poster summary",         color: "var(--ok)"          },
+    { id: "mindmap",    label: "Mind map",          ico: "link",  desc: "Concept map of the topic",    color: "var(--info)"        },
   ] as const;
 
   const srcLabel: Record<string, string> = {
@@ -54,7 +55,7 @@
 
   const tm = $derived(GEN_TYPES.find(t => t.id === type)!);
   const suffixFor = (t: string) =>
-    ({ flashcards: " — flashcards", quiz: " — quiz", audio: " — deep dive", slideshow: " — slides", infographic: " — infographic" } as Record<string, string>)[t] ?? "";
+    ({ flashcards: " — flashcards", quiz: " — quiz", audio: " — deep dive", slideshow: " — slides", infographic: " — infographic", mindmap: " — mind map" } as Record<string, string>)[t] ?? "";
   const suggested = $derived.by(() => {
     const suffix = suffixFor(type);
     // One source selected → name after that source (its filename, sans extension).
@@ -104,7 +105,7 @@
       run: () =>
         api.generateMaterial(
           subjectId,
-          kind as "flashcards" | "quiz" | "audio" | "infographic" | "slideshow",
+          kind as "flashcards" | "quiz" | "audio" | "infographic" | "slideshow" | "mindmap",
           topicId,
           matTitle,
           customPrompt.trim() || undefined,

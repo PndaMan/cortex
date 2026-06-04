@@ -1431,6 +1431,19 @@ pub async fn generate_material(
              {\"slides\":[{\"title\":\"...\",\"bullets\":[\"...\"],\"notes\":\"voiceover\"}]}. 8-12 slides. No prose outside JSON.".to_string(),
             format!("{topic_name} — slideshow"),
         ),
+        "mindmap" => (
+            "You build a hierarchical MIND MAP / concept map from the study material. Output ONLY \
+             JSON of this exact shape:\n\
+             {\"central\":string,\"branches\":[{\"label\":string,\"children\":\
+             [{\"label\":string,\"children\":[{\"label\":string}]}]}]}\n\
+             Rules: \"central\" is the single core topic (1-4 words). 4-7 \"branches\" for the main \
+             themes/categories. Each branch has 2-5 \"children\" (key concepts), and a child MAY \
+             have its own 2-4 \"children\" for a third level (details/examples) — go three levels \
+             deep where the material supports it, otherwise stop at two. Every \"label\" is a tight \
+             noun phrase (<= 6 words, plain text, NO markdown, NO trailing punctuation). Capture \
+             the material's structure and how ideas relate. No prose outside the JSON.".to_string(),
+            format!("{topic_name} — mind map"),
+        ),
         _ => (
             "You generate study flashcards from material. Output ONLY a JSON array of 12-18 items, \
              each {\"q\":\"front\",\"a\":\"back\"}. Keep the \"a\" CONCISE (about 15-45 words) and \
@@ -1471,6 +1484,10 @@ pub async fn generate_material(
         "infographic" => format!(
             "{} sections",
             payload["sections"].as_array().map(|a| a.len()).unwrap_or(0)
+        ),
+        "mindmap" => format!(
+            "{} branches",
+            payload["branches"].as_array().map(|a| a.len()).unwrap_or(0)
         ),
         _ => "generated".to_string(),
     };

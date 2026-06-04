@@ -189,7 +189,7 @@ export const exportAnki = (materialId: string, dest: string) =>
 export const optimizeDb = () => invoke<void>("optimize_db", {});
 export const generateMaterial = (
   subjectId: string,
-  kind: "flashcards" | "quiz" | "audio" | "infographic" | "slideshow",
+  kind: "flashcards" | "quiz" | "audio" | "infographic" | "slideshow" | "mindmap",
   topicId?: string,
   title?: string,
   customPrompt?: string
