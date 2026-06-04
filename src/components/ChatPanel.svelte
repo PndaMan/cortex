@@ -166,13 +166,23 @@
   // ── flat option list for the switcher (subject / topics / sources) ──────────
   type ScopeOption =
     | { kind: "subject"; label: string }
+    | { kind: "tag"; label: string; tag: string }
     | { kind: "topic"; label: string; topicId: string }
     | { kind: "source"; label: string; src: Source };
+
+  // Distinct tags across the subject's topics — chat scoped to a tag covers every
+  // source under topics carrying it (e.g. tag "A2" → all your A2 exam material).
+  const subjectTags = $derived.by(() => {
+    const set = new Set<string>();
+    for (const t of app.activeSubject?.topics ?? []) for (const tag of t.tags ?? []) set.add(tag);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  });
 
   const switcherOptions = $derived.by<ScopeOption[]>(() => {
     const out: ScopeOption[] = [
       { kind: "subject", label: app.activeSubject?.name ?? "Whole subject" },
     ];
+    for (const tag of subjectTags) out.push({ kind: "tag", label: `#${tag}`, tag });
     for (const t of app.activeSubject?.topics ?? []) {
       out.push({ kind: "topic", label: t.name, topicId: t.id });
       for (const s of t.sources) {
@@ -209,6 +219,9 @@
     } else if (o.kind === "topic") {
       topicId = o.topicId;
       level = "topic";
+    } else if (o.kind === "tag") {
+      applyTag(o.tag);
+      return;
     } else {
       srcId = o.src.id;
       topicId = o.src.topic_id ?? topicId;
@@ -224,11 +237,31 @@
     e.stopPropagation();
     picked = { ...picked, [id]: !picked[id] };
   }
+  // Chat scoped to a tag: select every source under topics carrying that tag and
+  // switch to the multi-source scope.
+  function applyTag(tag: string) {
+    const ids: Record<string, boolean> = {};
+    for (const t of app.activeSubject?.topics ?? []) {
+      if ((t.tags ?? []).includes(tag)) for (const s of t.sources) ids[s.id] = true;
+    }
+    if (Object.keys(ids).length === 0) {
+      app.pushToast({ kind: "warning", title: `No sources tagged #${tag}` });
+      return;
+    }
+    picked = ids;
+    level = "sources";
+    switcherOpen = false;
+    composeEl?.focus();
+  }
+
   // Clicking a switcher row: source rows TOGGLE the multi-pick (so selections
-  // persist and accumulate); subject/topic rows switch scope immediately.
+  // persist and accumulate); tag rows select the whole tag; subject/topic rows
+  // switch scope immediately.
   function onSwitcherRow(o: ScopeOption) {
     if (o.kind === "source") {
       picked = { ...picked, [o.src.id]: !picked[o.src.id] };
+    } else if (o.kind === "tag") {
+      applyTag(o.tag);
     } else {
       applyOption(o);
     }
@@ -685,6 +718,10 @@
               {#if o.kind === "subject"}
                 <Icon name="diamond" size={12} color="var(--accent)" />
                 <span class="scopesw-label">Whole subject — {o.label}</span>
+              {:else if o.kind === "tag"}
+                <span class="scopesw-hash mono">#</span>
+                <span class="scopesw-label">{o.tag}</span>
+                <span class="scopesw-kindtag mono">TAG</span>
               {:else if o.kind === "topic"}
                 <Icon name="chevron" size={11} color="var(--fg-faint)" />
                 <span class="scopesw-label">{o.label}</span>
@@ -1008,6 +1045,13 @@
     font-size: var(--t-2xs);
     letter-spacing: 0.08em;
     color: var(--fg-faint);
+  }
+  .scopesw-hash {
+    width: 13px;
+    text-align: center;
+    color: var(--accent);
+    font-weight: 700;
+    flex: none;
   }
   .scopesw-foot {
     display: flex;
