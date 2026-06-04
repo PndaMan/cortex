@@ -55,7 +55,7 @@
   let startVal = $state("");
   let endVal = $state("");
   let allDay = $state(false);
-  let kind = $state<"event" | "task">("event");
+  let kind = $state<"event" | "task" | "deadline">("event");
   let color = $state<string | null>(null);
   let subjectId = $state<string>("");
   let reminder = $state<string>("none");
@@ -71,7 +71,7 @@
       startVal = msToLocalInput(e.start_ms);
       endVal = e.end_ms != null ? msToLocalInput(e.end_ms) : "";
       allDay = !!e.all_day;
-      kind = e.kind === "task" ? "task" : "event";
+      kind = e.kind === "task" || e.kind === "deadline" ? e.kind : "event";
       color = e.color ?? null;
       subjectId = e.subject_id ?? "";
       reminder = deriveReminder(e.reminder_ms, e.start_ms);
@@ -222,6 +222,11 @@
           type="button"
           class={"ev-seg-btn" + (kind === "task" ? " on" : "")}
           onclick={() => (kind = "task")}>Task</button
+        >
+        <button
+          type="button"
+          class={"ev-seg-btn" + (kind === "deadline" ? " on" : "")}
+          onclick={() => (kind = "deadline")}>Deadline</button
         >
       </div>
     </div>

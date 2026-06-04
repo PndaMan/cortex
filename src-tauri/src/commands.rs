@@ -1530,6 +1530,64 @@ pub fn rename_material(state: State<AppState>, id: String, title: String) -> Res
     repo::rename_material(&c, &id, &title)
 }
 
+// ---- citations (per-subject bibliography) -----------------------------
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn add_citation(
+    state: State<AppState>,
+    subject_id: String,
+    ctype: String,
+    title: String,
+    authors: Option<String>,
+    year: Option<String>,
+    container: Option<String>,
+    url: Option<String>,
+    doi: Option<String>,
+    notes: Option<String>,
+) -> Result<String> {
+    let c = state.db.lock().unwrap();
+    repo::insert_citation(
+        &c, &subject_id, &ctype, &title,
+        authors.as_deref(), year.as_deref(), container.as_deref(),
+        url.as_deref(), doi.as_deref(), notes.as_deref(),
+    )
+}
+
+#[tauri::command]
+pub fn list_citations(state: State<AppState>, subject_id: String) -> Result<Vec<Reference>> {
+    let c = state.db.lock().unwrap();
+    repo::list_citations(&c, &subject_id)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn update_citation(
+    state: State<AppState>,
+    id: String,
+    ctype: String,
+    title: String,
+    authors: Option<String>,
+    year: Option<String>,
+    container: Option<String>,
+    url: Option<String>,
+    doi: Option<String>,
+    notes: Option<String>,
+) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    repo::update_citation(
+        &c, &id, &ctype, &title,
+        authors.as_deref(), year.as_deref(), container.as_deref(),
+        url.as_deref(), doi.as_deref(), notes.as_deref(),
+    )
+}
+
+#[tauri::command]
+pub fn delete_citation(state: State<AppState>, id: String) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    repo::delete_citation(&c, &id)
+}
+
 // ---- settings (bulk, for the Settings page) ---------------------------
 
 #[tauri::command]

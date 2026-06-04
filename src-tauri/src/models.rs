@@ -287,6 +287,26 @@ pub struct SrsStats {
     pub total: i64,
 }
 
+/// A reference/citation in a subject's bibliography. Formatting (APA/MLA) is done
+/// in the frontend from these fields. (Named `Reference` to avoid clashing with
+/// the chat-snippet `Citation` type above.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Reference {
+    pub id: String,
+    #[serde(rename = "subjectId")]
+    pub subject_id: String,
+    pub ctype: String,
+    pub title: String,
+    pub authors: Option<String>,
+    pub year: Option<String>,
+    pub container: Option<String>,
+    pub url: Option<String>,
+    pub doi: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 // ---- database stats ---------------------------------------------------
 
 /// Storage + content counts for the Settings → Data screen.

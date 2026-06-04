@@ -401,6 +401,40 @@ export const setEventDone = (id: string, done: boolean) =>
   invoke<CalEvent>("set_event_done", { id, done });
 export const checkReminders = () => invoke<CalEvent[]>("check_reminders");
 
+// ---- citations (per-subject bibliography) ----
+export interface Reference {
+  id: string;
+  subjectId: string;
+  ctype: string; // article | book | web | other
+  title: string;
+  authors: string | null;
+  year: string | null;
+  container: string | null;
+  url: string | null;
+  doi: string | null;
+  notes: string | null;
+  created_at: number;
+  updated_at: number;
+}
+export interface CitationFields {
+  ctype: string;
+  title: string;
+  authors?: string | null;
+  year?: string | null;
+  container?: string | null;
+  url?: string | null;
+  doi?: string | null;
+  notes?: string | null;
+}
+export const addCitation = (subjectId: string, f: CitationFields) =>
+  invoke<string>("add_citation", { subjectId, ...f });
+export const listCitations = (subjectId: string) =>
+  invoke<Reference[]>("list_citations", { subjectId });
+export const updateCitation = (id: string, f: CitationFields) =>
+  invoke<void>("update_citation", { id, ...f });
+export const deleteCitation = (id: string) =>
+  invoke<void>("delete_citation", { id });
+
 // ---- review (spaced repetition over wrong answers) ----
 export interface Attempt {
   id: string;

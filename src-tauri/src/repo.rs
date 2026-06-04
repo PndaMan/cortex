@@ -1420,6 +1420,88 @@ pub fn srs_stats(conn: &Connection, subject_id: &str, kind: &str) -> Result<SrsS
     Ok(SrsStats { due, total })
 }
 
+// ---- citations (per-subject bibliography) -----------------------------
+
+#[allow(clippy::too_many_arguments)]
+pub fn insert_citation(
+    conn: &Connection,
+    subject_id: &str,
+    ctype: &str,
+    title: &str,
+    authors: Option<&str>,
+    year: Option<&str>,
+    container: Option<&str>,
+    url: Option<&str>,
+    doi: Option<&str>,
+    notes: Option<&str>,
+) -> Result<String> {
+    let id = new_id();
+    let ts = now_ms();
+    conn.execute(
+        "INSERT INTO citations
+            (id, subject_id, ctype, title, authors, year, container, url, doi, notes, created_at, updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11)",
+        params![id, subject_id, ctype, title, authors, year, container, url, doi, notes, ts],
+    )?;
+    Ok(id)
+}
+
+fn row_to_citation(r: &rusqlite::Row) -> rusqlite::Result<Reference> {
+    Ok(Reference {
+        id: r.get(0)?,
+        subject_id: r.get(1)?,
+        ctype: r.get(2)?,
+        title: r.get(3)?,
+        authors: r.get(4)?,
+        year: r.get(5)?,
+        container: r.get(6)?,
+        url: r.get(7)?,
+        doi: r.get(8)?,
+        notes: r.get(9)?,
+        created_at: r.get(10)?,
+        updated_at: r.get(11)?,
+    })
+}
+
+pub fn list_citations(conn: &Connection, subject_id: &str) -> Result<Vec<Reference>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, subject_id, ctype, title, authors, year, container, url, doi, notes,
+                created_at, updated_at
+         FROM citations WHERE subject_id=?1 ORDER BY created_at DESC",
+    )?;
+    let rows = stmt.query_map(params![subject_id], row_to_citation)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn update_citation(
+    conn: &Connection,
+    id: &str,
+    ctype: &str,
+    title: &str,
+    authors: Option<&str>,
+    year: Option<&str>,
+    container: Option<&str>,
+    url: Option<&str>,
+    doi: Option<&str>,
+    notes: Option<&str>,
+) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE citations SET ctype=?2, title=?3, authors=?4, year=?5, container=?6,
+            url=?7, doi=?8, notes=?9, updated_at=?10 WHERE id=?1",
+        params![id, ctype, title, authors, year, container, url, doi, notes, now_ms()],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound(format!("citation {id}")));
+    }
+    Ok(())
+}
+
+pub fn delete_citation(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM citations WHERE id=?1", params![id])?;
+    Ok(())
+}
+
 // ---- source move (re-file across subject/topic) -----------------------
 
 /// Re-file a source to a new subject (and optional topic), keeping retrieval
@@ -1500,6 +1582,34 @@ mod tests {
 
         // The legacy "wrong items" set picks up the lapse (latest attempt wrong).
         assert_eq!(wrong_items(&c, &sid, "flashcard").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn citations_crud_roundtrips() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let sid = insert_subject(&c, "History", None, None, None).unwrap();
+        let id = insert_citation(
+            &c, &sid, "book", "The Guns of August", Some("Tuchman, B."),
+            Some("1962"), Some("Macmillan"), None, None, Some("ch. 1"),
+        )
+        .unwrap();
+        let list = list_citations(&c, &sid).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].title, "The Guns of August");
+        assert_eq!(list[0].authors.as_deref(), Some("Tuchman, B."));
+
+        update_citation(
+            &c, &id, "book", "The Guns of August (rev.)", Some("Tuchman, B."),
+            Some("1962"), Some("Macmillan"), Some("https://example.com"), None, None,
+        )
+        .unwrap();
+        let list = list_citations(&c, &sid).unwrap();
+        assert_eq!(list[0].title, "The Guns of August (rev.)");
+        assert_eq!(list[0].url.as_deref(), Some("https://example.com"));
+
+        delete_citation(&c, &id).unwrap();
+        assert!(list_citations(&c, &sid).unwrap().is_empty());
     }
 
     #[test]
