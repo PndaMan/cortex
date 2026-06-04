@@ -14,6 +14,7 @@
     { key: "c", label: "Chat",         detail: "open chat dock",         run: () => { app.chatOpen = true; } },
     { key: "r", label: "Record",       detail: "lecture recorder",       run: () => app.setView("recorder") },
     { key: "f", label: "Flashcards",   detail: "study session",          run: () => app.setView("subject") },
+    { key: "e", label: "Materials",    detail: "study materials",        run: () => { app.setView("subject"); app.setTab("materials"); } },
     { key: "d", label: "Review diff",  detail: "cheatsheet draft",       run: () => app.reviewDiff() },
     { key: "w", label: "Web search",   detail: "search the web",         run: () => app.setView("websearch") },
     { key: "o", label: "Notes",        detail: "markdown notes",         run: () => app.setView("notes") },

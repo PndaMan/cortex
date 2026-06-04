@@ -640,6 +640,22 @@ pub fn save_material(
     Ok(id)
 }
 
+pub fn delete_material(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM materials WHERE id=?1", params![id])?;
+    Ok(())
+}
+
+pub fn rename_material(conn: &Connection, id: &str, title: &str) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE materials SET title=?2 WHERE id=?1",
+        params![id, title],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound(format!("material {id}")));
+    }
+    Ok(())
+}
+
 pub fn list_materials(conn: &Connection, subject_id: &str) -> Result<Vec<MaterialRec>> {
     let mut stmt = conn.prepare(
         "SELECT m.id, m.kind, m.title, m.meta, m.status, m.payload, t.name

@@ -97,6 +97,8 @@ pub fn run() {
             commands::optimize_db,
             commands::generate_material,
             commands::list_materials,
+            commands::delete_material,
+            commands::rename_material,
             commands::get_all_settings,
             commands::set_settings,
             commands::save_recording,

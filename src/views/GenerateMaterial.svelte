@@ -52,11 +52,17 @@
   const multi = $derived(topicNames.length > 1);
 
   const tm = $derived(GEN_TYPES.find(t => t.id === type)!);
-  const suggested = $derived(
-    autoTopic
-      ? autoTopic + ({ flashcards: " — flashcards", quiz: " — quiz", audio: " — deep dive", slideshow: " visualized", infographic: " — infographic" } as Record<string, string>)[type]
-      : ""
-  );
+  const suffixFor = (t: string) =>
+    ({ flashcards: " — flashcards", quiz: " — quiz", audio: " — deep dive", slideshow: " — slides", infographic: " — infographic" } as Record<string, string>)[t] ?? "";
+  const suggested = $derived.by(() => {
+    const suffix = suffixFor(type);
+    // One source selected → name after that source (its filename, sans extension).
+    if (selSources.length === 1) {
+      const base = selSources[0].name.replace(/\.[^.]+$/, "").trim();
+      if (base) return base + suffix;
+    }
+    return autoTopic ? autoTopic + suffix : "";
+  });
   const finalTitle = $derived(title.trim() || suggested);
   const ready = $derived(sel.length > 0 && !!app.activeSubject);
 

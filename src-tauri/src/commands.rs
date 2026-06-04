@@ -1425,6 +1425,18 @@ pub fn list_materials(state: State<AppState>, subject_id: String) -> Result<Vec<
     repo::list_materials(&c, &subject_id)
 }
 
+#[tauri::command]
+pub fn delete_material(state: State<AppState>, id: String) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    repo::delete_material(&c, &id)
+}
+
+#[tauri::command]
+pub fn rename_material(state: State<AppState>, id: String, title: String) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    repo::rename_material(&c, &id, &title)
+}
+
 // ---- settings (bulk, for the Settings page) ---------------------------
 
 #[tauri::command]

@@ -192,6 +192,9 @@ export const generateMaterial = (
 ) => invoke<MaterialRec>("generate_material", { subjectId, kind, topicId, title });
 export const listMaterials = (subjectId: string) =>
   invoke<MaterialRec[]>("list_materials", { subjectId });
+export const deleteMaterial = (id: string) => invoke<void>("delete_material", { id });
+export const renameMaterial = (id: string, title: string) =>
+  invoke<void>("rename_material", { id, title });
 
 // ---- lecture recording (Whisper) ----
 export const saveRecording = (

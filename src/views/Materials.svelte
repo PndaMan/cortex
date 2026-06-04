@@ -110,6 +110,29 @@
     if (!isLaunchable(m.type) || m.status === "draft") return;
     matLaunch = m;
   }
+
+  async function renameMaterial(e: Event, m: Card) {
+    e.stopPropagation();
+    const name = await app.prompt({ title: "Rename material", label: "Name", value: m.title, placeholder: m.title });
+    if (name && name.trim() && name.trim() !== m.title) {
+      try {
+        await api.renameMaterial(m.id, name.trim());
+        if (app.activeSubject) loadMaterials(app.activeSubject.id);
+      } catch (err) {
+        app.pushToast({ kind: "error", title: "Rename failed", body: String(err) });
+      }
+    }
+  }
+  async function deleteMaterial(e: Event, m: Card) {
+    e.stopPropagation();
+    if (!(await app.confirm({ title: `Delete "${m.title}"?`, danger: true, okLabel: "Delete" }))) return;
+    try {
+      await api.deleteMaterial(m.id);
+      if (app.activeSubject) loadMaterials(app.activeSubject.id);
+    } catch (err) {
+      app.pushToast({ kind: "error", title: "Delete failed", body: String(err) });
+    }
+  }
 </script>
 
 {#if matLaunch}
@@ -222,6 +245,12 @@
                     <span class="status-pill status-pill--{m.status === 'draft' ? 'draft' : 'ready'}">
                       <span class="dot"></span>
                     </span>
+                    <button class="btn btn--icon btn--sm btn--ghost mat-act" title="Rename" aria-label="Rename material" onclick={(e) => renameMaterial(e, m)}>
+                      <Icon name="pencil" size={12} />
+                    </button>
+                    <button class="btn btn--icon btn--sm btn--ghost mat-act" title="Delete" aria-label="Delete material" onclick={(e) => deleteMaterial(e, m)}>
+                      <Icon name="x" size={12} />
+                    </button>
                   </div>
                   <div class="mat-title read">{m.title}</div>
                   <div class="mat-foot">
@@ -247,6 +276,11 @@
 {/if}
 
 <style>
+  /* card action buttons (rename/delete) — reveal on hover */
+  .mat-act { opacity: 0; transition: opacity var(--dur-fast); }
+  .mat-card:hover .mat-act, .mat-card:focus-within .mat-act { opacity: 0.85; }
+  .mat-act:hover { opacity: 1; }
+
   .mat-empty {
     display: flex;
     flex-direction: column;
