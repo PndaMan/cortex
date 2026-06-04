@@ -185,6 +185,18 @@ export const exportDatabase = (dest: string) =>
 /** Export a flashcard material to an Anki `.apkg` deck at `dest`; returns card count. */
 export const exportAnki = (materialId: string, dest: string) =>
   invoke<number>("export_anki", { materialId, dest });
+// ---- encrypted homelab backups (age + rclone) ----
+export interface BackupStatus {
+  age_found: boolean;
+  rclone_found: boolean;
+  recipient_set: boolean;
+  remote_set: boolean;
+  last_at: number | null;
+  last_dest: string | null;
+}
+export const backupStatus = () => invoke<BackupStatus>("backup_status");
+/** Snapshot → age-encrypt → rclone-upload; returns the remote destination path. */
+export const backupNow = () => invoke<string>("backup_now");
 /** Reclaim disk space (WAL checkpoint + VACUUM). */
 export const optimizeDb = () => invoke<void>("optimize_db", {});
 export const generateMaterial = (

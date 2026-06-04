@@ -213,6 +213,38 @@
   let testState  = $state<null | "testing" | "ok" | "fail">(null);
   let searxState = $state<null | "testing" | "ok" | "fail">(null);
 
+  // ---- encrypted backups (age + rclone) ----
+  let ageRecipient = $state("");
+  let rcloneRemote = $state("");
+  let backupInfo   = $state<api.BackupStatus | null>(null);
+  let backingUp    = $state(false);
+  async function refreshBackupStatus() {
+    try { backupInfo = await api.backupStatus(); } catch { /* non-fatal */ }
+  }
+  function saveBackupConfig() {
+    api.setSettings({
+      backup_age_recipient: ageRecipient.trim(),
+      backup_rclone_remote: rcloneRemote.trim(),
+    }).then(refreshBackupStatus).catch(() => {});
+  }
+  async function runBackup() {
+    if (backingUp) return;
+    backingUp = true;
+    try {
+      const dest = await api.backupNow();
+      app.pushToast({ kind: "success", title: "Backup uploaded", body: dest });
+      await refreshBackupStatus();
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Backup failed", body: String(e) });
+    } finally {
+      backingUp = false;
+    }
+  }
+  function fmtBackupTime(ms: number | null): string {
+    if (!ms) return "never";
+    return new Date(ms).toLocaleString();
+  }
+
   async function testEndpoint(url: string): Promise<"ok" | "fail"> {
     try {
       return (await api.pingUrl(url)) ? "ok" : "fail";
@@ -447,6 +479,10 @@
       if (s.homelab_enabled !== undefined) homelab  = s.homelab_enabled === "true";
       if (s.ollama_url)                    endpoint = s.ollama_url;
       if (s.searxng_url)                   searxng  = s.searxng_url;
+      // Encrypted backups
+      if (s.backup_age_recipient) ageRecipient = s.backup_age_recipient;
+      if (s.backup_rclone_remote) rcloneRemote = s.backup_rclone_remote;
+      refreshBackupStatus();
       // Per-job homelab routing preferences
       if (s.job_whisper !== undefined) jobs = { ...jobs, whisper: s.job_whisper === "true" };
       if (s.job_llm     !== undefined) jobs = { ...jobs, llm:     s.job_llm === "true" };
@@ -1060,6 +1096,50 @@ Notes: {about}</pre>
                   </div>
                 {/if}
                 <div class="set-row-d" style="margin-top:6px">Self-hosted SearXNG base URL, e.g. http://192.168.1.50:8080</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">Encrypted backups</h3>
+            <p class="set-group-d">Snapshot the database, encrypt it with <span class="mono">age</span>, and upload to your homelab with <span class="mono">rclone</span>. Nothing leaves the machine unencrypted.</p>
+          </div>
+          <div class="set-card">
+            {#if backupInfo}
+              <div class="set-row">
+                <div class="set-row-l"><div class="set-row-t">Tools</div></div>
+                <div class="set-row-r">
+                  <span class="mono" style="color:{backupInfo.age_found ? 'var(--ok)' : 'var(--danger,#e06c75)'}">
+                    <Icon name={backupInfo.age_found ? "check" : "x"} size={12} /> age
+                  </span>
+                  <span class="mono" style="margin-left:14px;color:{backupInfo.rclone_found ? 'var(--ok)' : 'var(--danger,#e06c75)'}">
+                    <Icon name={backupInfo.rclone_found ? "check" : "x"} size={12} /> rclone
+                  </span>
+                </div>
+              </div>
+            {/if}
+            <div class="set-row stacked">
+              <div class="set-row-l"><div class="set-row-t">age recipient (public key)</div></div>
+              <div class="set-row-r">
+                <input class="input mono" bind:value={ageRecipient} onchange={saveBackupConfig} onblur={saveBackupConfig} placeholder="age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p" />
+                <div class="set-row-d" style="margin-top:6px">From <span class="mono">age-keygen</span>. Only this key's holder can decrypt the backups.</div>
+              </div>
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-l"><div class="set-row-t">rclone remote</div></div>
+              <div class="set-row-r">
+                <div class="row-inline">
+                  <input class="input mono" bind:value={rcloneRemote} onchange={saveBackupConfig} onblur={saveBackupConfig} placeholder="homelab:cortex-backups" />
+                  <button class="btn btn--primary" disabled={backingUp} onclick={runBackup}>
+                    <Icon name={backingUp ? "refresh" : "upload"} size={12} /> {backingUp ? "Backing up…" : "Back up now"}
+                  </button>
+                </div>
+                <div class="set-row-d" style="margin-top:6px">
+                  An rclone remote + path, e.g. <span class="mono">homelab:cortex-backups</span> (configure with <span class="mono">rclone config</span>).
+                  Last backup: <span class="mono">{fmtBackupTime(backupInfo?.last_at ?? null)}</span>{#if backupInfo?.last_dest} → <span class="mono">{backupInfo.last_dest}</span>{/if}
+                </div>
               </div>
             </div>
           </div>
