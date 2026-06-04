@@ -322,6 +322,13 @@ class AppStore {
       const savedTheme = all["theme"] as Theme | undefined;
       if (savedTheme && THEMES.includes(savedTheme)) this.setTheme(savedTheme);
       else this.applyTheme(this.theme);
+      // Appearance: reading typeface + density must be applied at startup, not
+      // only while the Settings view is mounted (otherwise they reset on launch).
+      if (all["reading_font"]) document.documentElement.setAttribute("data-read", all["reading_font"]);
+      document.documentElement.setAttribute(
+        "data-density",
+        all["density"] === "compact" ? "compact" : "regular"
+      );
       await keybinds.load(all); // reuse the settings we already fetched
       // Reopen the last-viewed subject (its chat history loads with it).
       const last = all["last_subject_id"];

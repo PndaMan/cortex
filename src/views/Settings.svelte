@@ -16,7 +16,7 @@
     { id: "keys",       label: "API keys",      icon: "lock" },
     { id: "appearance", label: "Appearance",    icon: "grid" },
     { id: "keybinds",   label: "Keybinds",      icon: "cmd" },
-    { id: "homelab",    label: "Homelab",       icon: "globe" },
+    { id: "homelab",    label: "Integrations",  icon: "globe" },
     { id: "calendar",   label: "Google Calendar", icon: "globe" },
     { id: "audio",      label: "Audio",         icon: "music" },
     { id: "data",       label: "Data & privacy",icon: "doc" },
@@ -154,7 +154,6 @@
     { id: "solarized",   n: "Solarized",        c: "#268bd2", b: "#002b36" },
     { id: "kanagawa",    n: "Kanagawa",         c: "#7e9cd8", b: "#1f1f28" },
   ];
-  let followOmarchy = $state(true);
   let readFont      = $state("serif");
   let density       = $state("regular");
 
@@ -205,11 +204,9 @@
     };
   });
 
-  // ---- homelab state ----
-  let homelab    = $state(true);
-  let endpoint   = $state("http://homelab.local:11434");
+  // ---- local models (ollama) + web search ----
+  let endpoint   = $state("http://localhost:11434");
   let searxng    = $state("");
-  let jobs       = $state({ whisper: true, llm: false, backups: true });
   let testState  = $state<null | "testing" | "ok" | "fail">(null);
   let searxState = $state<null | "testing" | "ok" | "fail">(null);
 
@@ -323,24 +320,10 @@
     searxState = await testEndpoint(searxng);
   }
 
-  // persist homelab on change
+  // persist the Ollama endpoint on change
   $effect(() => {
-    const h = homelab;
     const ep = endpoint;
-    api.setSettings({ homelab_enabled: String(h), ollama_url: ep }).catch(() => {});
-  });
-
-  // persist per-job homelab routing preferences (previously local-only → they
-  // silently reverted on reload). Backend consumption of these is still pending.
-  let jobsHydrated = false;
-  $effect(() => {
-    const snapshot = { w: jobs.whisper, l: jobs.llm, b: jobs.backups };
-    if (!jobsHydrated) { jobsHydrated = true; return; }
-    api.setSettings({
-      job_whisper: String(snapshot.w),
-      job_llm: String(snapshot.l),
-      job_backups: String(snapshot.b),
-    }).catch(() => {});
+    api.setSettings({ ollama_url: ep }).catch(() => {});
   });
 
   // ---- focus timer (pomodoro) durations — bound to the app-wide timer ----
@@ -475,23 +458,17 @@
         assign = { ...assign, embedding: { ...assign.embedding, provider: s.embed_provider } };
       }
 
-      // Homelab
-      if (s.homelab_enabled !== undefined) homelab  = s.homelab_enabled === "true";
+      // Local models + web search
       if (s.ollama_url)                    endpoint = s.ollama_url;
       if (s.searxng_url)                   searxng  = s.searxng_url;
       // Encrypted backups
       if (s.backup_age_recipient) ageRecipient = s.backup_age_recipient;
       if (s.backup_rclone_remote) rcloneRemote = s.backup_rclone_remote;
       refreshBackupStatus();
-      // Per-job homelab routing preferences
-      if (s.job_whisper !== undefined) jobs = { ...jobs, whisper: s.job_whisper === "true" };
-      if (s.job_llm     !== undefined) jobs = { ...jobs, llm:     s.job_llm === "true" };
-      if (s.job_backups !== undefined) jobs = { ...jobs, backups: s.job_backups === "true" };
 
       // Appearance
       if (s.reading_font)   readFont      = s.reading_font;
       if (s.density)        density       = s.density;
-      if (s.follow_omarchy !== undefined) followOmarchy = s.follow_omarchy === "true";
 
       // Audio voices
       if (s.voice_a) voiceA = s.voice_a;
@@ -867,30 +844,6 @@ Notes: {about}</pre>
         <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Theme</h3></div>
           <div class="set-card">
-            <div class="set-row">
-              <div class="set-row-l">
-                <div class="set-row-t">Follow Omarchy</div>
-                <div class="set-row-d">Match the desktop palette automatically.</div>
-              </div>
-              <div class="set-row-r">
-                <button
-                  type="button"
-                  class={"st-toggle" + (followOmarchy ? " on" : "")}
-                  onclick={() => { followOmarchy = !followOmarchy; api.setSetting("follow_omarchy", followOmarchy ? "true" : "false").catch(() => {}); }}
-                  role="switch"
-                  aria-checked={followOmarchy}
-                  aria-label="follow omarchy"
-                >
-                  <span class="st-knob"></span>
-                </button>
-              </div>
-            </div>
-            {#if followOmarchy}
-              <div class="set-note mono" style="margin:0 0 4px">
-                <Icon name="diamond" size={11} color="var(--accent)" />
-                Syncs your theme from the Omarchy palette on launch. Pick a theme below to override.
-              </div>
-            {/if}
             <div class="set-themes">
               {#each THEME_OPTS as t}
                 <button
@@ -1009,60 +962,46 @@ Notes: {about}</pre>
         </div>
       </div>
 
-    <!-- ===== HOMELAB ===== -->
+    <!-- ===== INTEGRATIONS ===== -->
     {:else if tab === "homelab"}
       <div class="set-pane">
         <header class="set-head">
-          <div class="eyebrow">Homelab</div>
-          <h1 class="read set-title">Offload the heavy jobs</h1>
-          <p class="set-sub">Send Whisper transcription, large-model synthesis and backups to a machine on your network. Cortex stays fully local without it.</p>
+          <div class="eyebrow">Integrations</div>
+          <h1 class="read set-title">Local models, web search & backups</h1>
+          <p class="set-sub">Optional, self-hosted services. Cortex stays fully local without any of them.</p>
         </header>
 
         <section class="set-group">
-          <div class="set-group-h"><h3 class="set-group-t">Connection</h3></div>
+          <div class="set-group-h">
+            <h3 class="set-group-t">Local models (Ollama)</h3>
+            <p class="set-group-d">Optional: run chat/embeddings on a local or self-hosted <span class="mono">ollama</span> server — keyless and fully private. Select <span class="mono">ollama:&lt;model&gt;</span> per task in Providers.</p>
+          </div>
           <div class="set-card">
-            <div class="set-row">
-              <div class="set-row-l"><div class="set-row-t">Use homelab for heavy jobs</div></div>
+            <div class="set-row stacked">
+              <div class="set-row-l"><div class="set-row-t">Ollama endpoint</div></div>
               <div class="set-row-r">
-                <button
-                  type="button"
-                  class={"st-toggle" + (homelab ? " on" : "")}
-                  onclick={() => (homelab = !homelab)}
-                  role="switch"
-                  aria-checked={homelab}
-                  aria-label="use homelab"
-                >
-                  <span class="st-knob"></span>
-                </button>
+                <div class="row-inline">
+                  <input class="input mono" bind:value={endpoint} placeholder="http://localhost:11434" />
+                  <button class="btn" onclick={testConnection}>
+                    <Icon name="refresh" size={12} /> Test
+                  </button>
+                </div>
+                {#if testState === "testing"}
+                  <div class="set-test mono faint">
+                    <span class="is-spin" style="width:11px;height:11px;display:inline-block;vertical-align:-1px"></span>
+                    Pinging…
+                  </div>
+                {:else if testState === "ok"}
+                  <div class="set-test mono" style="color:var(--ok)">
+                    <Icon name="check" size={12} /> Reachable
+                  </div>
+                {:else if testState === "fail"}
+                  <div class="set-test mono" style="color:var(--danger,#e06c75)">
+                    <Icon name="x" size={12} /> Unreachable — check the URL and that ollama is running.
+                  </div>
+                {/if}
               </div>
             </div>
-            {#if homelab}
-              <div class="set-row stacked">
-                <div class="set-row-l"><div class="set-row-t">Endpoint</div></div>
-                <div class="set-row-r">
-                  <div class="row-inline">
-                    <input class="input mono" bind:value={endpoint} />
-                    <button class="btn" onclick={testConnection}>
-                      <Icon name="refresh" size={12} /> Test
-                    </button>
-                  </div>
-                  {#if testState === "testing"}
-                    <div class="set-test mono faint">
-                      <span class="is-spin" style="width:11px;height:11px;display:inline-block;vertical-align:-1px"></span>
-                      Pinging…
-                    </div>
-                  {:else if testState === "ok"}
-                    <div class="set-test mono" style="color:var(--ok)">
-                      <Icon name="check" size={12} /> Reachable
-                    </div>
-                  {:else if testState === "fail"}
-                    <div class="set-test mono" style="color:var(--danger,#e06c75)">
-                      <Icon name="x" size={12} /> Unreachable — check the endpoint and that the host is online.
-                    </div>
-                  {/if}
-                </div>
-              </div>
-            {/if}
           </div>
         </section>
 
@@ -1145,40 +1084,6 @@ Notes: {about}</pre>
           </div>
         </section>
 
-        {#if homelab}
-          <section class="set-group">
-            <div class="set-group-h"><h3 class="set-group-t">Per-job routing</h3></div>
-            <div class="set-card">
-              <div class="set-row">
-                <div class="set-row-l">
-                  <div class="set-row-t">Whisper transcription</div>
-                  <div class="set-row-d">Lecture audio → text.</div>
-                </div>
-                <div class="set-row-r">
-                  <button type="button" class={"st-toggle" + (jobs.whisper ? " on" : "")} onclick={() => (jobs = { ...jobs, whisper: !jobs.whisper })} role="switch" aria-checked={jobs.whisper} aria-label="whisper"><span class="st-knob"></span></button>
-                </div>
-              </div>
-              <div class="set-row">
-                <div class="set-row-l">
-                  <div class="set-row-t">LLM synthesis</div>
-                  <div class="set-row-d">Cheatsheets, overviews, quizzes.</div>
-                </div>
-                <div class="set-row-r">
-                  <button type="button" class={"st-toggle" + (jobs.llm ? " on" : "")} onclick={() => (jobs = { ...jobs, llm: !jobs.llm })} role="switch" aria-checked={jobs.llm} aria-label="llm"><span class="st-knob"></span></button>
-                </div>
-              </div>
-              <div class="set-row">
-                <div class="set-row-l">
-                  <div class="set-row-t">Backups</div>
-                  <div class="set-row-d">Nightly SQLite + vector index snapshot.</div>
-                </div>
-                <div class="set-row-r">
-                  <button type="button" class={"st-toggle" + (jobs.backups ? " on" : "")} onclick={() => (jobs = { ...jobs, backups: !jobs.backups })} role="switch" aria-checked={jobs.backups} aria-label="backups"><span class="st-knob"></span></button>
-                </div>
-              </div>
-            </div>
-          </section>
-        {/if}
       </div>
 
     <!-- ===== AUDIO ===== -->
