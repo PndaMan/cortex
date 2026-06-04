@@ -1242,9 +1242,15 @@ pub async fn generate_material(
             format!("{topic_name} — audio overview"),
         ),
         "infographic" => (
-            "You produce a clean, self-contained SVG infographic (max 900x1200, dark background \
-             #111c18, accent #2dd5b7, legible text) summarizing the study material as a poster. \
-             Output ONLY JSON: {\"svg\":\"<svg ...>...</svg>\"}. No prose outside JSON.".to_string(),
+            "You distill the study material into a ONE-POSTER infographic as STRUCTURED JSON (NOT \
+             an image, NOT SVG). Output ONLY JSON of this exact shape:\n\
+             {\"title\":string,\"subtitle\":string,\"sections\":[{\"emoji\":string,\"heading\":string,\
+             \"points\":[string],\"stat\":{\"value\":string,\"label\":string}}]}\n\
+             Rules: 4-8 sections; \"heading\" 1-4 words; 2-4 \"points\", each a punchy phrase \
+             (<= 12 words, plain text, NO markdown); \"emoji\" is ONE relevant emoji; \"stat\" is \
+             OPTIONAL — include only when the source has a real headline figure (e.g. value \"30%\" \
+             or \"1990\", short label). Cover the most exam-relevant ideas. Keep it tight so the \
+             poster never overflows. No prose outside the JSON.".to_string(),
             format!("{topic_name} — infographic"),
         ),
         "slideshow" => (
@@ -1280,7 +1286,10 @@ pub async fn generate_material(
             "{} slides",
             payload["slides"].as_array().map(|a| a.len()).unwrap_or(0)
         ),
-        "infographic" => "SVG poster".to_string(),
+        "infographic" => format!(
+            "{} sections",
+            payload["sections"].as_array().map(|a| a.len()).unwrap_or(0)
+        ),
         _ => "generated".to_string(),
     };
     let title = title.unwrap_or(default_title);

@@ -131,7 +131,7 @@
     />
   {:else if matLaunch.type === "infographic"}
     <InfographicView
-      svg={matLaunch.payload?.svg ?? ""}
+      data={matLaunch.payload ?? undefined}
       onExit={() => (matLaunch = null)}
     />
   {:else if matLaunch.type === "slideshow"}
