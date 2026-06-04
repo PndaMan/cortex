@@ -263,6 +263,7 @@ class AppStore {
   cmdkOpen = $state(false);
   leaderOpen = $state(false);
   chatOpen = $state(true);
+  sidebarCollapsed = $state(false);
   musicOpen = $state(false);
   diffOpen = $state(false);
   helpOpen = $state(false);
@@ -405,6 +406,9 @@ class AppStore {
   }
   toggleChat() {
     this.chatOpen = !this.chatOpen;
+  }
+  toggleSidebar() {
+    this.sidebarCollapsed = !this.sidebarCollapsed;
   }
   openDiff() {
     this.diffOpen = true;

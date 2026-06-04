@@ -62,8 +62,8 @@
     <span class="glyph">C</span>
     <span class="b-name">Cortex</span>
     <span class="b-spacer"></span>
-    <button class="b-cmd" type="button" title="Command palette ( : )" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;display:inline-flex;align-items:center" onclick={() => (app.cmdkOpen = true)}>
-      <Icon name="cmd" size={15} />
+    <button class="b-cmd" type="button" title="Minimize sidebar (b)" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;display:inline-flex;align-items:center;transform:rotate(180deg)" onclick={() => app.toggleSidebar()}>
+      <Icon name="chevron" size={15} />
     </button>
   </div>
 

@@ -9,6 +9,7 @@
   import SourceMetaModal from "./components/SourceMetaModal.svelte";
   import LeaderPane from "./components/LeaderPane.svelte";
   import ChatPanel from "./components/ChatPanel.svelte";
+  import Icon from "./components/Icon.svelte";
   import HelpOverlay from "./components/HelpOverlay.svelte";
   import Dialog from "./components/Dialog.svelte";
   import EditModal from "./components/EditModal.svelte";
@@ -111,6 +112,7 @@
       // literally in addition to the configured bind, so a corrupted keybind map
       // can never break closing the chat.
       if (e.key === k.toggleChat || e.key === "c") { app.toggleChat(); return; }
+      if (e.key === k.toggleSidebar) { app.toggleSidebar(); return; }
       if (e.key === k.newSubject) { e.preventDefault(); app.setView("add-subject"); return; }
       if (e.key === k.recorder) { app.setView("recorder"); return; }
       if (e.key === k.websearch) { app.setView("websearch"); return; }
@@ -143,8 +145,14 @@
 {:else if app.onboarding}
   <Onboarding onFinish={() => (app.onboarding = false)} />
 {:else}
-  <div class="app-shell" style:--sb-w="248px">
-    <Sidebar />
+  <div class="app-shell" style:--sb-w={app.sidebarCollapsed ? "0px" : "248px"}>
+    {#if !app.sidebarCollapsed}
+      <Sidebar />
+    {:else}
+      <button class="sb-expand" onclick={() => app.toggleSidebar()} title="Show sidebar (b)">
+        <Icon name="chevron" size={14} />
+      </button>
+    {/if}
 
     <div class="app-main">
       <div class="workspace">
@@ -219,4 +227,12 @@
     background: var(--bg);
   }
 
+  /* Floating button to reopen the sidebar when it's minimized. */
+  .sb-expand {
+    position: fixed; top: 10px; left: 10px; z-index: 40;
+    width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 8px; border: 1px solid var(--border); background: var(--surface);
+    color: var(--fg-muted); cursor: pointer; transition: color var(--dur), border-color var(--dur);
+  }
+  .sb-expand:hover { color: var(--fg-bright); border-color: var(--border-strong); }
 </style>

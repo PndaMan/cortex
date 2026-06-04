@@ -9,6 +9,7 @@ export type Action =
   | "cmdk"
   | "leader"
   | "toggleChat"
+  | "toggleSidebar"
   | "newSubject"
   | "recorder"
   | "websearch"
@@ -23,6 +24,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   cmdk: "Command palette",
   leader: "Leader menu",
   toggleChat: "Toggle chat",
+  toggleSidebar: "Toggle sidebar",
   newSubject: "New subject",
   recorder: "Record lecture",
   websearch: "Web search",
@@ -35,7 +37,7 @@ export const ACTION_LABELS: Record<Action, string> = {
 };
 
 export const ACTION_ORDER: Action[] = [
-  "cmdk", "leader", "toggleChat", "newSubject", "recorder", "websearch",
+  "cmdk", "leader", "toggleChat", "toggleSidebar", "newSubject", "recorder", "websearch",
   "cycleTheme", "music", "insert", "dashboard", "help", "dismissToast",
 ];
 
@@ -43,6 +45,7 @@ export const HELIX_BINDS: Record<Action, string> = {
   cmdk: ":",
   leader: " ",
   toggleChat: "c",
+  toggleSidebar: "b",
   newSubject: "n",
   recorder: "r",
   websearch: "w",

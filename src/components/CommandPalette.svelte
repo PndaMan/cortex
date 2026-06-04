@@ -135,7 +135,10 @@
       e.preventDefault();
       runItem(flat[sel]);
     } else if (e.key === "Escape") {
+      // Stop the event reaching the global handler, which would otherwise also
+      // run goBack() now that the palette is closed (Esc would close AND navigate).
       e.preventDefault();
+      e.stopPropagation();
       app.cmdkOpen = false;
     }
   }

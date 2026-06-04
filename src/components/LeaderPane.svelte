@@ -21,6 +21,7 @@
     { key: "t", label: "Theme",        detail: "cycle Omarchy theme",    run: () => app.cycleTheme() },
     { key: "m", label: "Music",        detail: "study sound panel",      run: () => { app.musicOpen = true; } },
     { key: "p", label: "Pomodoro",     detail: "focus timer + bonsai",   run: () => { app.pomodoroOpen = true; } },
+    { key: "b", label: "Sidebar",      detail: "minimize / show navbar", run: () => app.toggleSidebar() },
     { key: "g", label: "Dashboard",    detail: "go to dashboard",        run: () => app.setView("dashboard") },
   ];
 
