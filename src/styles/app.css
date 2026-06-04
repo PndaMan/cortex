@@ -450,7 +450,7 @@
 }
 .app-shell.tight.nav-open .sidebar { transform: translateX(0); }
 .app-shell.tight .nav-toggle { display: inline-flex; }
-.app-shell.tight.nav-open .nav-backdrop { display: block; position: fixed; inset: 0; z-index: 73; background: color-mix(in oklab, var(--bg-sunken) 55%, transparent); }
+.app-shell.tight.nav-open .nav-backdrop { display: block; position: fixed; inset: 0; z-index: 73; background: color-mix(in oklab, var(--bg-sunken) 55%, transparent); border: 0; padding: 0; cursor: default; }
 /* give headers room for the hamburger */
 .app-shell.tight .subj-tabs { padding-left: 50px; }
 .app-shell.tight .sv-head { padding-left: 50px; }
@@ -939,4 +939,24 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
   .mt-row { grid-template-columns: 1fr; gap: 8px; }
   .set-row { flex-direction: column; align-items: stretch; gap: 9px; }
   .set-row-r { min-width: 0; }
+}
+
+/* ============ RESPONSIVE SPACING SCALE ============ */
+/* Every view builds its padding from var(--sp-*), so shrinking the scale as the
+   window narrows tightens the whole app together — content stops getting cut off
+   or squished instead of each screen needing its own rule. Pairs with the .tight
+   (drawer) and .compact (chat overlay) shell modes wired in App.svelte. */
+@media (max-width: 900px) {
+  :root { --sp-7: 24px; --sp-8: 28px; --sp-9: 36px; --sp-10: 44px; }
+}
+@media (max-width: 600px) {
+  :root {
+    --sp-5: 14px; --sp-6: 16px; --sp-7: 18px; --sp-8: 20px;
+    --sp-9: 24px; --sp-10: 30px;
+  }
+  /* Common page toolbars/footers wrap rather than overflow on phones. */
+  .sources-toolbar, .addpage-head, .add-foot, .cs-doc-actions { flex-wrap: wrap; }
+  /* Card grids: smaller min track so columns never force horizontal overflow. */
+  .mat-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .gm-types { grid-template-columns: 1fr 1fr; }
 }

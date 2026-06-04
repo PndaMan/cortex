@@ -54,6 +54,24 @@
     return !open && (chatViewOk || v === "source");
   });
 
+  // ---- responsive shell ----
+  // The drawer/compact layout is fully styled in app.css but was never switched
+  // on. Drive it from the viewport width so the app collapses gracefully toward
+  // mobile: < 1080px → chat dock becomes an overlay (compact); < 760px → the
+  // sidebar becomes a slide-in drawer behind a hamburger (tight).
+  let vw = $state(typeof window !== "undefined" ? window.innerWidth : 1280);
+  $effect(() => {
+    const onResize = () => (vw = window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  });
+  const tight = $derived(vw < 760);
+  const compact = $derived(vw < 1080);
+  let navOpen = $state(false);
+  // Close the drawer when leaving tight mode or when navigating anywhere.
+  $effect(() => { if (!tight) navOpen = false; });
+  $effect(() => { void app.view; void app.activeSubjectId; void app.subjectTab; navOpen = false; });
+
   // ---- view back-stack: Esc goes back to the previous page ----
   let viewHistory: string[] = [];
   let prevView = app.view;
@@ -179,8 +197,21 @@
 {:else if app.onboarding}
   <Onboarding onFinish={() => (app.onboarding = false)} />
 {:else}
-  <div class="app-shell" style:--sb-w={app.sidebarCollapsed ? "0px" : "248px"}>
-    {#if !app.sidebarCollapsed}
+  <div
+    class="app-shell"
+    class:tight
+    class:compact
+    class:nav-open={navOpen}
+    style:--sb-w={app.sidebarCollapsed ? "0px" : "248px"}
+  >
+    {#if tight}
+      <!-- Mobile: hamburger toggles the slide-in sidebar drawer. -->
+      <button class="nav-toggle" onclick={() => (navOpen = !navOpen)} aria-label="Toggle menu">
+        <Icon name="grid" size={16} />
+      </button>
+      <Sidebar />
+      <button class="nav-backdrop" aria-label="Close menu" onclick={() => (navOpen = false)}></button>
+    {:else if !app.sidebarCollapsed}
       <Sidebar />
     {:else}
       <button class="sb-expand" onclick={() => app.toggleSidebar()} title="Show sidebar (b)">

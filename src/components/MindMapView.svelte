@@ -123,4 +123,9 @@
     width: 1.5px; background: color-mix(in oklab, var(--hue) 45%, var(--border));
   }
   .mm-children--deep { padding-left: 10px; margin-top: 6px; }
+
+  @media (max-width: 600px) {
+    .mm-page { padding: var(--sp-5) var(--sp-4); }
+    .mm-branches { grid-template-columns: 1fr; gap: var(--sp-4); }
+  }
 </style>

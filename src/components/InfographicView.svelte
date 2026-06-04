@@ -179,4 +179,9 @@
   .ptl-date { font-size: var(--t-xs); color: var(--accent); letter-spacing: 0.03em; }
   .ptl-title { font-size: 14.5px; font-weight: 650; color: var(--fg-bright); line-height: 1.3; }
   .ptl-detail { margin: 1px 0 0; font-size: 13px; line-height: 1.5; color: var(--fg-muted); }
+
+  @media (max-width: 600px) {
+    .infographic-page { padding: var(--sp-5) var(--sp-4); }
+    .poster-grid { grid-template-columns: 1fr; }
+  }
 </style>

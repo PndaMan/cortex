@@ -316,4 +316,15 @@
   .cit-field { display: flex; flex-direction: column; gap: 4px; }
   .cit-field--wide { grid-column: 1 / -1; }
   .cit-form-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+  @media (max-width: 600px) {
+    .cit-page { padding: var(--sp-5) var(--sp-4); }
+    .cit-form-grid { grid-template-columns: 1fr; }
+    .cit-head { flex-wrap: wrap; }
+    .cit-deadline-add { flex-wrap: wrap; }
+    .cit-deadline-add .input { flex: 1 1 100%; }
+    .cit-date { width: 100%; flex: 1 1 100% !important; }
+    .cit-row { flex-wrap: wrap; }
+    .cit-acts { margin-left: auto; }
+  }
 </style>
