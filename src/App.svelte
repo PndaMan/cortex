@@ -95,6 +95,22 @@
     }
   }
 
+  // Find-in-page (Ctrl/Cmd+F) — claimed in the CAPTURE phase so it beats the
+  // WebKitGTK native find-in-page (which otherwise popped up and swallowed
+  // Ctrl+C/Ctrl+V). Only this exact combo is intercepted; plain Ctrl and other
+  // Ctrl chords (copy/paste/etc.) pass straight through.
+  $effect(() => {
+    function onFind(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+        e.preventDefault();
+        e.stopPropagation();
+        app.findOpen = true;
+      }
+    }
+    window.addEventListener("keydown", onFind, true);
+    return () => window.removeEventListener("keydown", onFind, true);
+  });
+
   // Global keyboard engine (Helix-style). Modals/sessions set window.__cortexModalOpen
   // to claim the keyboard; we stay out of their way then.
   let gPrefix = false;
@@ -104,12 +120,6 @@
       const typing =
         !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 
-      // Find-in-page (Ctrl/Cmd+F) — works even while typing, like a browser.
-      if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
-        e.preventDefault();
-        app.findOpen = true;
-        return;
-      }
       // Alt+1..9 — jump to the Nth subject (like clicking it in the navbar).
       if (e.altKey && !e.ctrlKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
         e.preventDefault();
