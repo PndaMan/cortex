@@ -129,7 +129,28 @@
         .sort((a, b) => a.start_ms - b.start_ms);
     } catch { /* non-fatal */ }
   }
-  $effect(() => { void subjectId; loadDeadlines(); });
+  // Reload when the subject changes OR any event changes anywhere (two-way sync
+  // with the Calendar tab).
+  $effect(() => { void subjectId; void app.eventsChangedNonce; loadDeadlines(); });
+
+  // Topics whose tags intersect this deadline's tags → its study checklist.
+  function topicsForDeadline(e: CalEvent) {
+    const tags = new Set(e.tags ?? []);
+    if (tags.size === 0) return [];
+    return (app.activeSubject?.topics ?? []).filter((t) => (t.tags ?? []).some((tg) => tags.has(tg)));
+  }
+  async function toggleTopicDone(e: CalEvent, topicId: string) {
+    const done = new Set(e.checklist ?? []);
+    if (done.has(topicId)) done.delete(topicId);
+    else done.add(topicId);
+    try {
+      const updated = await api.setEventChecklist(e.id, [...done]);
+      deadlines = deadlines.map((d) => (d.id === updated.id ? updated : d));
+      app.notifyEventsChanged();
+    } catch (err) {
+      app.pushToast({ kind: "error", title: "Update failed", body: String(err) });
+    }
+  }
 
   async function addDeadline() {
     if (!subjectId || !dTitle.trim() || !dDate) return;
@@ -141,6 +162,7 @@
         // colour comes from the deadline kind in the calendar
       });
       dTitle = ""; dDate = "";
+      app.notifyEventsChanged();
       await loadDeadlines();
       app.pushToast({ kind: "success", title: "Added" });
     } catch (e) {
@@ -148,7 +170,7 @@
     }
   }
   async function completeDeadline(e: CalEvent) {
-    try { await api.setEventDone(e.id, true); await loadDeadlines(); }
+    try { await api.setEventDone(e.id, true); app.notifyEventsChanged(); await loadDeadlines(); }
     catch (err) { app.pushToast({ kind: "error", title: "Update failed", body: String(err) }); }
   }
   function daysLeft(ms: number): string {
@@ -188,14 +210,34 @@
         <ul class="cit-deadlines">
           {#each deadlines as e (e.id)}
             {@const overdue = e.start_ms < Date.now()}
+            {@const topics = topicsForDeadline(e)}
+            {@const doneN = topics.filter((t) => (e.checklist ?? []).includes(t.id)).length}
             <li class="cit-deadline{overdue ? ' overdue' : ''}">
-              <button class="cit-dl-check" title="Mark done" aria-label="Mark done" onclick={() => completeDeadline(e)}>
-                <Icon name="check" size={11} />
-              </button>
-              <span class="cit-dl-kind mono cit-dl-kind--{e.kind}">{e.kind === "deadline" ? "due" : e.kind}</span>
-              <span class="cit-dl-title">{e.title}</span>
-              <span class="cit-dl-date mono">{fmtDate(e.start_ms)}</span>
-              <span class="cit-dl-left mono{overdue ? ' overdue' : ''}">{daysLeft(e.start_ms)}</span>
+              <div class="cit-dl-main">
+                <button class="cit-dl-check" title="Mark done" aria-label="Mark done" onclick={() => completeDeadline(e)}>
+                  <Icon name="check" size={11} />
+                </button>
+                <span class="cit-dl-kind mono cit-dl-kind--{e.kind}">{e.kind === "deadline" ? "due" : e.kind}</span>
+                <span class="cit-dl-title">{e.title}</span>
+                {#if topics.length}
+                  <span class="cit-dl-prog mono" class:complete={doneN === topics.length}>{doneN}/{topics.length}</span>
+                {/if}
+                <span class="cit-dl-date mono">{fmtDate(e.start_ms)}</span>
+                <span class="cit-dl-left mono{overdue ? ' overdue' : ''}">{daysLeft(e.start_ms)}</span>
+              </div>
+              {#if topics.length}
+                <ul class="cit-checklist">
+                  {#each topics as t (t.id)}
+                    {@const checked = (e.checklist ?? []).includes(t.id)}
+                    <li>
+                      <button class="cit-ck{checked ? ' on' : ''}" onclick={() => toggleTopicDone(e, t.id)}>
+                        <span class="cit-ck-box">{#if checked}<Icon name="check" size={10} />{/if}</span>
+                        <span class="cit-ck-label{checked ? ' done' : ''}">{t.glyph ?? ""} {t.name}</span>
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -322,8 +364,30 @@
   .cit-date { flex: none !important; width: 170px; }
   .cit-date :global(.dp) { width: 100%; }
   .cit-deadlines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-  .cit-deadline { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--rad-3); background: var(--surface); }
+  .cit-deadline { padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--rad-3); background: var(--surface); }
   .cit-deadline.overdue { border-color: color-mix(in oklab, var(--warn) 55%, var(--border)); }
+  .cit-dl-main { display: flex; align-items: center; gap: 10px; }
+  .cit-dl-prog { font-size: var(--t-xs); color: var(--fg-muted); padding: 1px 7px; border-radius: 999px; background: var(--surface-2); transition: color 0.2s, background 0.2s; }
+  .cit-dl-prog.complete { color: var(--ok); background: color-mix(in oklab, var(--ok) 16%, var(--surface)); }
+
+  /* per-topic study checklist (cool, design-system animated) */
+  .cit-checklist { list-style: none; margin: 9px 0 2px; padding: 9px 0 0 30px; display: flex; flex-direction: column; gap: 3px; border-top: 1px dashed var(--border); }
+  .cit-ck { display: flex; align-items: center; gap: 9px; width: 100%; background: transparent; border: none; cursor: pointer; padding: 4px 6px; border-radius: var(--rad-2); text-align: left; }
+  .cit-ck:hover { background: var(--surface-2); }
+  .cit-ck-box {
+    flex: none; width: 17px; height: 17px; border-radius: 5px; border: 1.5px solid var(--border-strong);
+    display: inline-flex; align-items: center; justify-content: center; color: var(--bg);
+    transition: background 0.18s var(--ease, ease), border-color 0.18s, transform 0.12s;
+  }
+  .cit-ck.on .cit-ck-box { background: var(--ok); border-color: var(--ok); transform: scale(1.06); animation: ck-pop 0.24s var(--ease, ease); }
+  @keyframes ck-pop { 0% { transform: scale(0.7); } 55% { transform: scale(1.18); } 100% { transform: scale(1.06); } }
+  .cit-ck-label { font-size: var(--t-sm); color: var(--fg); position: relative; transition: color 0.2s; }
+  .cit-ck-label::after {
+    content: ""; position: absolute; left: 0; top: 50%; width: 0; height: 1.5px; background: var(--fg-faint);
+    transition: width 0.24s var(--ease, ease);
+  }
+  .cit-ck-label.done { color: var(--fg-faint); }
+  .cit-ck-label.done::after { width: 100%; }
   .cit-dl-check { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border); background: transparent; color: var(--fg-faint); cursor: pointer; flex: none; }
   .cit-dl-check:hover { color: var(--ok); border-color: var(--ok); }
   .cit-dl-title { flex: 1; font-size: var(--t-sm); }

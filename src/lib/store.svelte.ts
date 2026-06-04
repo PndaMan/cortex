@@ -265,6 +265,10 @@ class AppStore {
   chatOpen = $state(false); // closed by default; user opens with `c`. Persists across views.
   sidebarCollapsed = $state(false);
   findOpen = $state(false);
+  // Bumped whenever a calendar event/deadline changes anywhere, so the Calendar
+  // and the Citations tab stay in sync both ways (each watches this nonce).
+  eventsChangedNonce = $state(0);
+  notifyEventsChanged() { this.eventsChangedNonce++; }
   musicOpen = $state(false);
   diffOpen = $state(false);
   helpOpen = $state(false);

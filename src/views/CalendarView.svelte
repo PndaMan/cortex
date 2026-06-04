@@ -80,8 +80,10 @@
     return { fromMs: gridStart.getTime(), toMs: gridEnd.getTime() };
   }
 
-  // Reload whenever the visible month or subject filter changes.
+  // Reload whenever the visible month or subject filter changes, or an event is
+  // changed anywhere (e.g. a deadline created/ticked from the Citations tab).
   $effect(() => {
+    void app.eventsChangedNonce;
     const sid = filterSubjectId || null;
     const { fromMs, toMs } = monthWindow();
     let cancelled = false;
@@ -359,6 +361,7 @@
     try {
       const updated = await api.setEventDone(e.id, !e.done);
       events = events.map((x) => (x.id === updated.id ? updated : x));
+      app.notifyEventsChanged();
     } catch (err) {
       app.pushToast({ kind: "error", title: "Update failed", body: String(err) });
     }

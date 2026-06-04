@@ -168,6 +168,7 @@
       } else {
         await api.createEvent(payload);
       }
+      app.notifyEventsChanged();
       onSaved();
       onClose();
     } catch (e) {
@@ -185,6 +186,7 @@
     if (!ok) return;
     try {
       await api.deleteEvent(event.id);
+      app.notifyEventsChanged();
       onSaved();
       onClose();
     } catch (e) {
