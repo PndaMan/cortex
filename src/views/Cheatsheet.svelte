@@ -178,6 +178,17 @@
     }
   });
 
+  // Sidebar topic/subject clicks ask the cheatsheet to show a specific topic
+  // (null = whole subject) by bumping app.cheatNonce.
+  let lastCheatNonce = app.cheatNonce;
+  $effect(() => {
+    const n = app.cheatNonce;
+    if (n !== lastCheatNonce) {
+      lastCheatNonce = n;
+      if (app.activeSubject) selectedTopicId = app.cheatTopicId;
+    }
+  });
+
   function selectTopic(id: string | null) {
     if (selectedTopicId === id) return;
     selectedTopicId = id;

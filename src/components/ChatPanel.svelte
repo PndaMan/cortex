@@ -221,6 +221,15 @@
     e.stopPropagation();
     picked = { ...picked, [id]: !picked[id] };
   }
+  // Clicking a switcher row: source rows TOGGLE the multi-pick (so selections
+  // persist and accumulate); subject/topic rows switch scope immediately.
+  function onSwitcherRow(o: ScopeOption) {
+    if (o.kind === "source") {
+      picked = { ...picked, [o.src.id]: !picked[o.src.id] };
+    } else {
+      applyOption(o);
+    }
+  }
   // Confirm the multi-source selection as the active scope.
   function applyMulti() {
     if (pickedIds.length === 0) return;
@@ -245,7 +254,7 @@
     } else if (e.key === "Enter") {
       e.preventDefault();
       const o = opts[switcherSel];
-      if (o) applyOption(o);
+      if (o) onSwitcherRow(o);
     } else if (e.key === "Escape") {
       e.preventDefault();
       switcherOpen = false;
@@ -649,7 +658,7 @@
               tabindex="-1"
               aria-selected={sel}
               onmouseenter={() => (switcherSel = i)}
-              onclick={() => applyOption(o)}
+              onclick={() => onSwitcherRow(o)}
             >
               {#if o.kind === "subject"}
                 <Icon name="diamond" size={12} color="var(--accent)" />

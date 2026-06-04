@@ -397,6 +397,15 @@ class AppStore {
   // Bumped to ask the Cheatsheet view (which owns generation + the live view
   // refresh) to (re)generate the whole-subject sheet — used by the command
   // palette's "Regenerate cheatsheet" so it actually does something.
+  // Which cheatsheet topic the sidebar asked to show (null = whole subject); the
+  // Cheatsheet view watches cheatNonce to select it.
+  cheatTopicId = $state<string | null>(null);
+  cheatNonce = $state(0);
+  openTopicSheet(subjectId: string, topicId: string | null) {
+    this.openSubject(subjectId); // view=subject, tab=cheatsheet
+    this.cheatTopicId = topicId;
+    this.cheatNonce++;
+  }
   cheatsheetRegenNonce = $state(0);
   regenCheatsheet() {
     if (!this.activeSubject) {

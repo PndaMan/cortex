@@ -25,6 +25,38 @@
     app.openSubject(id);
   }
 
+  // Click a subject: go to its whole-subject cheatsheet + expand the tree. Click
+  // again while already there → collapse the tree (stay on the cheatsheet).
+  function clickSubject(s: { id: string }) {
+    const here =
+      app.view === "subject" &&
+      app.activeSubjectId === s.id &&
+      app.subjectTab === "cheatsheet" &&
+      app.cheatTopicId === null;
+    if (here && expanded === s.id) {
+      expanded = null;
+      return;
+    }
+    expanded = s.id;
+    app.openTopicSheet(s.id, null);
+  }
+
+  // Click a topic: go to THAT topic's cheatsheet + expand its sources. Click
+  // again while already there → collapse its sources (stay on the cheatsheet).
+  function clickTopic(s: { id: string }, t: { id: string }) {
+    const here =
+      app.view === "subject" &&
+      app.activeSubjectId === s.id &&
+      app.subjectTab === "cheatsheet" &&
+      app.cheatTopicId === t.id;
+    expanded = s.id;
+    app.openTopicSheet(s.id, t.id);
+    const next = new Set(openTopics);
+    if (here && next.has(t.id)) next.delete(t.id);
+    else next.add(t.id);
+    openTopics = next;
+  }
+
   function toggleTopic(id: string, e: Event) {
     e.stopPropagation();
     const next = new Set(openTopics);
@@ -144,10 +176,10 @@
       <div class="sb-subj">
         <div
           class="sb-subj-row{app.activeSubjectId === s.id && app.view !== 'dashboard' ? ' on' : ''}"
-          onclick={() => openSubject(s.id)}
+          onclick={() => clickSubject(s)}
           role="button"
           tabindex="0"
-          onkeydown={(e) => e.key === "Enter" && openSubject(s.id)}
+          onkeydown={(e) => e.key === "Enter" && clickSubject(s)}
         >
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <span
@@ -201,12 +233,13 @@
               {@const tOpen = openTopics.has(t.id)}
               <div
                 class="sb-topic"
-                onclick={(e) => toggleTopic(t.id, e)}
+                onclick={() => clickTopic(s, t)}
                 role="button"
                 tabindex="0"
-                onkeydown={(e) => (e.key === "Enter" || e.key === " ") && toggleTopic(t.id, e)}
+                onkeydown={(e) => (e.key === "Enter" || e.key === " ") && clickTopic(s, t)}
               >
-                <span class="t-tw{tOpen ? ' open' : ''}"><Icon name="chevron" size={10} /></span>
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <span class="t-tw{tOpen ? ' open' : ''}" role="button" tabindex="-1" aria-label="Toggle sources" onclick={(e) => toggleTopic(t.id, e)}><Icon name="chevron" size={10} /></span>
                 <span class="t-glyph" style="flex:none;font-size:11px;margin-right:5px">{t.glyph || topicGlyph(t.id)}</span>
                 <span class="t-name">{t.name}</span>
                 <span class="t-actions">
