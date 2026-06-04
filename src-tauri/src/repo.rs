@@ -679,6 +679,32 @@ pub fn list_materials(conn: &Connection, subject_id: &str) -> Result<Vec<Materia
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
+/// Fetch a single material by id (for export). Errors if not found.
+pub fn get_material(conn: &Connection, id: &str) -> Result<MaterialRec> {
+    conn.query_row(
+        "SELECT m.id, m.kind, m.title, m.meta, m.status, m.payload, t.name
+         FROM materials m LEFT JOIN topics t ON t.id=m.topic_id
+         WHERE m.id=?1",
+        params![id],
+        |r| {
+            let payload: Option<String> = r.get(5)?;
+            Ok(MaterialRec {
+                id: r.get(0)?,
+                kind: r.get(1)?,
+                title: r.get(2)?,
+                meta: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                status: r.get(4)?,
+                payload: payload
+                    .and_then(|p| serde_json::from_str(&p).ok())
+                    .unwrap_or(serde_json::Value::Null),
+                topic: r.get::<_, Option<String>>(6)?.unwrap_or_default(),
+            })
+        },
+    )
+    .optional()?
+    .ok_or_else(|| Error::NotFound(format!("material {id}")))
+}
+
 // ---- chat history (multiple conversation threads per subject) ----------
 
 /// Settings key holding the active thread id for a subject.

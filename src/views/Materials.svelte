@@ -133,6 +133,23 @@
       app.pushToast({ kind: "error", title: "Delete failed", body: String(err) });
     }
   }
+  // Export a flashcard deck to an Anki .apkg via a native save dialog.
+  async function exportAnki(e: Event, m: Card) {
+    e.stopPropagation();
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const safe = m.title.replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "deck";
+      const dest = await save({
+        defaultPath: `${safe}.apkg`,
+        filters: [{ name: "Anki deck", extensions: ["apkg"] }],
+      });
+      if (!dest) return;
+      const n = await api.exportAnki(m.id, dest);
+      app.pushToast({ kind: "success", title: "Exported to Anki", body: `${n} card${n !== 1 ? "s" : ""} → ${dest}` });
+    } catch (err) {
+      app.pushToast({ kind: "error", title: "Anki export failed", body: String(err) });
+    }
+  }
 </script>
 
 {#if matLaunch}
@@ -245,6 +262,11 @@
                     <span class="status-pill status-pill--{m.status === 'draft' ? 'draft' : 'ready'}">
                       <span class="dot"></span>
                     </span>
+                    {#if m.type === "flashcards"}
+                      <button class="btn btn--icon btn--sm btn--ghost mat-act" title="Export to Anki (.apkg)" aria-label="Export deck to Anki" onclick={(e) => exportAnki(e, m)}>
+                        <Icon name="upload" size={12} />
+                      </button>
+                    {/if}
                     <button class="btn btn--icon btn--sm btn--ghost mat-act" title="Rename" aria-label="Rename material" onclick={(e) => renameMaterial(e, m)}>
                       <Icon name="pencil" size={12} />
                     </button>

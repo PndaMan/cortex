@@ -182,6 +182,9 @@ export const exportPdf = (html: string, dest: string) =>
 /** Copy the whole database to a portable .db file at `dest`. */
 export const exportDatabase = (dest: string) =>
   invoke<void>("export_database", { dest });
+/** Export a flashcard material to an Anki `.apkg` deck at `dest`; returns card count. */
+export const exportAnki = (materialId: string, dest: string) =>
+  invoke<number>("export_anki", { materialId, dest });
 /** Reclaim disk space (WAL checkpoint + VACUUM). */
 export const optimizeDb = () => invoke<void>("optimize_db", {});
 export const generateMaterial = (

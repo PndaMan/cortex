@@ -1,6 +1,7 @@
 //! Cortex backend library. Wires the SQLite-backed AppState into Tauri and
 //! registers the command surface consumed by the Svelte frontend.
 
+mod anki;
 mod calendar;
 mod commands;
 mod db;
@@ -94,6 +95,7 @@ pub fn run() {
             commands::get_cheatsheet,
             commands::export_pdf,
             commands::export_database,
+            commands::export_anki,
             commands::optimize_db,
             commands::generate_material,
             commands::list_materials,

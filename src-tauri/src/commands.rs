@@ -1144,6 +1144,48 @@ pub async fn export_database(app: AppHandle, dest: String) -> Result<()> {
     .map_err(|e| Error::Other(format!("export task failed: {e}")))?
 }
 
+/// Export a flashcard material to an Anki `.apkg` deck at `dest`. Only flashcard
+/// materials are exportable (quiz/audio/etc. have no front/back shape).
+#[tauri::command]
+pub async fn export_anki(app: AppHandle, material_id: String, dest: String) -> Result<usize> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<usize> {
+        let state = app.state::<AppState>();
+        let mat = {
+            let c = state.db.lock().unwrap();
+            repo::get_material(&c, &material_id)?
+        };
+        if mat.kind != "flashcards" {
+            return Err(Error::Other(format!(
+                "Anki export only supports flashcard decks (this is a {} material).",
+                mat.kind
+            )));
+        }
+        // Flashcard payload: a JSON array of {"q":front,"a":back}.
+        let cards: Vec<(String, String)> = mat
+            .payload
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| {
+                let q = c["q"].as_str()?.trim();
+                let a = c["a"].as_str().unwrap_or("").trim();
+                if q.is_empty() {
+                    return None;
+                }
+                Some((q.to_string(), a.to_string()))
+            })
+            .collect();
+        if cards.is_empty() {
+            return Err(Error::Other("this deck has no cards to export".into()));
+        }
+        let deck_name = if mat.title.trim().is_empty() { "Cortex deck" } else { mat.title.trim() };
+        crate::anki::export_apkg(std::path::Path::new(&dest), deck_name, &cards)?;
+        Ok(cards.len())
+    })
+    .await
+    .map_err(|e| Error::Other(format!("anki export task failed: {e}")))?
+}
+
 /// Synthesize a sectioned cheatsheet from a subject/topic's indexed sources.
 #[tauri::command]
 pub async fn generate_cheatsheet(
