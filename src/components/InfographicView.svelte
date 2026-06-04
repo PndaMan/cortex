@@ -5,10 +5,11 @@
   // still carry a raw { svg } payload — we fall back to rendering that.
   interface Stat { value?: string; label?: string }
   interface Section { emoji?: string; heading?: string; points?: string[]; stat?: Stat }
-  interface InfoData { title?: string; subtitle?: string; sections?: Section[]; svg?: string }
+  interface InfoData { title?: string; subtitle?: string; sections?: Section[]; svg?: string; image?: string }
 
   let { data, onExit }: { data?: InfoData; onExit?: () => void } = $props();
 
+  const image = $derived(typeof data?.image === "string" ? data!.image! : "");
   const sections = $derived(Array.isArray(data?.sections) ? data!.sections! : []);
   const hasPoster = $derived(sections.length > 0);
   const legacySvg = $derived(typeof data?.svg === "string" ? data!.svg! : "");
@@ -25,7 +26,11 @@
       </div>
     {/if}
 
-    {#if hasPoster}
+    {#if image}
+      <div class="infographic-canvas">
+        <img class="poster-img" src={image} alt={data?.title ?? "infographic"} />
+      </div>
+    {:else if hasPoster}
       <div class="poster">
         <header class="poster-head">
           {#if data?.title}<h1 class="poster-title read">{data.title}</h1>{/if}
@@ -70,6 +75,7 @@
   .infographic-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: var(--sp-10); }
   .infographic-canvas { flex: 1; display: flex; justify-content: center; align-items: flex-start; padding: var(--sp-4); }
   .infographic-canvas :global(svg) { max-width: 100%; height: auto; border-radius: var(--rad-3); box-shadow: var(--shadow-2); }
+  .poster-img { max-width: 760px; width: 100%; height: auto; border-radius: var(--rad-3); box-shadow: var(--shadow-2); }
 
   /* ── structured poster ───────────────────────────────────── */
   .poster { max-width: 1100px; margin: 0 auto; width: 100%; }

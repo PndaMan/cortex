@@ -982,6 +982,50 @@ fn parse_cheatsheet(raw: &str) -> Vec<CsSection> {
     }
 }
 
+/// Render a structured infographic spec into a designed poster image via an
+/// image model (nano-banana, openrouter:google/gemini-2.5-flash-image). The text
+/// model already produced accurate headings/points; the image model only lays
+/// them out, so spelling/figures stay correct. Returns a data:image/...;base64 URL.
+fn render_infographic_image(spec: &serde_json::Value, keys: &llm::Keys) -> Option<String> {
+    let mut text = String::new();
+    if let Some(t) = spec["title"].as_str() {
+        text.push_str(&format!("TITLE: {t}\n"));
+    }
+    if let Some(s) = spec["subtitle"].as_str() {
+        text.push_str(&format!("SUBTITLE: {s}\n"));
+    }
+    for s in spec["sections"].as_array().into_iter().flatten() {
+        if let Some(h) = s["heading"].as_str() {
+            text.push_str(&format!("\nSECTION — {h}\n"));
+        }
+        if let Some(v) = s["stat"]["value"].as_str() {
+            let lbl = s["stat"]["label"].as_str().unwrap_or("");
+            text.push_str(&format!("  HEADLINE FIGURE: {v} {lbl}\n"));
+        }
+        for p in s["points"].as_array().into_iter().flatten() {
+            if let Some(p) = p.as_str() {
+                text.push_str(&format!("  • {p}\n"));
+            }
+        }
+    }
+    if text.trim().is_empty() {
+        return None;
+    }
+    let prompt = format!(
+        "Create a professional, information-dense EDUCATIONAL INFOGRAPHIC POSTER, portrait \
+         orientation. Clean editorial Swiss-minimalist style: light off-white (#f5f3ee) \
+         background, dark legible sans-serif text, ONE restrained accent colour, strict grid \
+         with thin horizontal rules between titled sections. Use simple flat technical \
+         line-icons, small clear diagrams (bar charts, demand/supply curves, flow arrows) and a \
+         comparison table where it helps. Designed for utility, not fun — NO cartoons, NO \
+         clutter, spell every word correctly. Lay out and visualise EXACTLY the following \
+         content, preserving all headings, bullet points and numbers verbatim:\n\n{text}"
+    );
+    // Image generation currently goes through OpenRouter's Gemini image model.
+    let model = llm::from_spec_or_any("openrouter:google/gemini-2.5-flash-image", keys)?;
+    model.gen_image(&prompt).ok()
+}
+
 /// Render a self-contained HTML document (built by the frontend with print
 /// styles inlined) to a PDF file at `dest`. Used by "Save as PDF" / "Export all"
 /// for cheatsheets and notes — replaces the unreliable `window.print()` path
@@ -1273,8 +1317,20 @@ pub async fn generate_material(
     let user = format!("Subject: {subject_name} › {topic_name}\n\nSOURCE MATERIAL:\n{context}\n\nGenerate now.");
 
     let raw = model.complete(&system, &user)?;
-    let payload = llm::extract_json(&raw)
+    let mut payload = llm::extract_json(&raw)
         .map_err(|_| Error::Other("model returned unstructured output; try again".into()))?;
+
+    // Infographic: render the accurate structured spec into a designed POSTER
+    // IMAGE via an image model ("nano-banana"). Merged as `image`; if generation
+    // is unavailable/fails, the structured card renderer is used as a fallback.
+    if kind == "infographic" {
+        if let Some(url) = render_infographic_image(&payload, &keys) {
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert("image".into(), serde_json::Value::String(url));
+            }
+        }
+    }
+
     let meta = match kind.as_str() {
         "quiz" => format!("{} questions", payload.as_array().map(|a| a.len()).unwrap_or(0)),
         "flashcards" => format!("{} cards", payload.as_array().map(|a| a.len()).unwrap_or(0)),

@@ -16,6 +16,14 @@ pub trait Llm: Send + Sync {
             self.name()
         )))
     }
+    /// Generate an image from a text prompt; returns a `data:image/...;base64,…`
+    /// URL. Only image-capable models (e.g. Gemini "nano-banana") override this.
+    fn gen_image(&self, _prompt: &str) -> Result<String> {
+        Err(Error::Unsupported(format!(
+            "{} can't generate images — use an image model like openrouter:google/gemini-2.5-flash-image",
+            self.name()
+        )))
+    }
 }
 
 /// Standard base64 (with padding). Inline to avoid a dependency just for OCR
@@ -309,6 +317,32 @@ impl Llm for OpenAiCompatLlm {
             .as_str()
             .unwrap_or_default()
             .to_string())
+    }
+    fn gen_image(&self, prompt: &str) -> Result<String> {
+        let key = self.api_key.trim();
+        if key.is_empty() {
+            return Err(Error::Other(format!("{}: API key is empty", self.label)));
+        }
+        let client = llm_client();
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": self.model,
+            "messages": [{ "role": "user", "content": prompt }],
+            "modalities": ["image", "text"],
+        });
+        let json = send_json(
+            self.label,
+            client
+                .post(&url)
+                .header("Authorization", format!("Bearer {key}"))
+                .header("HTTP-Referer", "https://cortex.study")
+                .header("X-Title", "Cortex")
+                .json(&body),
+        )?;
+        json["choices"][0]["message"]["images"][0]["image_url"]["url"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| Error::Other(format!("{}: model returned no image", self.label)))
     }
 }
 
