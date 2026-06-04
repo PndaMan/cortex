@@ -55,6 +55,8 @@ export function jobKindLabel(kind: JobKind): string {
 
 class Jobs {
   list = $state<Job[]>([]);
+  // Ids the user cancelled — their eventual result is discarded (settle skipped).
+  #cancelled = new Set<string>();
 
   /** Running jobs for a subject, optionally filtered to one kind. */
   running(subjectId: string | null, kind?: JobKind): Job[] {
@@ -102,6 +104,7 @@ class Jobs {
     opts
       .run()
       .then((result) => {
+        if (this.#cancelled.delete(id)) return; // user cancelled — discard result
         this.#settle(id, (j) => ({ ...j, status: "done", result }));
         app.pushToast({
           kind: "success",
@@ -115,6 +118,7 @@ class Jobs {
         }
       })
       .catch((e: unknown) => {
+        if (this.#cancelled.delete(id)) return; // user cancelled — ignore error too
         const msg = e instanceof Error ? e.message : String(e);
         this.#settle(id, (j) => ({ ...j, status: "error", error: msg }));
         app.pushToast({ kind: "error", title: "Generation failed", body: msg });
@@ -124,6 +128,12 @@ class Jobs {
   }
 
   dismiss(id: string) {
+    this.list = this.list.filter((j) => j.id !== id);
+  }
+
+  /** Stop tracking a running job and discard whatever it eventually returns. */
+  cancel(id: string) {
+    this.#cancelled.add(id);
     this.list = this.list.filter((j) => j.id !== id);
   }
 

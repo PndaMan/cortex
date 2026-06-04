@@ -1,8 +1,19 @@
 <script lang="ts">
   import { jobs, jobKindLabel, type Job } from "../lib/jobs.svelte";
+  import { app } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
 
   let { job }: { job: Job } = $props();
+
+  async function cancel() {
+    const ok = await app.confirm({
+      title: `Stop generating ${jobKindLabel(job.kind)}?`,
+      body: "It stops being tracked and the result is discarded.",
+      danger: true,
+      okLabel: "Stop",
+    });
+    if (ok) jobs.cancel(job.id);
+  }
 </script>
 
 {#if job.status === "running"}
@@ -12,6 +23,16 @@
     {#if job.label}
       <span class="gen-card-sub mono">{job.label}</span>
     {/if}
+    <button
+      class="gen-card-x"
+      style="margin-left:auto"
+      type="button"
+      aria-label="Stop generating"
+      title="Stop generating"
+      onclick={cancel}
+    >
+      <Icon name="x" size={13} />
+    </button>
   </div>
 {:else if job.status === "error"}
   <div class="gen-card gen-card--err">
