@@ -59,6 +59,25 @@
   let speed   = $state<number>(1);
   const speeds = [1, 1.25, 1.5, 2] as const;
 
+  // ── real voice playback via the Web Speech API (free, no key). Needs a
+  // system TTS engine (speech-dispatcher / espeak-ng); if none is present we
+  // fall back to the silent visual timeline and show a hint.
+  const synth = typeof window !== "undefined" ? window.speechSynthesis : undefined;
+  let voicesAvailable = $state(false);
+  $effect(() => {
+    if (!synth) return;
+    const load = () => (voicesAvailable = synth.getVoices().length > 0);
+    load();
+    synth.addEventListener?.("voiceschanged", load);
+    return () => synth.removeEventListener?.("voiceschanged", load);
+  });
+  function voiceFor(speaker: string): SpeechSynthesisVoice | null {
+    const vs = synth?.getVoices() ?? [];
+    if (vs.length === 0) return null;
+    const idx = Math.max(0, speakers.findIndex((s) => s.name === speaker));
+    return vs[idx % vs.length];
+  }
+
   // Transcript body ref for auto-scroll
   let bodyEl = $state<HTMLElement | null>(null);
 
@@ -69,9 +88,10 @@
     return idx;
   });
 
-  // rAF playback loop
+  // rAF playback loop — drives the SILENT visual timeline only when no TTS
+  // voices are available (otherwise the speech effect below drives playback).
   $effect(() => {
-    if (!playing || total === 0) return;
+    if (!playing || total === 0 || voicesAvailable) return;
     let last: number | null = null;
     let rafId: number;
     const curSpeed = speed;
@@ -87,6 +107,28 @@
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
+  });
+
+  // Speech-driven playback: read each segment aloud with its host's voice,
+  // advancing the timeline as each utterance ends.
+  $effect(() => {
+    if (!playing || !synth || !voicesAvailable || segments.length === 0) return;
+    let cancelled = false;
+    const startIdx = t >= total ? 0 : curIdx;
+    function speakFrom(n: number) {
+      if (cancelled) return;
+      if (n >= segments.length) { t = total; playing = false; return; }
+      t = starts[n];
+      const u = new SpeechSynthesisUtterance(segments[n].text);
+      u.rate = speed;
+      const v = voiceFor(segments[n].speaker);
+      if (v) u.voice = v;
+      u.onend = () => { if (!cancelled) speakFrom(n + 1); };
+      synth!.speak(u);
+    }
+    synth.cancel();
+    speakFrom(startIdx);
+    return () => { cancelled = true; synth.cancel(); };
   });
 
   // Auto-scroll active transcript line
@@ -165,6 +207,12 @@
     {#if segments.length === 0}
       <p class="mono faint" style="font-size: var(--t-sm);">No audio script.</p>
     {:else}
+      {#if !voicesAvailable}
+        <p class="mono faint" style="font-size: var(--t-xs); margin: 0 0 6px;">
+          No system voice found — install <span class="kbd">espeak-ng</span> or
+          <span class="kbd">speech-dispatcher</span> for spoken playback. Showing the transcript.
+        </p>
+      {/if}
       <!-- Scrubber -->
       <div class="ao-scrubber">
         <span class="ao-time mono">{fmt(t)}</span>
