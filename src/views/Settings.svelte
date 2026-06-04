@@ -366,12 +366,16 @@
     api.setSetting("offline_mode", offlineMode ? "true" : "false").catch(() => {});
   }
 
-  function clearCaches() {
-    // No backend cache-clear command exists; clear any in-memory derived state
-    // we can honestly clear, then confirm.
+  async function clearCaches() {
     testState = null;
     searxState = null;
-    app.pushToast({ kind: "info", title: "Caches cleared", body: "Local in-memory caches reset." });
+    try {
+      await api.optimizeDb();
+      await loadStats();
+      app.pushToast({ kind: "success", title: "Storage optimized", body: "Reclaimed unused space (VACUUM)." });
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Optimize failed", body: String(e) });
+    }
   }
 
   async function exportData() {
@@ -1310,11 +1314,11 @@ Notes: {about}</pre>
             </div>
             <div class="set-row">
               <div class="set-row-l">
-                <div class="set-row-t">Clear caches</div>
-                <div class="set-row-d">Transcription & generation caches (safe).</div>
+                <div class="set-row-t">Optimize storage</div>
+                <div class="set-row-d">Reclaim unused disk space (VACUUM). Safe.</div>
               </div>
               <div class="set-row-r">
-                <button class="btn" onclick={clearCaches}>Clear</button>
+                <button class="btn" onclick={clearCaches}>Optimize</button>
               </div>
             </div>
             <div class="set-row">

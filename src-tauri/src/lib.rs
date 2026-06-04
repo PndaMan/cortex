@@ -94,6 +94,7 @@ pub fn run() {
             commands::get_cheatsheet,
             commands::export_pdf,
             commands::export_database,
+            commands::optimize_db,
             commands::generate_material,
             commands::list_materials,
             commands::get_all_settings,

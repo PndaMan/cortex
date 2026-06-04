@@ -182,6 +182,8 @@ export const exportPdf = (html: string, dest: string) =>
 /** Copy the whole database to a portable .db file at `dest`. */
 export const exportDatabase = (dest: string) =>
   invoke<void>("export_database", { dest });
+/** Reclaim disk space (WAL checkpoint + VACUUM). */
+export const optimizeDb = () => invoke<void>("optimize_db", {});
 export const generateMaterial = (
   subjectId: string,
   kind: "flashcards" | "quiz" | "audio" | "infographic" | "slideshow",

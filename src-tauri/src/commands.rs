@@ -995,6 +995,16 @@ pub async fn export_pdf(html: String, dest: String) -> Result<()> {
     .map_err(|e| Error::Other(format!("export task failed: {e}")))?
 }
 
+/// Reclaim disk space: checkpoint the WAL and VACUUM the database. Wired to the
+/// Settings "Optimize storage" action (was a cosmetic no-op before).
+#[tauri::command]
+pub fn optimize_db(state: State<AppState>) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+    c.execute("VACUUM", [])?;
+    Ok(())
+}
+
 /// Export the entire database to a single portable SQLite file at `dest` (the
 /// locked-in "SQLite dump" export). Checkpoints the WAL first so the copy is
 /// complete and self-contained.
