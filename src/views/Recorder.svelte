@@ -59,8 +59,15 @@
   let recognitionWantsRun = false; // keep-alive flag so onend can restart it
   let chunks: Blob[] = [];
   let unlisten: UnlistenFn | null = null;
-  let backendPoll: ReturnType<typeof setInterval> | null = null; // chunked-fallback poll timer
-  let backendBusy = false; // re-entrancy guard for the fallback poll
+  // Live-transcript fallback uses a SECOND recorder on the same stream that emits
+  // complete ~20s segments; each is transcribed and APPENDED (incremental), so the
+  // cost stays flat no matter how long the lecture runs. The continuous recorder
+  // above remains the authoritative audio that's precisely re-transcribed on save,
+  // so small gaps between live segments don't affect the saved transcript.
+  let segRecorder: MediaRecorder | null = null;
+  let segChunks: Blob[] = [];
+  let segTimer: ReturnType<typeof setTimeout> | null = null;
+  const SEG_MS = 20000;
 
   // ---- derived ----
   const mm = $derived(String(Math.floor(secs / 60)).padStart(2, "0"));
@@ -151,35 +158,57 @@
     liveInterim = "";
   }
 
-  // ---- backend chunked fallback (no SpeechRecognition) ----
+  // ---- backend chunked fallback (no SpeechRecognition): incremental segments ----
   function stopBackendPoll() {
-    if (backendPoll) { clearInterval(backendPoll); backendPoll = null; }
+    if (segTimer) { clearTimeout(segTimer); segTimer = null; }
+    if (segRecorder) {
+      try { segRecorder.onstop = null; segRecorder.stop(); } catch { /* noop */ }
+      segRecorder = null;
+    }
+    segChunks = [];
     liveUpdating = false;
-    backendBusy = false;
   }
 
-  async function pollBackendTranscript() {
-    if (backendBusy || paused || !recording || chunks.length === 0) return;
-    backendBusy = true;
+  // Record one ~20s segment on the shared stream; onstop transcribes + appends it.
+  function startSegment() {
+    if (SR || !stream || !recording || paused || !liveTranscriptOn) return;
+    try {
+      segChunks = [];
+      segRecorder = new MediaRecorder(stream);
+      segRecorder.ondataavailable = (e) => { if (e.data.size > 0) segChunks.push(e.data); };
+      segRecorder.onstop = () => void transcribeSegment();
+      segRecorder.start();
+      segTimer = setTimeout(() => { try { segRecorder?.stop(); } catch { /* noop */ } }, SEG_MS);
+    } catch {
+      segRecorder = null;
+    }
+  }
+
+  async function transcribeSegment() {
+    const localChunks = segChunks;
+    segChunks = [];
+    // Kick off the next segment immediately so we keep capturing while this one
+    // transcribes (any tiny gap only affects the live PREVIEW — the saved audio is
+    // the continuous recorder, re-transcribed precisely on save).
+    startSegment();
+    if (localChunks.length === 0) return;
     liveUpdating = true;
     try {
-      // Assemble everything recorded so far into a single Blob and ship it to backend Whisper.
-      const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
+      const blob = new Blob(localChunks, { type: localChunks[0]?.type || "audio/webm" });
       const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
       const text = await api.transcribePartial(bytes);
       if (text && text.trim()) {
-        liveBackendText = text.trim();
+        liveBackendText = (liveBackendText ? liveBackendText + " " : "") + text.trim();
         whisperMissing = false;
       } else if (!liveBackendText) {
-        // First call came back empty → no Whisper installed. Be honest and stop polling.
+        // First segment came back empty → no Whisper installed. Be honest, stop.
         whisperMissing = true;
         stopBackendPoll();
       }
     } catch {
-      // Network/backend hiccup — keep the last text, try again next tick.
+      // Backend hiccup — keep what we have; the next segment will continue.
     } finally {
       liveUpdating = false;
-      backendBusy = false;
     }
   }
 
@@ -187,8 +216,7 @@
     if (SR) return; // SpeechRecognition path is authoritative where available
     stopBackendPoll();
     whisperMissing = false;
-    // ~15s cadence: long enough to gather speech, short enough to feel live.
-    backendPoll = setInterval(() => void pollBackendTranscript(), 15000);
+    startSegment();
   }
 
   async function start() {
@@ -237,13 +265,17 @@
     if (paused) {
       mediaRecorder.resume();
       paused = false;
-      if (SR) startRecognition();
+      if (liveTranscriptOn) {
+        if (SR) startRecognition();
+        else startSegment();
+      }
     } else {
       mediaRecorder.pause();
       paused = true;
-      // keep accumulated final text, just halt the live engine while paused
+      // keep accumulated final text, just halt the live engine(s) while paused
       recognitionWantsRun = false;
       if (recognition) { try { recognition.onend = null; recognition.stop(); } catch { /* noop */ } recognition = null; }
+      stopBackendPoll();
       liveInterim = "";
     }
   }
