@@ -4,6 +4,7 @@
   import type { Reference, CalEvent } from "../lib/api";
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
+  import DatePicker from "../components/DatePicker.svelte";
 
   const subjectId = $derived(app.activeSubject?.id ?? null);
 
@@ -176,7 +177,7 @@
           {/each}
         </div>
         <input class="input" placeholder="e.g. Midterm, Essay 2, Capstone…" bind:value={dTitle} />
-        <input class="input cit-date" type="date" bind:value={dDate} />
+        <div class="cit-date"><DatePicker value={dDate} onChange={(v) => (dDate = v)} placeholder="Due date" /></div>
         <button class="btn btn--sm btn--primary" disabled={!dTitle.trim() || !dDate} onclick={addDeadline}>
           <Icon name="plus" size={12} /> Add
         </button>
@@ -318,7 +319,8 @@
   .cit-dl-kind { flex: none; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 6px; border-radius: 999px; background: color-mix(in oklab, var(--accent) 16%, var(--surface)); color: var(--accent); }
   .cit-dl-kind--exam { background: color-mix(in oklab, var(--warn) 18%, var(--surface)); color: var(--warn); }
   .cit-dl-kind--project { background: color-mix(in oklab, var(--info) 18%, var(--surface)); color: var(--info); }
-  .cit-date { flex: none !important; width: 160px; }
+  .cit-date { flex: none !important; width: 170px; }
+  .cit-date :global(.dp) { width: 100%; }
   .cit-deadlines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .cit-deadline { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--rad-3); background: var(--surface); }
   .cit-deadline.overdue { border-color: color-mix(in oklab, var(--warn) 55%, var(--border)); }
