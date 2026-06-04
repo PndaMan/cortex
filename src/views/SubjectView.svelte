@@ -149,6 +149,24 @@
     await app.refresh();
     loadSources();
   }
+  async function bulkReingest() {
+    const sid = subj?.id;
+    const ids = selIds;
+    if (!sid || ids.length === 0) return;
+    app.pushToast({ kind: "info", title: `Re-ingesting ${ids.length} source${ids.length === 1 ? "" : "s"}…`, body: "Re-OCR / re-chunk in progress." });
+    clearSel();
+    for (const id of ids) {
+      // Surface each as a running job card so progress is visible.
+      jobs.start({
+        kind: "source",
+        label: srcList.find((s) => s.id === id)?.name ?? "source",
+        subjectId: sid,
+        topicId: null,
+        run: () => api.reingestSource(id),
+        onDone: () => { app.refresh(); loadSources(); },
+      });
+    }
+  }
 </script>
 
 {#if subj}
@@ -211,6 +229,9 @@
                     placeholder="Move to…"
                   />
                 </div>
+                <button class="btn btn--sm" onclick={bulkReingest} title="Re-OCR / re-chunk selected sources">
+                  <Icon name="refresh" size={12} /> Re-ingest
+                </button>
                 <button class="btn btn--sm sv-delete" onclick={bulkDelete}>
                   <Icon name="x" size={12} /> Delete
                 </button>

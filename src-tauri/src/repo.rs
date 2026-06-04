@@ -382,6 +382,12 @@ pub fn count_chunks(conn: &Connection, source_id: &str) -> Result<i64> {
     )?)
 }
 
+/// Drop all stored chunks for a source (used before a re-ingest).
+pub fn clear_chunks(conn: &Connection, source_id: &str) -> Result<()> {
+    conn.execute("DELETE FROM chunks WHERE source_id=?1", params![source_id])?;
+    Ok(())
+}
+
 /// Cosine top-k over stored chunk vectors, optionally scoped to a subject.
 /// (sqlite-vec is the locked upgrade path; this is the foundation scan.)
 pub fn search_chunks(

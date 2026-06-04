@@ -345,6 +345,121 @@ fn ocr_via_vision(state: &State<AppState>, kind: &str, path: Option<&str>) -> Re
     Ok(out)
 }
 
+/// Re-run ingestion for an EXISTING source in place: re-parse (re-OCR / re-
+/// transcribe), re-chunk, re-embed, replacing its old chunks. Used to retry a
+/// failed source or refresh one. Reuses the stored original file (or origin
+/// URL) so nothing needs re-uploading.
+#[tauri::command]
+pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<IngestResult> {
+        let state = app.state::<AppState>();
+        let src = {
+            let c = state.db.lock().unwrap();
+            repo::get_source(&c, &id)?
+        };
+        // Reconstruct the ingest input from the stored row.
+        let mut input = AddSourceInput {
+            subject_id: src.subject_id.clone(),
+            topic_id: src.topic_id.clone(),
+            name: Some(src.name.clone()),
+            kind: Some(src.kind.clone()),
+            text: None,
+            path: None,
+            url: None,
+            tags: Vec::new(),
+        };
+        match src.kind.as_str() {
+            "web" | "yt" => input.url = src.origin.clone(),
+            "txt" | "md" => {
+                input.text = src.content.clone();
+                input.path = src.origin.clone();
+            }
+            _ => input.path = src.stored_path.clone().or_else(|| src.origin.clone()),
+        }
+
+        emit_progress(&app, &id, "parsing", "re-reading source", 15);
+        let (mut text, mut warning) = ingest::parse(&src.kind, &input)?;
+
+        // Same enrichment as add_source: OCR for images/scanned PDFs, Whisper for audio.
+        let needs_ocr = src.kind == "image" || (src.kind == "pdf" && text.trim().is_empty());
+        if needs_ocr {
+            emit_progress(&app, &id, "parsing", "running OCR (vision model)", 35);
+            match ocr_via_vision(&state, &src.kind, input.path.as_deref()) {
+                Ok(t) if !t.trim().is_empty() => {
+                    text = t;
+                    warning = None;
+                }
+                Ok(_) => {}
+                Err(e) => warning = Some(format!("OCR failed: {e}")),
+            }
+        } else if src.kind == "audio" {
+            if let Some(p) = input.path.as_deref() {
+                emit_progress(&app, &id, "parsing", "transcribing audio (Whisper)", 35);
+                let (t, w) = transcribe(Path::new(p));
+                if !t.trim().is_empty() {
+                    text = t;
+                    warning = w;
+                }
+            }
+        }
+
+        emit_progress(&app, &id, "chunking", "splitting text", 50);
+        let chunks = ingest::chunk_text(&text, 900, 150);
+        let (provider, gemini_key, ollama_url) = {
+            let c = state.db.lock().unwrap();
+            (
+                repo::get_setting(&c, "embed_provider")?.unwrap_or_else(|| "stub".into()),
+                repo::get_setting(&c, "gemini_api_key")?,
+                repo::get_setting(&c, "ollama_url")?,
+            )
+        };
+        let embedder = embed::from_settings(&provider, gemini_key.as_deref(), ollama_url.as_deref());
+        emit_progress(&app, &id, "embedding", &format!("{} chunks", chunks.len()), 70);
+        let vectors = ingest::embed_chunks(embedder.as_ref(), &chunks)
+            .or_else(|_| ingest::embed_chunks(&embed::StubEmbedder, &chunks))?;
+
+        emit_progress(&app, &id, "storing", "writing vectors", 88);
+        {
+            let c = state.db.lock().unwrap();
+            repo::clear_chunks(&c, &id)?;
+            for (i, (chunk, vec)) in chunks.iter().zip(vectors.iter()).enumerate() {
+                repo::insert_chunk(
+                    &c,
+                    &id,
+                    &src.subject_id,
+                    src.topic_id.as_deref(),
+                    i as i64,
+                    chunk,
+                    None,
+                    vec.len() as i64,
+                    &f32s_to_blob(vec),
+                )?;
+            }
+            let chunk_count = repo::count_chunks(&c, &id)?;
+            let status = if chunks.is_empty() { "draft" } else { "ready" };
+            let meta = if chunks.is_empty() {
+                warning.clone().unwrap_or_else(|| "no extractable text".into())
+            } else {
+                format!("{chunk_count} chunks · {} chars", text.chars().count())
+            };
+            repo::finalize_source(&c, &id, status, Some(&meta), Some(&text), warning.as_deref())?;
+        }
+        emit_progress(&app, &id, "done", "re-ingested", 100);
+
+        let c = state.db.lock().unwrap();
+        let source = repo::get_source(&c, &id)?;
+        let chunk_count = repo::count_chunks(&c, &id)?;
+        Ok(IngestResult {
+            source,
+            chunk_count,
+            chars: text.chars().count() as i64,
+            warning,
+        })
+    })
+    .await
+    .map_err(|e| Error::Other(format!("re-ingest task failed: {e}")))?
+}
+
 /// Full pipeline: detect → parse → chunk → embed → store, emitting progress.
 #[tauri::command]
 pub async fn add_source(

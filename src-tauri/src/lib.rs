@@ -79,6 +79,7 @@ pub fn run() {
             commands::get_setting,
             commands::set_setting,
             commands::add_source,
+            commands::reingest_source,
             commands::search_chunks,
             commands::seed_demo,
             commands::env_probe,

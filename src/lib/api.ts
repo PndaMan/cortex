@@ -148,6 +148,8 @@ export const updateSource = (
   tags?: string[]
 ) => invoke<Source>("update_source", { id, name, topicId, tags });
 export const deleteSource = (id: string) => invoke<void>("delete_source", { id });
+/** Re-run ingestion (re-OCR/re-chunk/re-embed) for an existing source in place. */
+export const reingestSource = (id: string) => invoke<IngestResult>("reingest_source", { id });
 export const listChunks = (sourceId: string) =>
   invoke<ChunkInfo[]>("list_chunks", { sourceId });
 export const addSource = (input: AddSourceInput) =>
