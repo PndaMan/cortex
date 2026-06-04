@@ -128,6 +128,9 @@ pub fn run() {
             // review
             review::record_attempt,
             review::review_set,
+            review::srs_grade,
+            review::srs_due,
+            review::srs_stats,
             // google calendar
             google::google_status,
             google::google_connect,

@@ -259,6 +259,34 @@ pub struct ReviewItem {
     pub item_key: String,
 }
 
+/// A card due for spaced-repetition review (`srs_due`). `item_key` matches the
+/// flashcard front / quiz question so the frontend can locate the live card.
+#[derive(Debug, Clone, Serialize)]
+pub struct DueCard {
+    pub item_index: i64,
+    pub item_key: String,
+    pub due_at: i64,
+    pub reps: i64,
+    pub interval_d: i64,
+}
+
+/// Result of grading a card with SM-2 — the updated schedule, so the UI can show
+/// "next due in N days" feedback.
+#[derive(Debug, Clone, Serialize)]
+pub struct SrsResult {
+    pub due_at: i64,
+    pub interval_d: i64,
+    pub reps: i64,
+    pub ease: f64,
+}
+
+/// Per-kind due/total counts for surfacing "N due today".
+#[derive(Debug, Clone, Serialize)]
+pub struct SrsStats {
+    pub due: i64,
+    pub total: i64,
+}
+
 // ---- database stats ---------------------------------------------------
 
 /// Storage + content counts for the Settings → Data screen.

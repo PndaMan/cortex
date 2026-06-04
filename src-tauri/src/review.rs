@@ -40,3 +40,42 @@ pub fn review_set(
     let c = state.db.lock().unwrap();
     repo::wrong_items(&c, &subject_id, &kind)
 }
+
+/// Grade a card with SM-2 and persist its next-due schedule. `quality` 0-5
+/// (Again≈1, Hard≈3, Good≈4, Easy≈5). Returns the updated schedule.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn srs_grade(
+    state: State<AppState>,
+    subject_id: String,
+    material_id: Option<String>,
+    kind: String,
+    item_index: i64,
+    item_key: String,
+    quality: i64,
+) -> Result<SrsResult> {
+    let c = state.db.lock().unwrap();
+    repo::srs_grade(
+        &c,
+        &subject_id,
+        material_id.as_deref(),
+        &kind,
+        item_index,
+        &item_key,
+        quality,
+    )
+}
+
+/// Cards due for review now (due_at <= now), oldest first.
+#[tauri::command]
+pub fn srs_due(state: State<AppState>, subject_id: String, kind: String) -> Result<Vec<DueCard>> {
+    let c = state.db.lock().unwrap();
+    repo::srs_due(&c, &subject_id, &kind)
+}
+
+/// Due-now and total scheduled-card counts for a subject+kind.
+#[tauri::command]
+pub fn srs_stats(state: State<AppState>, subject_id: String, kind: String) -> Result<SrsStats> {
+    let c = state.db.lock().unwrap();
+    repo::srs_stats(&c, &subject_id, &kind)
+}

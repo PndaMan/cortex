@@ -1292,6 +1292,108 @@ pub fn wrong_items(conn: &Connection, subject_id: &str, kind: &str) -> Result<Ve
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
+// ---- SM-2 spaced repetition -------------------------------------------
+
+/// Grade a card with the SM-2 algorithm and upsert its schedule. `quality` is
+/// 0-5 (Again≈1, Hard≈3, Good≈4, Easy≈5). Also logs an `attempts` row (correct =
+/// quality >= 3) so the legacy "review missed" set keeps working. Returns the new
+/// schedule. SM-2 reference: ease' = ease + (0.1 - (5-q)(0.08 + (5-q)0.02)), min 1.3.
+pub fn srs_grade(
+    conn: &Connection,
+    subject_id: &str,
+    material_id: Option<&str>,
+    kind: &str,
+    item_index: i64,
+    item_key: &str,
+    quality: i64,
+) -> Result<SrsResult> {
+    let q = quality.clamp(0, 5);
+    let now = now_ms();
+
+    // Current schedule for this item, or SM-2 defaults for a brand-new card.
+    let existing: Option<(f64, i64, i64, i64)> = conn
+        .query_row(
+            "SELECT ease, interval_d, reps, lapses FROM srs_cards
+             WHERE subject_id=?1 AND kind=?2 AND item_key=?3",
+            params![subject_id, kind, item_key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()?;
+    let (mut ease, mut interval_d, mut reps, mut lapses) = existing.unwrap_or((2.5, 0, 0, 0));
+
+    if q < 3 {
+        // Lapse: reset reps, relearn tomorrow.
+        reps = 0;
+        interval_d = 1;
+        lapses += 1;
+    } else {
+        reps += 1;
+        interval_d = match reps {
+            1 => 1,
+            2 => 6,
+            _ => ((interval_d as f64) * ease).round() as i64,
+        }
+        .max(1);
+    }
+    let qf = q as f64;
+    ease = (ease + (0.1 - (5.0 - qf) * (0.08 + (5.0 - qf) * 0.02))).max(1.3);
+    let due_at = now + interval_d * 86_400_000;
+
+    conn.execute(
+        "INSERT INTO srs_cards
+            (id, subject_id, material_id, kind, item_index, item_key,
+             ease, interval_d, reps, lapses, last_grade, due_at, created_at, updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13)
+         ON CONFLICT(subject_id, kind, item_key) DO UPDATE SET
+            material_id=excluded.material_id, item_index=excluded.item_index,
+            ease=excluded.ease, interval_d=excluded.interval_d, reps=excluded.reps,
+            lapses=excluded.lapses, last_grade=excluded.last_grade,
+            due_at=excluded.due_at, updated_at=excluded.updated_at",
+        params![
+            new_id(), subject_id, material_id, kind, item_index, item_key,
+            ease, interval_d, reps, lapses, q, due_at, now
+        ],
+    )?;
+
+    // Keep the legacy attempt log in sync (drives `wrong_items`).
+    record_attempt(conn, subject_id, material_id, kind, item_index, item_key, q >= 3)?;
+
+    Ok(SrsResult { due_at, interval_d, reps, ease })
+}
+
+/// Cards whose `due_at` has arrived (<= now), oldest-due first — the study queue.
+pub fn srs_due(conn: &Connection, subject_id: &str, kind: &str) -> Result<Vec<DueCard>> {
+    let mut stmt = conn.prepare(
+        "SELECT item_index, item_key, due_at, reps, interval_d FROM srs_cards
+         WHERE subject_id=?1 AND kind=?2 AND due_at<=?3 ORDER BY due_at ASC",
+    )?;
+    let rows = stmt.query_map(params![subject_id, kind, now_ms()], |r| {
+        Ok(DueCard {
+            item_index: r.get(0)?,
+            item_key: r.get(1)?,
+            due_at: r.get(2)?,
+            reps: r.get(3)?,
+            interval_d: r.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Due-now and total scheduled-card counts for a subject+kind (e.g. "5 due").
+pub fn srs_stats(conn: &Connection, subject_id: &str, kind: &str) -> Result<SrsStats> {
+    let due: i64 = conn.query_row(
+        "SELECT count(*) FROM srs_cards WHERE subject_id=?1 AND kind=?2 AND due_at<=?3",
+        params![subject_id, kind, now_ms()],
+        |r| r.get(0),
+    )?;
+    let total: i64 = conn.query_row(
+        "SELECT count(*) FROM srs_cards WHERE subject_id=?1 AND kind=?2",
+        params![subject_id, kind],
+        |r| r.get(0),
+    )?;
+    Ok(SrsStats { due, total })
+}
+
 // ---- source move (re-file across subject/topic) -----------------------
 
 /// Re-file a source to a new subject (and optional topic), keeping retrieval
@@ -1338,6 +1440,40 @@ mod tests {
         assert_eq!(subs[0].topics.len(), 1);
         assert_eq!(subs[0].topics[0].sources.len(), 1);
         assert_eq!(subs[0].topics[0].sources[0].tags.len(), 2);
+    }
+
+    #[test]
+    fn srs_sm2_schedule_progresses_and_lapses() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let sid = insert_subject(&c, "Bio", None, None, None).unwrap();
+        let key = "What is ATP?";
+
+        // First "Good" grade: a new card → interval 1 day, reps 1.
+        let r1 = srs_grade(&c, &sid, None, "flashcard", 0, key, 4).unwrap();
+        assert_eq!(r1.reps, 1);
+        assert_eq!(r1.interval_d, 1);
+
+        // Second "Good": SM-2 second step → interval 6 days, reps 2.
+        let r2 = srs_grade(&c, &sid, None, "flashcard", 0, key, 4).unwrap();
+        assert_eq!(r2.reps, 2);
+        assert_eq!(r2.interval_d, 6);
+
+        // Third "Good": interval = round(6 * ease) with ease > 1.3.
+        let r3 = srs_grade(&c, &sid, None, "flashcard", 0, key, 4).unwrap();
+        assert_eq!(r3.reps, 3);
+        assert!(r3.interval_d > 6, "interval should grow: {}", r3.interval_d);
+
+        // Exactly one schedule row (upsert, not insert-per-grade); 1 total card.
+        assert_eq!(srs_stats(&c, &sid, "flashcard").unwrap().total, 1);
+
+        // "Again" lapse resets reps to 0 and interval back to 1 day.
+        let r4 = srs_grade(&c, &sid, None, "flashcard", 0, key, 1).unwrap();
+        assert_eq!(r4.reps, 0);
+        assert_eq!(r4.interval_d, 1);
+
+        // The legacy "wrong items" set picks up the lapse (latest attempt wrong).
+        assert_eq!(wrong_items(&c, &sid, "flashcard").unwrap().len(), 1);
     }
 
     #[test]

@@ -8,11 +8,12 @@
   let { onExit, deck: deckProp }: { onExit?: () => void; deck?: { q: string; a: string }[] } = $props();
 
   const deck = $derived(deckProp && deckProp.length > 0 ? deckProp : mock.flashcards);
+  // `q` is the SM-2 quality grade (0-5) sent to the scheduler.
   const RATINGS = [
-    { id: "again", label: "Again", key: "1", cls: "again" },
-    { id: "hard",  label: "Hard",  key: "2", cls: "hard"  },
-    { id: "good",  label: "Good",  key: "3", cls: "good"  },
-    { id: "easy",  label: "Easy",  key: "4", cls: "easy"  },
+    { id: "again", label: "Again", key: "1", cls: "again", q: 1 },
+    { id: "hard",  label: "Hard",  key: "2", cls: "hard",  q: 3 },
+    { id: "good",  label: "Good",  key: "3", cls: "good",  q: 4 },
+    { id: "easy",  label: "Easy",  key: "4", cls: "easy",  q: 5 },
   ] as const;
 
   let i       = $state(0);
@@ -23,6 +24,8 @@
 
   // Review mode: null = normal deck, string[] = only fronts in this list
   let reviewKeys  = $state<string[] | null>(null);
+  // Cards due now per the SM-2 schedule (for the "Study due" affordance).
+  let dueCount    = $state(0);
   // Active deck: review subset or full deck
   let activeDeck = $derived(
     reviewKeys
@@ -32,11 +35,11 @@
 
   function rate(cls: string) {
     if (glow) return;
-    // "good" / "easy" = got it; "again" / "hard" = missed
-    const gotIt = cls === "good" || cls === "easy";
+    const quality = RATINGS.find((r) => r.cls === cls)?.q ?? 4;
     const sid = app.activeSubjectId;
     if (sid) {
-      api.recordAttempt(sid, "flashcard", i, activeDeck[i].q, gotIt).catch((e: unknown) => {
+      // SM-2 grade (also logs the attempt for the "review missed" set).
+      api.srsGrade(sid, "flashcard", i, activeDeck[i].q, quality).catch((e: unknown) => {
         app.pushToast({ kind: "error", title: "Record failed", body: String(e) });
       });
     }
@@ -69,6 +72,34 @@
       app.pushToast({ kind: "error", title: "Review load failed", body: String(e) });
     }
   }
+
+  // SM-2: study only the cards that are due now (by their scheduled due date).
+  async function startDue() {
+    const sid = app.activeSubjectId;
+    if (!sid) { app.pushToast({ kind: "warning", title: "No subject selected" }); return; }
+    try {
+      const due = await api.srsDue(sid, "flashcard");
+      if (due.length === 0) {
+        app.pushToast({ kind: "success", title: "Nothing due — you're all caught up 🎉" });
+        return;
+      }
+      reviewKeys = due.map((d) => d.item_key);
+      i = 0; done = false; flipped = false; rated = 0; glow = null;
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Due load failed", body: String(e) });
+    }
+  }
+
+  async function refreshDue() {
+    const sid = app.activeSubjectId;
+    if (!sid) return;
+    try {
+      dueCount = (await api.srsStats(sid, "flashcard")).due;
+    } catch { /* non-fatal */ }
+  }
+  // Re-pull the due count on mount, when the subject changes, and whenever a
+  // session ends or its mode flips (grading shifts cards' due dates).
+  $effect(() => { void done; void reviewKeys; void app.activeSubjectId; refreshDue(); });
 
   // Claim the keyboard while the session is mounted so the global Helix engine
   // (space-leader, etc.) stays out of the way. Runs once on mount.
@@ -114,9 +145,14 @@
         <Icon name="check" size={22} color="var(--ok)" />
       </div>
       <h2 class="read">Deck complete</h2>
-      <p class="mono muted">{activeDeck.length} cards · come back tomorrow — 3 are due then.</p>
+      <p class="mono muted">
+        {activeDeck.length} cards graded · spaced-repetition schedule updated.
+      </p>
       <div class="row gap-2" style="justify-content: center">
         <button class="btn btn--primary" onclick={restart}>Study again</button>
+        {#if dueCount > 0}
+          <button class="btn" onclick={startDue}>Study due · {dueCount}</button>
+        {/if}
         <button class="btn" onclick={startReview}>Review missed</button>
         {#if onExit}
           <button class="btn" onclick={onExit}>
@@ -136,6 +172,11 @@
         <div class="fc-bar" style:width="{(i / activeDeck.length * 100)}%"></div>
       </div>
       {#if !reviewKeys}
+        {#if dueCount > 0}
+          <button class="btn btn--sm btn--primary" onclick={startDue} title="Study the cards scheduled as due today">
+            Study due · {dueCount}
+          </button>
+        {/if}
         <button class="btn btn--sm" onclick={startReview} title="Review previously missed cards">
           Review missed
         </button>

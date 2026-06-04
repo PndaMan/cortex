@@ -432,6 +432,48 @@ export const recordAttempt = (
 export const reviewSet = (subjectId: string, kind: "quiz" | "flashcard") =>
   invoke<ReviewItem[]>("review_set", { subjectId, kind });
 
+// ---- SM-2 spaced repetition ----
+export interface DueCard {
+  item_index: number;
+  item_key: string;
+  due_at: number;
+  reps: number;
+  interval_d: number;
+}
+export interface SrsResult {
+  due_at: number;
+  interval_d: number;
+  reps: number;
+  ease: number;
+}
+export interface SrsStats {
+  due: number;
+  total: number;
+}
+/** Grade a card with SM-2. quality 0-5 (Again≈1, Hard≈3, Good≈4, Easy≈5). */
+export const srsGrade = (
+  subjectId: string,
+  kind: "quiz" | "flashcard",
+  itemIndex: number,
+  itemKey: string,
+  quality: number,
+  materialId?: string | null
+) =>
+  invoke<SrsResult>("srs_grade", {
+    subjectId,
+    materialId,
+    kind,
+    itemIndex,
+    itemKey,
+    quality,
+  });
+/** Cards due for review now (oldest-due first). */
+export const srsDue = (subjectId: string, kind: "quiz" | "flashcard") =>
+  invoke<DueCard[]>("srs_due", { subjectId, kind });
+/** Due-now + total scheduled counts for a subject+kind. */
+export const srsStats = (subjectId: string, kind: "quiz" | "flashcard") =>
+  invoke<SrsStats>("srs_stats", { subjectId, kind });
+
 // ---- events ----
 export const onIngestProgress = (
   cb: (p: IngestProgress) => void
