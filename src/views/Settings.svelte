@@ -298,6 +298,19 @@
     api.setSettings({ homelab_enabled: String(h), ollama_url: ep }).catch(() => {});
   });
 
+  // persist per-job homelab routing preferences (previously local-only → they
+  // silently reverted on reload). Backend consumption of these is still pending.
+  let jobsHydrated = false;
+  $effect(() => {
+    const snapshot = { w: jobs.whisper, l: jobs.llm, b: jobs.backups };
+    if (!jobsHydrated) { jobsHydrated = true; return; }
+    api.setSettings({
+      job_whisper: String(snapshot.w),
+      job_llm: String(snapshot.l),
+      job_backups: String(snapshot.b),
+    }).catch(() => {});
+  });
+
   // ---- audio state ----
   let autoplay = $state(false);
   let station  = $state("lofi");
@@ -344,16 +357,18 @@
     app.pushToast({ kind: "info", title: "Caches cleared", body: "Local in-memory caches reset." });
   }
 
-  function exportData() {
-    // No backend export command exists yet — be honest rather than fake a file.
-    if (stats) {
-      app.pushToast({
-        kind: "info",
-        title: "Export coming soon",
-        body: `Would archive ${stats.subjects} subjects · ${stats.sources} sources · ${stats.chunks} chunks (${fmtBytes(stats.db_bytes)}).`,
+  async function exportData() {
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const dest = await save({
+        defaultPath: "cortex-export.db",
+        filters: [{ name: "SQLite database", extensions: ["db"] }],
       });
-    } else {
-      app.pushToast({ kind: "info", title: "Export coming soon", body: "Portable archive export isn't wired up yet." });
+      if (!dest) return;
+      await api.exportDatabase(dest);
+      app.pushToast({ kind: "success", title: "Exported", body: dest });
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Export failed", body: String(e) });
     }
   }
 
@@ -411,6 +426,10 @@
       if (s.homelab_enabled !== undefined) homelab  = s.homelab_enabled === "true";
       if (s.ollama_url)                    endpoint = s.ollama_url;
       if (s.searxng_url)                   searxng  = s.searxng_url;
+      // Per-job homelab routing preferences
+      if (s.job_whisper !== undefined) jobs = { ...jobs, whisper: s.job_whisper === "true" };
+      if (s.job_llm     !== undefined) jobs = { ...jobs, llm:     s.job_llm === "true" };
+      if (s.job_backups !== undefined) jobs = { ...jobs, backups: s.job_backups === "true" };
 
       // Appearance
       if (s.reading_font)   readFont      = s.reading_font;

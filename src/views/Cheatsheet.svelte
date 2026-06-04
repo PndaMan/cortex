@@ -6,6 +6,25 @@
   import { jobs } from "../lib/jobs.svelte";
   import GeneratingCard from "../components/GeneratingCard.svelte";
   import RichText from "../components/RichText.svelte";
+  import { savePdf } from "../lib/pdf";
+
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  // ── jump index ───────────────────────────────────────────────
+  let indexPinned = $state(false);
+  // Per-section expand state (collapsed by default so the index stays compact).
+  let idxExpanded = $state<Record<string, boolean>>({});
+  function toggleIdxSec(id: string) {
+    idxExpanded = { ...idxExpanded, [id]: !idxExpanded[id] };
+  }
+  // Offset the floating index left of the chat dock when it's showing.
+  const chatDockOpen = $derived(
+    app.chatOpen && app.view === "subject" && app.subjectTab !== "chats"
+  );
+  function jumpTo(id: string) {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   // ── topic selection ──────────────────────────────────────────
   // null = the whole-subject cheatsheet ("All"); otherwise a topic id.
@@ -145,16 +164,43 @@
     });
   }
 
+  // Command-palette "Regenerate cheatsheet" bumps a nonce; regenerate the
+  // whole-subject sheet here, where generation + live refresh already live.
+  let lastRegenNonce = app.cheatsheetRegenNonce;
+  $effect(() => {
+    const n = app.cheatsheetRegenNonce;
+    if (n !== lastRegenNonce) {
+      lastRegenNonce = n;
+      if (app.activeSubject && !csGenerating) {
+        selectedTopicId = null; // whole-subject scope
+        generate();
+      }
+    }
+  });
+
   function selectTopic(id: string | null) {
     if (selectedTopicId === id) return;
     selectedTopicId = id;
   }
 
   // ── EXPORT ───────────────────────────────────────────────────
-  // "Export PDF" prints the current view (single topic OR whole subject) via
-  // the existing @media print rules.
-  function exportCurrent() {
-    window.print();
+  // Render the current sheet (single topic OR whole subject) to a real PDF via
+  // the backend (headless Chromium) — reliable where webview print() isn't.
+  async function exportCurrent() {
+    const el = document.querySelector(".cs-doc .cs-sections");
+    const sub = app.activeSubject;
+    if (!el || !sub || !hasCheatsheet) {
+      app.pushToast({ kind: "warning", title: "Nothing to export", body: "Generate a cheatsheet first." });
+      return;
+    }
+    const subtitle = `${sub.name}${sub.code ? " · " + sub.code : ""} · synthesized from ${sourceCount} source${sourceCount !== 1 ? "s" : ""} · ${sectionCount} enforced sections`;
+    const body =
+      `<article class="cs-doc"><div class="cs-doc-head"><div>` +
+      `<div class="eyebrow">Cheatsheet · ${selectedTopicId === null ? "Whole subject" : "Topic"}</div>` +
+      `<h1 class="cs-title">${esc(cheatTopic)}</h1>` +
+      `<div class="cs-sub">${esc(subtitle)}</div></div></div>` +
+      `<div class="cs-sections">${el.innerHTML}</div></article>`;
+    await savePdf(body, `${sub.name} — ${cheatTopic}`);
   }
 
   // "Export all" loads the whole-subject sheet PLUS every topic-with-sources
@@ -185,10 +231,13 @@
         });
         return;
       }
-      // Let the export block render before printing.
+      // Let the hidden export block render, then serialize it to the PDF.
       await new Promise((r) => requestAnimationFrame(() => r(null)));
       await new Promise((r) => requestAnimationFrame(() => r(null)));
-      window.print();
+      const block = document.querySelector(".cs-export-all");
+      if (block) {
+        await savePdf(block.innerHTML, `${sub.name} — all cheatsheets`);
+      }
     } finally {
       exporting = false;
       // Clear after the print dialog returns so the hidden block doesn't linger.
@@ -313,6 +362,7 @@
         <div class="cs-sections">
           {#each sections as sec (sec.id)}
             <section
+              id={"cs-sec-" + sec.id}
               class="cs-section{sec.state === 'draft-pending' ? ' is-pending' : ''}"
             >
               <header class="cs-sec-head">
@@ -329,7 +379,7 @@
 
               <dl class="cs-list">
                 {#each sec.items as item, i (i)}
-                  <div class="cs-item">
+                  <div class="cs-item" id={"cs-it-" + sec.id + "-" + i}>
                     <dt>{item.t}</dt>
                     <dd><RichText text={item.d} /></dd>
                   </div>
@@ -338,6 +388,42 @@
             </section>
           {/each}
         </div>
+
+        <!-- Floating, hover-expand, collapsible jump index (table of contents).
+             Lets you leap to any section or sub-topic. Sits just left of the chat
+             dock when it's open. -->
+        <nav
+          class="cs-index"
+          class:is-pinned={indexPinned}
+          style:right={chatDockOpen ? "calc(var(--chat-w, 396px) + 14px)" : "16px"}
+          aria-label="Cheatsheet index"
+        >
+          <button
+            class="cs-index-tab"
+            onclick={() => (indexPinned = !indexPinned)}
+            title={indexPinned ? "Unpin index" : "Pin index"}
+          >
+            <Icon name="grid" size={13} />
+          </button>
+          <div class="cs-index-panel">
+            {#each sections as sec (sec.id)}
+              <div class="cs-idx-secrow">
+                <button
+                  class="cs-idx-caret"
+                  onclick={() => toggleIdxSec(sec.id)}
+                  title={idxExpanded[sec.id] ? "Collapse" : "Expand"}
+                  aria-expanded={!!idxExpanded[sec.id]}
+                >{idxExpanded[sec.id] ? "▾" : "▸"}</button>
+                <button class="cs-idx-sec" onclick={() => jumpTo("cs-sec-" + sec.id)}>{sec.title}</button>
+              </div>
+              {#if idxExpanded[sec.id]}
+                {#each sec.items as item, i (i)}
+                  <button class="cs-idx-item" title={item.t} onclick={() => jumpTo("cs-it-" + sec.id + "-" + i)}>{item.t}</button>
+                {/each}
+              {/if}
+            {/each}
+          </div>
+        </nav>
       {/if}
     {/if}
   </div>
@@ -385,6 +471,108 @@
 </div>
 
 <style>
+  /* ── floating jump index (TOC) ─────────────────────────────── */
+  .cs-index {
+    position: fixed;
+    top: 96px;
+    z-index: 28;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .cs-index-tab {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: color-mix(in oklab, var(--surface) 70%, transparent);
+    color: var(--fg-muted);
+    backdrop-filter: blur(8px);
+    cursor: pointer;
+    transition: color var(--dur), border-color var(--dur);
+  }
+  .cs-index-tab:hover { color: var(--fg-bright); border-color: var(--border-strong); }
+  .cs-index.is-pinned .cs-index-tab { color: var(--accent); border-color: var(--accent); }
+  .cs-index-panel {
+    max-width: 0;
+    max-height: 72vh;
+    overflow: hidden auto;
+    opacity: 0;
+    padding: 0;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    background: color-mix(in oklab, var(--surface) 82%, transparent);
+    backdrop-filter: blur(10px);
+    transition: max-width var(--dur-slow) var(--ease), opacity var(--dur) var(--ease),
+      padding var(--dur) var(--ease), border-color var(--dur) var(--ease);
+  }
+  .cs-index:hover .cs-index-panel,
+  .cs-index.is-pinned .cs-index-panel {
+    max-width: 250px;
+    opacity: 1;
+    padding: 7px;
+    border-color: var(--border);
+  }
+  .cs-idx-secrow { display: flex; align-items: center; gap: 2px; }
+  .cs-idx-caret {
+    flex: none;
+    width: 18px;
+    padding: 6px 0 2px;
+    font-size: 9px;
+    color: var(--fg-faint);
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+  .cs-idx-caret:hover { color: var(--fg-bright); }
+  .cs-idx-sec {
+    flex: 1;
+    min-width: 0;
+    display: block;
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    padding: 7px 8px 2px 2px;
+    cursor: pointer;
+    background: none;
+    border: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cs-idx-item {
+    display: block;
+    width: 100%;
+    max-width: 236px;
+    text-align: left;
+    font-size: 12px;
+    color: var(--fg-muted);
+    padding: 3px 8px 3px 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-radius: 6px;
+    cursor: pointer;
+    background: none;
+    border: none;
+  }
+  .cs-idx-item:hover,
+  .cs-idx-sec:hover { color: var(--fg-bright); background: color-mix(in oklab, var(--accent) 13%, transparent); }
+  @media print { .cs-index { display: none !important; } }
+
+  /* faint divider between definition/concept items so they don't read as a wall */
+  :global(.cs-item) + :global(.cs-item) {
+    border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+    padding-top: 16px;
+  }
+
   /* ── topic tab bar ─────────────────────────────────────────── */
   .cs-tabs {
     display: flex;

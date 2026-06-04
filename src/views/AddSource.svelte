@@ -13,7 +13,7 @@
   let textTitle = $state("");
 
   const methods = [
-    { id: "upload" as const, ico: "doc",    t: "Upload File",    d: "PDF · PPTX · DOCX · TXT · MD", k: "u" },
+    { id: "upload" as const, ico: "doc",    t: "Upload Files",   d: "PDF · PPTX · DOCX · TXT · MD", k: "u" },
     { id: "url"    as const, ico: "search", t: "Paste URL",       d: "web page · YouTube",            k: "p" },
     { id: "text"   as const, ico: "doc",    t: "Paste Text",      d: "markdown · plain text",         k: "t" },
     { id: "record" as const, ico: "record", t: "Record Lecture",  d: "live audio + transcript",       k: "r" },
@@ -65,8 +65,8 @@
     return true;
   }
 
-  /** Fire-and-forget: registers a background job then navigates to the subject. */
-  function startIngest(input: Parameters<typeof api.addSource>[0], name: string) {
+  /** Register a background ingest job (no navigation). */
+  function queueIngest(input: Parameters<typeof api.addSource>[0], name: string) {
     jobs.start({
       kind: "source",
       label: name,
@@ -75,6 +75,11 @@
       run: () => api.addSource(input),
       onDone: () => app.refresh(),
     });
+  }
+
+  /** Queue one ingest then jump to the subject's Sources tab. */
+  function startIngest(input: Parameters<typeof api.addSource>[0], name: string) {
+    queueIngest(input, name);
     app.openSubject(input.subject_id);
     app.setTab("sources");
   }
@@ -84,15 +89,24 @@
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const picked = await open({
-        multiple: false,
+        multiple: true,
         directory: false,
         filters: [{ name: "Documents", extensions: ["pdf", "docx", "pptx", "doc", "ppt", "txt", "md"] }],
       });
-      const path = typeof picked === "string" ? picked : picked?.[0] ?? null;
-      if (!path) return;
+      const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+      if (paths.length === 0) return;
 
-      const name = path.split(/[\\/]/).pop() ?? path;
-      startIngest({ subject_id: selectedSubjectId, topic_id: topicId, path, name, tags: [] }, name);
+      // Queue every picked file (concurrent ingests are safe now that each
+      // LibreOffice conversion gets its own profile), then navigate once.
+      for (const path of paths) {
+        const name = path.split(/[\\/]/).pop() ?? path;
+        queueIngest({ subject_id: selectedSubjectId, topic_id: topicId, path, name, tags: [] }, name);
+      }
+      if (paths.length > 1) {
+        app.pushToast({ kind: "info", title: `Ingesting ${paths.length} files`, body: "Added to the queue." });
+      }
+      app.openSubject(selectedSubjectId);
+      app.setTab("sources");
     } catch (e) {
       app.pushToast({ kind: "error", title: "File pick failed", body: String(e) });
     }
@@ -240,7 +254,7 @@
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="add-drop" onclick={beginUpload}>
           <Icon name="doc" size={20} color="var(--fg-faint)" />
-          <span class="mono">Click to browse or drop a file here</span>
+          <span class="mono">Click to browse — select one or many files</span>
         </div>
       </div>
     {/if}
@@ -270,7 +284,7 @@
         </button>
       {:else if method === "upload"}
         <button class="btn btn--primary" disabled={!selectedSubject} onclick={beginUpload}>
-          Pick file <Icon name="arrowR" size={13} />
+          Pick file(s) <Icon name="arrowR" size={13} />
         </button>
       {:else if method === "photo"}
         <button class="btn btn--primary" disabled={!selectedSubject} onclick={beginPhoto}>

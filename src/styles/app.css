@@ -187,7 +187,12 @@
 .src-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 9px; }
 .source-tile { display: flex; flex-direction: column; gap: 9px; text-align: left; padding: 13px 14px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--rad-3); cursor: pointer; transition: border-color var(--dur-fast), background var(--dur-fast), transform var(--dur-fast); }
 .source-tile:hover { border-color: var(--border-strong); background: var(--surface-2); transform: translateY(-1px); }
+.source-tile.is-sel { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 10%, var(--surface)); }
 .stl-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.src-check { flex: none; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; border: 1px solid var(--border-strong); background: var(--bg); color: var(--accent); cursor: pointer; transition: border-color var(--dur-fast), background var(--dur-fast); }
+.src-check:hover { border-color: var(--accent); }
+.src-check.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.src-bulkbar { display: flex; align-items: center; gap: 9px; margin-bottom: var(--sp-4); padding: 8px 11px; border: 1px solid var(--accent); border-radius: var(--rad-3); background: color-mix(in oklab, var(--accent) 8%, var(--surface)); }
 .stl-name { font-size: var(--t-sm); color: var(--fg-bright); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stl-meta { font-size: var(--t-2xs); color: var(--fg-faint); }
 .chats-tab { flex: 1; display: flex; min-height: 0; max-width: 820px; margin: 0 auto; width: 100%; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
@@ -215,13 +220,13 @@
 .cs-sec-title { font-family: var(--font-mono); font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
 .cs-section.is-pending .cs-sec-title { color: var(--warn); }
 .cs-sec-count { margin-left: auto; font-size: var(--t-2xs); color: var(--fg-faint); }
-.cs-list { display: flex; flex-direction: column; gap: 15px; margin: 0; }
-.cs-item { display: grid; grid-template-columns: 200px 1fr; gap: var(--sp-4); }
-.cs-item dt { font-family: var(--font-read); font-size: var(--read-size, var(--r-md)); font-weight: 600; color: var(--fg-bright); }
+.cs-list { display: flex; flex-direction: column; gap: 18px; margin: 0; }
+/* Stacked: the term heading sits ABOVE its explanation (not in a side column). */
+.cs-item { display: block; }
+.cs-item dt { font-family: var(--font-read); font-size: calc(var(--read-size, var(--r-md)) + 1px); font-weight: 600; color: var(--fg-bright); margin: 0 0 5px; }
 .cs-item dd { font-family: var(--font-read); font-size: var(--read-size, var(--r-md)); line-height: 1.55; color: var(--fg); margin: 0; text-wrap: pretty; }
 .cs-item.item-changed { position: relative; }
 .cs-item.item-changed dt::after { content: "changed"; font-family: var(--font-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--warn); margin-left: 8px; vertical-align: middle; padding: 1px 5px; border: 1px solid color-mix(in oklab, var(--warn) 40%, transparent); border-radius: var(--rad-pill); }
-@media (max-width: 720px) { .cs-item { grid-template-columns: 1fr; gap: 3px; } }
 
 /* ============ DIFF MODAL ============ */
 .diff-overlay { z-index: 85; }
@@ -262,13 +267,14 @@
 .fc-progress { width: 100%; max-width: 520px; height: 4px; background: var(--surface-2); border-radius: var(--rad-pill); overflow: hidden; }
 .fc-bar { height: 100%; background: var(--accent); transition: width var(--dur-slow) var(--ease); }
 .fc-meta { width: 100%; max-width: 520px; display: flex; justify-content: space-between; font-size: var(--t-xs); color: var(--fg-faint); }
-.flashcard { width: 100%; max-width: 520px; height: 280px; cursor: pointer; perspective: 1400px; }
-.flashcard .fc-face { position: absolute; inset: 0; backface-visibility: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: var(--sp-7); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--rad-4); transition: transform 0.5s var(--ease); text-align: center; }
-.flashcard { position: relative; }
-.fc-front { transform: rotateY(0deg); }
-.fc-back { transform: rotateY(180deg); background: var(--surface-2); }
-.flashcard.flipped .fc-front { transform: rotateY(-180deg); }
-.flashcard.flipped .fc-back { transform: rotateY(0deg); }
+.flashcard { width: 100%; max-width: 520px; height: 280px; cursor: pointer; position: relative; }
+/* Opacity/scale crossfade instead of a 3D rotateY flip: WebKitGTK doesn't
+   reliably honor backface-visibility, which rendered the answer text MIRRORED. */
+.flashcard .fc-face { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: var(--sp-7); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--rad-4); transition: opacity 0.34s var(--ease), transform 0.34s var(--ease); text-align: center; }
+.fc-front { opacity: 1; transform: scale(1); }
+.fc-back { opacity: 0; transform: scale(0.96); background: var(--surface-2); pointer-events: none; }
+.flashcard.flipped .fc-front { opacity: 0; transform: scale(0.96); pointer-events: none; }
+.flashcard.flipped .fc-back { opacity: 1; transform: scale(1); pointer-events: auto; }
 .fc-side { font-size: var(--t-2xs); letter-spacing: 0.16em; color: var(--fg-faint); }
 .fc-face p { font-family: var(--font-read); font-size: var(--r-xl); line-height: 1.4; color: var(--fg-bright); font-weight: 500; }
 .fc-hint { font-size: var(--t-2xs); color: var(--fg-faint); }

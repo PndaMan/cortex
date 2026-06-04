@@ -1,15 +1,15 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import { keybinds } from "../lib/keybinds.svelte";
+  import * as api from "../lib/api";
   import Icon from "./Icon.svelte";
 
   // Render a key for hints: Space shown as ␣.
   const kh = (s: string) => (s === " " ? "␣" : s);
 
-  let q = $state("");
-  let sel = $state(0);
-  let inputEl = $state<HTMLInputElement | null>(null);
-
+  // ── searchable cheatsheet contents (active subject) ──────────────
+  // Loaded when the palette opens so ":" can jump straight to any term/section
+  // in the current subject's cheatsheet.
   interface CmdItem {
     id: string;
     group: string;
@@ -19,9 +19,53 @@
     hint?: string;
     run: () => void;
   }
+  let cheatItems = $state<CmdItem[]>([]);
+  function jumpToCheatItem(elId: string) {
+    app.setView("subject");
+    app.setTab("cheatsheet");
+    app.cmdkOpen = false;
+    let tries = 0;
+    const tick = () => {
+      const el = document.getElementById(elId);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      else if (tries++ < 60) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+  async function loadCheatItems(subjectId: string) {
+    try {
+      const cs = await api.getCheatsheet(subjectId);
+      if (!cs) { cheatItems = []; return; }
+      const items: CmdItem[] = [];
+      for (const sec of cs.sections) {
+        sec.items.forEach((it, i) => {
+          items.push({
+            id: "cs-" + sec.id + "-" + i,
+            group: "Cheatsheet",
+            label: it.t,
+            kind: sec.title,
+            icon: "book",
+            run: () => jumpToCheatItem("cs-it-" + sec.id + "-" + i),
+          });
+        });
+      }
+      cheatItems = items;
+    } catch {
+      cheatItems = [];
+    }
+  }
+  $effect(() => {
+    if (app.cmdkOpen && app.activeSubjectId) loadCheatItems(app.activeSubjectId);
+    else if (!app.cmdkOpen) cheatItems = [];
+  });
+
+  let q = $state("");
+  let sel = $state(0);
+  let inputEl = $state<HTMLInputElement | null>(null);
 
   // Build command list from app state — mirrors the Claude Design command set.
   const commands = $derived<CmdItem[]>([
+    ...cheatItems,
     ...app.subjects.map((s) => ({
       id: "subj-" + s.id,
       group: "Subjects",
@@ -33,7 +77,7 @@
     { id: "a-record", group: "Actions", label: "Record lecture", kind: "command", icon: "record", hint: kh(keybinds.map.recorder), run: () => app.setView("recorder") },
     { id: "a-source", group: "Actions", label: "Add source", kind: "command", icon: "plus", hint: kh(keybinds.map.leader) + " s", run: () => app.setView("add-source") },
     { id: "a-diff", group: "Actions", label: "Review cheatsheet diff", kind: "command", icon: "book", hint: app.pending ? app.pending + " pending" : kh(keybinds.map.leader) + " d", run: () => app.reviewDiff() },
-    { id: "a-regen", group: "Actions", label: "Regenerate cheatsheet", kind: "command", icon: "refresh", run: () => app.pushToast({ kind: "info", title: "Regenerating…", body: "Re-synthesizing the cheatsheet from your sources." }) },
+    { id: "a-regen", group: "Actions", label: "Regenerate cheatsheet", kind: "command", icon: "refresh", run: () => app.regenCheatsheet() },
     { id: "a-flash", group: "Actions", label: "Study flashcards", kind: "command", icon: "cards", run: () => { app.setView("subject"); app.setTab("materials"); } },
     { id: "a-quiz", group: "Actions", label: "Generate quiz", kind: "command", icon: "check", run: () => { app.setView("subject"); app.setTab("materials"); } },
     { id: "a-web", group: "Actions", label: "Search the web (SearXNG)", kind: "command", icon: "search", hint: kh(keybinds.map.websearch), run: () => app.setView("websearch") },

@@ -13,6 +13,7 @@
     | { type: "h2" | "h3" | "p"; text: string }
     | { type: "hr" }
     | { type: "code"; text: string }
+    | { type: "barchart"; bars: { label: string; value: number }[] }
     | { type: "ul" | "ol"; items: string[] }
     | { type: "table"; head: string[]; rows: string[][] }
     | { type: "quote"; lines: string[] }
@@ -65,6 +66,7 @@
     let para: string[] = [];
     let list: { type: "ul" | "ol"; items: string[] } | null = null;
     let code: string[] | null = null;
+    let codeLang = "";
 
     const flushPara = () => {
       if (para.length) { blocks.push({ type: "p", text: para.join(" ") }); para = []; }
@@ -76,11 +78,13 @@
       const line = lines[idx];
       const t = line.trim();
       if (code !== null) {
-        if (t.startsWith("```")) { blocks.push({ type: "code", text: code.join("\n") }); code = null; }
-        else code.push(line);
+        if (t.startsWith("```")) {
+          blocks.push(codeLang === "barchart" ? parseBarchart(code) : { type: "code", text: code.join("\n") });
+          code = null; codeLang = "";
+        } else code.push(line);
         continue;
       }
-      if (t.startsWith("```")) { flushAll(); code = []; continue; }
+      if (t.startsWith("```")) { flushAll(); code = []; codeLang = t.slice(3).trim().toLowerCase(); continue; }
       if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) { flushAll(); blocks.push({ type: "hr" }); continue; }
 
       // ── table: a `| … |` row immediately followed by a `|---|---|` separator ──
@@ -136,9 +140,22 @@
       flushList();
       para.push(t);
     }
-    if (code !== null) blocks.push({ type: "code", text: code.join("\n") });
+    if (code !== null) blocks.push(codeLang === "barchart" ? parseBarchart(code) : { type: "code", text: code.join("\n") });
     flushAll();
     return blocks;
+  }
+
+  // A ```barchart block: one `Label: value` (or `Label | value`) per line.
+  function parseBarchart(lines: string[]): Block {
+    const bars: { label: string; value: number }[] = [];
+    for (const ln of lines) {
+      const m = /^\s*(.+?)\s*[:|]\s*(-?[\d.,]+)\s*\??$/.exec(ln);
+      if (m) {
+        const value = parseFloat(m[2].replace(/,/g, ""));
+        if (!Number.isNaN(value)) bars.push({ label: m[1].trim(), value });
+      }
+    }
+    return { type: "barchart", bars };
   }
 
   const CALLOUT_LABEL: Record<CalloutKind, string> = {
@@ -179,6 +196,19 @@
       <h3 class="rt-h3">{@render inline(b.text)}</h3>
     {:else if b.type === "code"}
       <pre class="rt-pre"><code>{b.text}</code></pre>
+    {:else if b.type === "barchart"}
+      {@const max = Math.max(...b.bars.map((x) => Math.abs(x.value)), 1)}
+      <div class="rt-chart">
+        {#each b.bars as bar}
+          <div class="rt-chart-row">
+            <span class="rt-chart-label" title={bar.label}>{bar.label}</span>
+            <span class="rt-chart-track">
+              <span class="rt-chart-bar" style:width="{Math.max(2, (Math.abs(bar.value) / max) * 100)}%"></span>
+            </span>
+            <span class="rt-chart-val mono">{bar.value}</span>
+          </div>
+        {/each}
+      </div>
     {:else if b.type === "ul"}
       <ul class="rt-ul">{#each b.items as it}<li>{@render inline(it)}</li>{/each}</ul>
     {:else if b.type === "ol"}
@@ -293,6 +323,14 @@
     color: var(--fg-muted); font-style: italic;
   }
   .rt-quote .rt-p:last-child { margin-bottom: 0; }
+
+  /* ── bar chart ────────────────────────────────────────── */
+  .rt-chart { margin: 0 0 12px; display: flex; flex-direction: column; gap: 6px; }
+  .rt-chart-row { display: grid; grid-template-columns: minmax(70px, 30%) 1fr auto; align-items: center; gap: 10px; font-size: 12.5px; }
+  .rt-chart-label { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rt-chart-track { height: 12px; border-radius: 6px; background: color-mix(in oklab, var(--fg) 8%, transparent); overflow: hidden; }
+  .rt-chart-bar { display: block; height: 100%; border-radius: 6px; background: linear-gradient(90deg, color-mix(in oklab, var(--accent) 80%, transparent), var(--accent)); }
+  .rt-chart-val { color: var(--fg-muted); font-size: 11.5px; min-width: 2ch; text-align: right; }
 
   /* clickable citation chip */
   .rt-cite {

@@ -34,15 +34,6 @@
     app.init();
   });
 
-  // Show the chat dock alongside the workspace on the subject view (except when
-  // the Chats tab already shows the full panel) AND on the notes view, so chat
-  // and notes can be open at the same time.
-  const showChatDock = $derived(
-    app.chatOpen &&
-      (app.view === "notes" ||
-        (app.view === "subject" && app.subjectTab !== "chats"))
-  );
-
   // ---- view back-stack: Esc goes back to the previous page ----
   let viewHistory: string[] = [];
   let prevView = app.view;
@@ -76,17 +67,15 @@
         !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 
       if (e.key === "Escape") {
+        // 1. Close any transient overlay first.
         if (app.cmdkOpen || app.leaderOpen || app.musicOpen) {
           app.cmdkOpen = false; app.leaderOpen = false; app.musicOpen = false; return;
         }
         if ((window as any).__cortexModalOpen) return; // modals handle their own Esc
-        // If the chat dock is open, Esc closes it first (reliable close path).
-        if (app.chatOpen && (app.view === "notes" || (app.view === "subject" && app.subjectTab !== "chats")) && !typing) {
-          app.chatOpen = false; app.setMode("NOR"); return;
-        }
-        // In a text field (e.g. the chat compose box) Esc just leaves edit mode.
+        // 2. In a text field (e.g. the chat compose box) Esc just leaves edit mode.
         if (typing) { el?.blur(); app.setMode("NOR"); return; }
-        // Everywhere else, Esc navigates back to the previous page.
+        // 3. Otherwise Esc ALWAYS navigates back to the previous page (chat is
+        //    closed with `c`/its × button, so Esc is reserved for back-nav).
         app.setMode("NOR");
         goBack();
         return;
@@ -184,7 +173,13 @@
         {/if}
       </div>
 
-      {#if showChatDock}
+      <!-- Chat dock alongside the workspace on the subject view (except the
+           Chats tab, which shows the full panel) and the notes view.
+           IMPORTANT: app.chatOpen MUST be the LAST &&-operand. When it was first,
+           a false value short-circuited the rest out of the reactive dependency
+           set and the dock got stuck open (matching the working .chat-fab below,
+           which also reads chatOpen last). -->
+      {#if (app.view === "notes" || (app.view === "subject" && app.subjectTab !== "chats")) && app.chatOpen}
         <div class="chatdock">
           <ChatPanel
             onClose={() => (app.chatOpen = false)}
@@ -193,7 +188,7 @@
         </div>
       {/if}
 
-      {#if (app.view === "notes" || (app.view === "subject" && app.subjectTab !== "chats")) && !app.chatOpen}
+      {#if (app.view === "notes" || app.view === "source" || (app.view === "subject" && app.subjectTab !== "chats")) && !app.chatOpen}
         <button class="chat-fab" onclick={() => (app.chatOpen = true)} title="Open chat (c)">
           Ask <span class="kbd">c</span>
         </button>

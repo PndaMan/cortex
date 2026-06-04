@@ -173,6 +173,12 @@ export const generateCheatsheet = (subjectId: string, topicId?: string) =>
   invoke<CheatsheetData>("generate_cheatsheet", { subjectId, topicId });
 export const getCheatsheet = (subjectId: string, topicId?: string) =>
   invoke<CheatsheetData | null>("get_cheatsheet", { subjectId, topicId });
+/** Render a self-contained HTML doc to a PDF at `dest` (headless Chromium). */
+export const exportPdf = (html: string, dest: string) =>
+  invoke<void>("export_pdf", { html, dest });
+/** Copy the whole database to a portable .db file at `dest`. */
+export const exportDatabase = (dest: string) =>
+  invoke<void>("export_database", { dest });
 export const generateMaterial = (
   subjectId: string,
   kind: "flashcards" | "quiz" | "audio" | "infographic" | "slideshow",

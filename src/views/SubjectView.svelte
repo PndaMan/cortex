@@ -7,6 +7,7 @@
   import Materials from "./Materials.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
   import GeneratingCard from "../components/GeneratingCard.svelte";
+  import Picker from "../components/Picker.svelte";
   import { jobs } from "../lib/jobs.svelte";
 
   const TABS = [
@@ -115,6 +116,39 @@
       (j) => j.kind === "source" && (j.status === "running" || j.status === "error")
     )
   );
+
+  // ── bulk source selection ───────────────────────────────────────
+  let sel = $state<Record<string, boolean>>({});
+  const selIds = $derived(Object.keys(sel).filter((k) => sel[k]));
+  function toggleSel(id: string, e: Event) {
+    e.stopPropagation();
+    sel = { ...sel, [id]: !sel[id] };
+  }
+  function clearSel() { sel = {}; }
+  const moveTargets = $derived([
+    ...(subj?.topics ?? []).map((t) => ({ id: t.id, label: "→ " + t.name })),
+    { id: "__none__", label: "→ no topic" },
+  ]);
+  async function bulkDelete() {
+    const n = selIds.length;
+    if (n === 0) return;
+    if (!(await app.confirm({ title: `Delete ${n} source${n === 1 ? "" : "s"}?`, danger: true, okLabel: "Delete" }))) return;
+    for (const id of selIds) { try { await api.deleteSource(id); } catch (e) { /* keep going */ } }
+    app.pushToast({ kind: "success", title: `Deleted ${n} source${n === 1 ? "" : "s"}` });
+    clearSel();
+    await app.refresh();
+    loadSources();
+  }
+  async function bulkMove(target: string) {
+    if (!subj || selIds.length === 0 || !target) return;
+    const tid = target === "__none__" ? null : target;
+    const n = selIds.length;
+    for (const id of selIds) { try { await api.moveSource(id, subj.id, tid); } catch (e) { /* keep going */ } }
+    app.pushToast({ kind: "success", title: `Moved ${n} source${n === 1 ? "" : "s"}` });
+    clearSel();
+    await app.refresh();
+    loadSources();
+  }
 </script>
 
 {#if subj}
@@ -165,6 +199,25 @@
               </button>
             </div>
 
+            {#if selIds.length > 0}
+              <div class="src-bulkbar">
+                <span class="mono">{selIds.length} selected</span>
+                <div class="grow"></div>
+                <div style:width="170px">
+                  <Picker
+                    value=""
+                    onChange={(id) => bulkMove(id)}
+                    options={moveTargets}
+                    placeholder="Move to…"
+                  />
+                </div>
+                <button class="btn btn--sm sv-delete" onclick={bulkDelete}>
+                  <Icon name="x" size={12} /> Delete
+                </button>
+                <button class="btn btn--sm btn--ghost" onclick={clearSel}>Clear</button>
+              </div>
+            {/if}
+
             {#each sourceJobs as job (job.id)}
               <GeneratingCard {job} />
             {/each}
@@ -199,6 +252,7 @@
                     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                     <div
                       class="source-tile"
+                      class:is-sel={!!sel[src.id]}
                       role="button"
                       tabindex="0"
                       onclick={() => app.openSource(src)}
@@ -206,6 +260,14 @@
                       title="Open source"
                     >
                       <div class="stl-top">
+                        <button
+                          class="src-check{sel[src.id] ? ' on' : ''}"
+                          onclick={(e) => toggleSel(src.id, e)}
+                          title="Select source"
+                          aria-pressed={!!sel[src.id]}
+                        >
+                          {#if sel[src.id]}<Icon name="check" size={10} />{/if}
+                        </button>
                         <span class="badge badge--{kindBadge(src.kind)}">
                           <span class="dot"></span>{kindLabel(src.kind)}
                         </span>

@@ -387,6 +387,19 @@ class AppStore {
   setTab(t: string) {
     this.subjectTab = t;
   }
+  // Bumped to ask the Cheatsheet view (which owns generation + the live view
+  // refresh) to (re)generate the whole-subject sheet — used by the command
+  // palette's "Regenerate cheatsheet" so it actually does something.
+  cheatsheetRegenNonce = $state(0);
+  regenCheatsheet() {
+    if (!this.activeSubject) {
+      this.pushToast({ kind: "warning", title: "Open a subject first" });
+      return;
+    }
+    this.setView("subject");
+    this.subjectTab = "cheatsheet";
+    this.cheatsheetRegenNonce++;
+  }
   setMode(m: Mode) {
     this.mode = m;
   }

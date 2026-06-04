@@ -91,6 +91,8 @@ pub fn run() {
             commands::open_chat_thread,
             commands::generate_cheatsheet,
             commands::get_cheatsheet,
+            commands::export_pdf,
+            commands::export_database,
             commands::generate_material,
             commands::list_materials,
             commands::get_all_settings,

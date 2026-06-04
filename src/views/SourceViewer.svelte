@@ -128,7 +128,7 @@
 
 <div class="source-viewer">
   <!-- LEFT: embedding proof pane -->
-  <div class="sv-pane sv-source" style:width="{split}%">
+  <div class="sv-pane sv-source" style:width="{app.chatOpen ? split : 100}%">
     <div class="sv-head">
       <button
         class="btn btn--icon btn--sm btn--ghost"
@@ -251,22 +251,25 @@
     </div>
   </div>
 
-  <!-- Splitter -->
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
-    class="sv-splitter"
-    role="separator"
-    aria-orientation="vertical"
-    tabindex="-1"
-    onmousedown={startDrag}
-  >
-    <span></span>
-  </div>
+  <!-- Splitter + scoped chat — hidden when the chat is toggled off (c). The
+       left pane expands to full width and App's "Ask c" FAB reopens it. -->
+  {#if app.chatOpen}
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      class="sv-splitter"
+      role="separator"
+      aria-orientation="vertical"
+      tabindex="-1"
+      onmousedown={startDrag}
+    >
+      <span></span>
+    </div>
 
-  <!-- RIGHT: scoped chat -->
-  <div class="sv-pane sv-chat" style:width="{100 - split}%">
-    <ChatPanel />
-  </div>
+    <!-- RIGHT: scoped chat -->
+    <div class="sv-pane sv-chat" style:width="{100 - split}%">
+      <ChatPanel onClose={() => (app.chatOpen = false)} />
+    </div>
+  {/if}
 </div>
 
 <style>

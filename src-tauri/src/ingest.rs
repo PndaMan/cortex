@@ -78,12 +78,15 @@ pub fn parse(kind: &str, input: &AddSourceInput) -> Result<(String, Option<Strin
                 .ok_or_else(|| Error::Other(format!("{kind} source needs a file path")))?;
             libreoffice_to_text(p)
         }
-        "audio" | "yt" | "image" => Ok((
-            String::new(),
-            Some(format!(
-                "{kind} ingestion is stubbed in this build (Whisper / yt-dlp / OCR land in a later slice)"
-            )),
-        )),
+        "yt" => {
+            let url = input
+                .url
+                .as_deref()
+                .ok_or_else(|| Error::Other("youtube source needs a url".into()))?;
+            youtube_to_text(url)
+        }
+        // Enriched at the command layer: audio → Whisper, image → vision OCR.
+        "audio" | "image" => Ok((String::new(), None)),
         other => Err(Error::Unsupported(format!("unknown source kind: {other}"))),
     }
 }
@@ -309,6 +312,7 @@ fn libreoffice_to_text(path: &str) -> Result<(String, Option<String>)> {
 
     let bin = libreoffice_bin();
     let output = Command::new(&bin)
+        .arg(lo_profile_arg(&outdir))
         .args(["--headless", "--convert-to", "txt:Text", "--outdir"])
         .arg(&outdir)
         .arg(src)
@@ -351,6 +355,7 @@ pub fn libreoffice_to_pdf(path: &str, dest: &Path) -> Result<()> {
 
     let bin = libreoffice_bin();
     let output = Command::new(&bin)
+        .arg(lo_profile_arg(&outdir))
         .args(["--headless", "--convert-to", "pdf", "--outdir"])
         .arg(&outdir)
         .arg(src)
@@ -391,6 +396,236 @@ fn libreoffice_bin() -> String {
         }
     }
     "libreoffice".to_string()
+}
+
+/// A `-env:UserInstallation` arg pointing at a throwaway profile inside `outdir`.
+/// Every headless conversion MUST use its own profile: otherwise a second
+/// concurrent soffice — another source ingesting, a pptx/docx preview rendering,
+/// or the user's own open LibreOffice — collides on the shared default profile
+/// lock and silently fails (exit 1, empty stderr, no output file). That lock
+/// collision is the real cause of "pptx/docx upload is broken / produced no
+/// output". An isolated profile per call removes the contention entirely.
+/// Fetch a YouTube transcript via yt-dlp (subtitles → text). Uses yt-dlp if it's
+/// on PATH; otherwise returns an actionable error. Prefers manual subs, falls
+/// back to auto-generated captions.
+fn youtube_to_text(url: &str) -> Result<(String, Option<String>)> {
+    use std::process::Command;
+    let bin = which("yt-dlp").ok_or_else(|| {
+        Error::Other(
+            "yt-dlp not found — install it (e.g. `pipx install yt-dlp`) to ingest YouTube links"
+                .into(),
+        )
+    })?;
+    let dir = std::env::temp_dir().join(format!("cortex-yt-{}", crate::db::new_id()));
+    std::fs::create_dir_all(&dir)?;
+    let out_tmpl = dir.join("%(id)s.%(ext)s");
+    let out = Command::new(&bin)
+        .args([
+            "--skip-download",
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs",
+            "en.*,en",
+            "--sub-format",
+            "vtt",
+            "--no-playlist",
+            "-o",
+        ])
+        .arg(&out_tmpl)
+        .arg(url)
+        .output();
+    let res: Result<(String, Option<String>)> = match out {
+        Ok(o) if o.status.success() => {
+            let vtt = std::fs::read_dir(&dir)?
+                .flatten()
+                .map(|e| e.path())
+                .find(|p| p.extension().and_then(|x| x.to_str()) == Some("vtt"));
+            match vtt {
+                Some(p) => {
+                    let text = vtt_to_text(&std::fs::read_to_string(&p)?);
+                    if text.trim().is_empty() {
+                        Err(Error::Other("the video's transcript was empty".into()))
+                    } else {
+                        Ok((text, None))
+                    }
+                }
+                None => Err(Error::Other(
+                    "no English captions are available for this video".into(),
+                )),
+            }
+        }
+        Ok(o) => Err(Error::Other(format!(
+            "yt-dlp failed: {}",
+            String::from_utf8_lossy(&o.stderr).trim().chars().take(200).collect::<String>()
+        ))),
+        Err(e) => Err(Error::Other(format!("yt-dlp not runnable: {e}"))),
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+    res
+}
+
+/// Strip a WebVTT subtitle file to plain deduped prose.
+fn vtt_to_text(vtt: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for line in vtt.lines() {
+        let t = line.trim();
+        if t.is_empty()
+            || t == "WEBVTT"
+            || t.starts_with("Kind:")
+            || t.starts_with("Language:")
+            || t.starts_with("NOTE")
+            || t.contains("-->")
+            || t.chars().all(|c| c.is_ascii_digit())
+        {
+            continue;
+        }
+        // Drop inline timing/style tags like <00:00:01.000> and <c>…</c>.
+        let mut cleaned = String::with_capacity(t.len());
+        let mut in_tag = false;
+        for c in t.chars() {
+            match c {
+                '<' => in_tag = true,
+                '>' => in_tag = false,
+                _ if !in_tag => cleaned.push(c),
+                _ => {}
+            }
+        }
+        let cleaned = cleaned.trim().to_string();
+        // Auto-captions roll the same line repeatedly — drop consecutive repeats.
+        if cleaned.is_empty() || out.last() == Some(&cleaned) {
+            continue;
+        }
+        out.push(cleaned);
+    }
+    out.join(" ")
+}
+
+/// MIME type for an image source path (for OCR data URLs).
+pub fn image_mime(path: &str) -> &'static str {
+    match Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        _ => "image/png",
+    }
+}
+
+/// Render up to `max_pages` of a PDF to PNG page images (bytes) via poppler's
+/// `pdftoppm`. Used to OCR scanned/image-only PDFs through a vision model.
+pub fn pdf_page_images(path: &str, max_pages: usize) -> Result<Vec<Vec<u8>>> {
+    use std::process::Command;
+    if which("pdftoppm").is_none() {
+        return Err(Error::Other(
+            "pdftoppm (poppler) not found — needed to OCR scanned PDFs".into(),
+        ));
+    }
+    let dir = std::env::temp_dir().join(format!("cortex-ocr-{}", crate::db::new_id()));
+    std::fs::create_dir_all(&dir)?;
+    let prefix = dir.join("page");
+    let out = Command::new("pdftoppm")
+        .args(["-png", "-r", "150", "-l", &max_pages.to_string()])
+        .arg(path)
+        .arg(&prefix)
+        .output();
+    let result: Result<Vec<Vec<u8>>> = match out {
+        Ok(o) if o.status.success() => {
+            let mut paths: Vec<_> = std::fs::read_dir(&dir)?
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("png"))
+                .collect();
+            paths.sort();
+            Ok(paths.iter().filter_map(|p| std::fs::read(p).ok()).collect())
+        }
+        Ok(o) => Err(Error::Other(format!(
+            "pdftoppm failed: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ))),
+        Err(e) => Err(Error::Other(format!("pdftoppm not runnable: {e}"))),
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+fn lo_profile_arg(outdir: &Path) -> String {
+    let profile = outdir.join("lo-profile");
+    format!("-env:UserInstallation=file://{}", profile.to_string_lossy())
+}
+
+fn chromium_bin() -> Option<String> {
+    for c in [
+        "chromium",
+        "chromium-browser",
+        "google-chrome",
+        "google-chrome-stable",
+        "chrome",
+        "brave",
+    ] {
+        if let Some(p) = which(c) {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Render a self-contained HTML string to a PDF at `dest`. Prefers headless
+/// Chromium (full CSS/markdown-table/callout fidelity) and falls back to
+/// LibreOffice's HTML import (lower fidelity) when no Chromium is present.
+/// The frontend builds the styled HTML and chooses `dest` via the save dialog,
+/// so this is a pure render-to-file step. Errors are hard (never a silent
+/// empty/zero-byte PDF) so the UI can surface a real failure.
+pub fn html_to_pdf(html: &str, dest: &Path) -> Result<()> {
+    use std::process::Command;
+    let tmp = std::env::temp_dir().join(format!("cortex-export-{}", crate::db::new_id()));
+    std::fs::create_dir_all(&tmp)?;
+    let html_path = tmp.join("doc.html");
+    std::fs::write(&html_path, html)?;
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let result: Result<()> = if let Some(bin) = chromium_bin() {
+        let profile = tmp.join("profile");
+        let mut pdf_arg = std::ffi::OsString::from("--print-to-pdf=");
+        pdf_arg.push(dest);
+        let mut user_data = std::ffi::OsString::from("--user-data-dir=");
+        user_data.push(&profile);
+        let out = Command::new(&bin)
+            .arg("--headless")
+            .arg("--no-sandbox")
+            .arg("--disable-gpu")
+            .arg("--no-pdf-header-footer")
+            .arg("--virtual-time-budget=5000")
+            .arg(user_data)
+            .arg(pdf_arg)
+            .arg(&html_path)
+            .output();
+        match out {
+            Ok(o) if o.status.success() && dest.exists() => Ok(()),
+            Ok(o) => Err(Error::Other(format!(
+                "chromium PDF export failed: {}",
+                String::from_utf8_lossy(&o.stderr).trim()
+            ))),
+            Err(e) => Err(Error::Other(format!("chromium is not runnable: {e}"))),
+        }
+    } else {
+        // Fallback: LibreOffice opens the .html and exports a PDF.
+        libreoffice_to_pdf(
+            html_path
+                .to_str()
+                .ok_or_else(|| Error::Other("bad temp path".into()))?,
+            dest,
+        )
+    };
+    let _ = std::fs::remove_dir_all(&tmp);
+    result
 }
 
 pub fn which(cmd: &str) -> Option<String> {

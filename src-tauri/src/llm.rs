@@ -8,7 +8,37 @@ use crate::error::{Error, Result};
 pub trait Llm: Send + Sync {
     fn complete(&self, system: &str, user: &str) -> Result<String>;
     fn name(&self) -> String;
+    /// OCR/transcribe images (each `(mime, base64)`) to Markdown text. Default:
+    /// unsupported — only vision-capable providers override this.
+    fn ocr(&self, _images: &[(String, String)]) -> Result<String> {
+        Err(Error::Unsupported(format!(
+            "{} can't read images — pick a vision model (e.g. an OpenRouter/Gemini multimodal model) in Settings",
+            self.name()
+        )))
+    }
 }
+
+/// Standard base64 (with padding). Inline to avoid a dependency just for OCR
+/// data URLs / inline image payloads.
+pub fn b64_encode(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(T[((n >> 18) & 63) as usize] as char);
+        out.push(T[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 { T[((n >> 6) & 63) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 2 { T[(n & 63) as usize] as char } else { '=' });
+    }
+    out
+}
+
+const OCR_PROMPT: &str = "Transcribe ALL text in these page image(s) EXACTLY, in reading order. \
+Preserve headings, lists, tables (as Markdown tables), and math. Do not summarise, \
+translate, or add commentary — output ONLY the transcribed text as Markdown.";
 
 /// Offline placeholder — no network, no key. Produces something usable so the
 /// UI flow works, while telling the user to connect a model for real output.
@@ -61,13 +91,7 @@ impl Llm for GeminiLlm {
             "contents": [{ "role": "user", "parts": [{ "text": user }] }],
             "generationConfig": generation_config
         });
-        let resp = client.post(&url).json(&body).send()?;
-        if !resp.status().is_success() {
-            let code = resp.status();
-            let txt = resp.text().unwrap_or_default();
-            return Err(Error::Other(format!("gemini {code}: {}", truncate(&txt, 300))));
-        }
-        let json = parse_json_body("gemini", resp)?;
+        let json = send_json("gemini", client.post(&url).json(&body))?;
         // Concatenate every text part (some responses split across parts).
         let text: String = json["candidates"][0]["content"]["parts"]
             .as_array()
@@ -94,6 +118,26 @@ impl Llm for GeminiLlm {
     fn name(&self) -> String {
         format!("gemini:{}", self.model)
     }
+    fn ocr(&self, images: &[(String, String)]) -> Result<String> {
+        let client = llm_client();
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            self.model, self.api_key
+        );
+        let mut parts = vec![serde_json::json!({ "text": OCR_PROMPT })];
+        for (mime, b64) in images {
+            parts.push(serde_json::json!({ "inline_data": { "mime_type": mime, "data": b64 } }));
+        }
+        let body = serde_json::json!({
+            "contents": [{ "role": "user", "parts": parts }],
+            "generationConfig": { "temperature": 0.0, "maxOutputTokens": 8192 }
+        });
+        let json = send_json("gemini", client.post(&url).json(&body))?;
+        Ok(json["candidates"][0]["content"]["parts"]
+            .as_array()
+            .map(|ps| ps.iter().filter_map(|p| p["text"].as_str()).collect::<String>())
+            .unwrap_or_default())
+    }
 }
 
 fn truncate(s: &str, n: usize) -> String {
@@ -104,26 +148,86 @@ fn truncate(s: &str, n: usize) -> String {
 /// generation can be slow) so a stalled connection fails cleanly instead of
 /// hanging forever.
 fn llm_client() -> reqwest::blocking::Client {
+    // Force identity (uncompressed) transfer encoding. OpenRouter streams a gzip
+    // body padded with whitespace keep-alives during slow generation, which
+    // reqwest's automatic gzip decoder fails to decode — surfacing as the opaque
+    // "error decoding response body" that broke cheatsheet/material generation.
+    // Setting Accept-Encoding ourselves ALSO disables reqwest's auto-decompress,
+    // so the body is read verbatim regardless of what the server sends.
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::ACCEPT_ENCODING,
+        reqwest::header::HeaderValue::from_static("identity"),
+    );
     reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
+        .timeout(std::time::Duration::from_secs(300))
+        .default_headers(headers)
         .build()
         .unwrap_or_default()
 }
 
-/// Read a response body as text, then parse it as JSON. This is more tolerant
-/// and far more diagnosable than `resp.json()` (which surfaces an opaque
-/// "error decoding response body" when the body is gzipped, truncated, or an
-/// HTML/error page). On parse failure the raw body is included in the error.
-fn parse_json_body(provider: &str, resp: reqwest::blocking::Response) -> Result<serde_json::Value> {
-    let raw = resp
-        .text()
-        .map_err(|e| Error::Other(format!("{provider}: could not read response body: {e}")))?;
-    serde_json::from_str(&raw).map_err(|e| {
-        Error::Other(format!(
-            "{provider}: response was not valid JSON ({e}): {}",
-            truncate(raw.trim(), 300)
-        ))
-    })
+/// Send a request, then read its body as text and parse it as JSON — with
+/// retries on TRANSIENT transport failures. Long LLM generations behind proxies
+/// (notably OpenRouter, which streams whitespace keep-alives during slow
+/// generation) occasionally drop the connection mid-body; reqwest surfaces that
+/// as the opaque "error decoding response body". A couple of retries recover it.
+/// Non-2xx responses and JSON-parse failures are returned verbatim (with the
+/// body for diagnosis) and are NOT retried. Reading as text (not `resp.json()`)
+/// keeps errors diagnosable instead of opaque.
+fn send_json(provider: &str, req: reqwest::blocking::RequestBuilder) -> Result<serde_json::Value> {
+    let transient = |e: &reqwest::Error| {
+        e.is_timeout() || e.is_connect() || e.is_request() || e.is_body() || e.is_decode()
+    };
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        let this = req
+            .try_clone()
+            .ok_or_else(|| Error::Other(format!("{provider}: request could not be retried")))?;
+        let resp = match this.send() {
+            Ok(r) => r,
+            Err(e) if attempt < 3 && transient(&e) => {
+                std::thread::sleep(std::time::Duration::from_millis(800 * attempt as u64));
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let status = resp.status();
+        let raw = match resp.text() {
+            Ok(t) => t,
+            Err(e) if attempt < 3 && transient(&e) => {
+                std::thread::sleep(std::time::Duration::from_millis(800 * attempt as u64));
+                continue;
+            }
+            Err(e) => {
+                return Err(Error::Other(format!(
+                    "{provider}: could not read response body: {e}"
+                )))
+            }
+        };
+        if !status.is_success() {
+            return Err(Error::Other(format!(
+                "{provider} {status}: {}",
+                truncate(raw.trim(), 300)
+            )));
+        }
+        match serde_json::from_str(&raw) {
+            Ok(v) => return Ok(v),
+            // A successful (2xx) response that doesn't parse is almost always a
+            // TRUNCATED body (connection cut mid-stream during a long/large
+            // generation — e.g. OCR with big images). Retry rather than fail.
+            Err(_) if attempt < 3 => {
+                std::thread::sleep(std::time::Duration::from_millis(800 * attempt as u64));
+                continue;
+            }
+            Err(e) => {
+                return Err(Error::Other(format!(
+                    "{provider}: response was not valid JSON ({e}): {}",
+                    truncate(raw.trim(), 300)
+                )))
+            }
+        }
+    }
 }
 
 /// OpenAI-compatible chat provider — used for OpenRouter and OpenAI (and any
@@ -154,25 +258,16 @@ impl Llm for OpenAiCompatLlm {
             ],
             "temperature": 0.3
         });
-        let resp = client
-            .post(&url)
-            .header("Authorization", format!("Bearer {key}"))
-            // OpenRouter likes these; harmless elsewhere.
-            .header("HTTP-Referer", "https://cortex.study")
-            .header("X-Title", "Cortex")
-            .json(&body)
-            .send()?;
-        if !resp.status().is_success() {
-            let code = resp.status();
-            let txt = resp.text().unwrap_or_default();
-            // key-length is a non-secret diagnostic: distinguishes "key empty"
-            // (length 0) from "key present but rejected" for 401s.
-            return Err(Error::Other(format!(
-                "{} {code} [{}:{} chars]: {}",
-                self.label, self.model, key.len(), truncate(&txt, 300)
-            )));
-        }
-        let json = parse_json_body(self.label, resp)?;
+        let json = send_json(
+            self.label,
+            client
+                .post(&url)
+                .header("Authorization", format!("Bearer {key}"))
+                // OpenRouter likes these; harmless elsewhere.
+                .header("HTTP-Referer", "https://cortex.study")
+                .header("X-Title", "Cortex")
+                .json(&body),
+        )?;
         let text = json["choices"][0]["message"]["content"]
             .as_str()
             .ok_or_else(|| Error::Other(format!("{}: empty response", self.label)))?
@@ -181,6 +276,39 @@ impl Llm for OpenAiCompatLlm {
     }
     fn name(&self) -> String {
         format!("{}:{}", self.label, self.model)
+    }
+    fn ocr(&self, images: &[(String, String)]) -> Result<String> {
+        let key = self.api_key.trim();
+        if key.is_empty() {
+            return Err(Error::Other(format!("{}: API key is empty", self.label)));
+        }
+        let client = llm_client();
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let mut content = vec![serde_json::json!({ "type": "text", "text": OCR_PROMPT })];
+        for (mime, b64) in images {
+            content.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": { "url": format!("data:{mime};base64,{b64}") }
+            }));
+        }
+        let body = serde_json::json!({
+            "model": self.model,
+            "messages": [{ "role": "user", "content": content }],
+            "temperature": 0.0
+        });
+        let json = send_json(
+            self.label,
+            client
+                .post(&url)
+                .header("Authorization", format!("Bearer {key}"))
+                .header("HTTP-Referer", "https://cortex.study")
+                .header("X-Title", "Cortex")
+                .json(&body),
+        )?;
+        Ok(json["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string())
     }
 }
 
@@ -200,18 +328,14 @@ impl Llm for ClaudeLlm {
             "system": system,
             "messages": [{ "role": "user", "content": user }]
         });
-        let resp = client
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&body)
-            .send()?;
-        if !resp.status().is_success() {
-            let code = resp.status();
-            let txt = resp.text().unwrap_or_default();
-            return Err(Error::Other(format!("claude {code}: {}", truncate(&txt, 300))));
-        }
-        let json = parse_json_body("claude", resp)?;
+        let json = send_json(
+            "claude",
+            client
+                .post("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .json(&body),
+        )?;
         let text = json["content"][0]["text"]
             .as_str()
             .ok_or_else(|| Error::Other("claude: empty response".into()))?
@@ -321,66 +445,67 @@ pub fn from_spec_or_any(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
 
 /// Extract the first JSON value (object or array) from an LLM reply that may be
 /// wrapped in prose or ```json fences.
+///
+/// Robustness: we DON'T rely on a strict brace-matcher to find the closing
+/// delimiter, because an unescaped `"` inside a rich-markdown string value
+/// desyncs the in-string tracking and truncates the slice. Instead we bound the
+/// JSON as `first opener .. last matching closer` (LLMs emit a single JSON value,
+/// optionally followed by prose that rarely contains a stray `}`/`]`) and hand
+/// the slice to `parse_lenient`, which repairs the common invalid-JSON shapes.
 pub fn extract_json(text: &str) -> Result<serde_json::Value> {
     let t = text.trim();
-    // strip code fences
+    // strip a leading code fence
     let t = t.strip_prefix("```json").or_else(|| t.strip_prefix("```")).unwrap_or(t);
     let t = t.trim_start_matches("```").trim();
-    // find the first { or [ and matching close
-    let start = t.find(['{', '[']);
-    if let Some(s) = start {
-        let open = t.as_bytes()[s] as char;
-        let close = if open == '{' { '}' } else { ']' };
-        let mut depth = 0i32;
-        let mut in_str = false;
-        let mut esc = false;
-        for (i, ch) in t[s..].char_indices() {
-            if in_str {
-                if esc {
-                    esc = false;
-                } else if ch == '\\' {
-                    esc = true;
-                } else if ch == '"' {
-                    in_str = false;
-                }
-                continue;
-            }
-            match ch {
-                '"' => in_str = true,
-                c if c == open => depth += 1,
-                c if c == close => {
-                    depth -= 1;
-                    if depth == 0 {
-                        let slice = &t[s..s + i + ch.len_utf8()];
-                        return parse_lenient(slice);
-                    }
-                }
-                _ => {}
-            }
+
+    let start = match t.find(['{', '[']) {
+        Some(s) => s,
+        None => return Err(Error::Other("no JSON found in LLM reply".into())),
+    };
+    let open = t.as_bytes()[start] as char;
+    let close = if open == '{' { '}' } else { ']' };
+    let end = t.rfind(close).filter(|&e| e > start);
+    if let Some(end) = end {
+        let slice = &t[start..=end];
+        if let Ok(v) = parse_lenient(slice) {
+            return Ok(v);
         }
     }
-    Err(Error::Other("no JSON found in LLM reply".into()))
+    // Fallback: repair from the opener to the end of the text (handles a missing
+    // closer or trailing-prose confusion).
+    parse_lenient(&t[start..])
 }
 
-/// Parse a JSON slice, retrying once with control-char repair. LLMs producing
-/// rich content (tables, callouts, multi-line explanations) routinely emit
-/// LITERAL newlines/tabs inside string values, which is invalid JSON and was the
-/// cause of "Model returned unstructured output" for rich cheatsheets.
+/// Parse a JSON slice, retrying once with a repair pass. LLMs producing rich
+/// content (tables, callouts, multi-line explanations) routinely emit invalid
+/// JSON inside string values — LITERAL newlines/tabs and UNESCAPED double quotes
+/// — which was the cause of "Model returned unstructured output" for rich
+/// cheatsheets. The repair pass fixes both.
 fn parse_lenient(slice: &str) -> Result<serde_json::Value> {
     match serde_json::from_str(slice) {
         Ok(v) => Ok(v),
-        Err(_) => Ok(serde_json::from_str(&escape_unescaped_controls(slice))?),
+        Err(_) => Ok(serde_json::from_str(&repair_json(slice))?),
     }
 }
 
-/// Escape raw control characters (newline, CR, tab, other <0x20) that appear
-/// INSIDE JSON string literals. Already-escaped sequences (`\n` as two chars)
-/// and structural whitespace outside strings are left untouched.
-fn escape_unescaped_controls(s: &str) -> String {
+/// Repair the two invalid-JSON shapes LLMs emit inside string literals:
+///   1. Raw control characters (newline, CR, tab, other <0x20) → escaped.
+///   2. Unescaped interior double quotes → escaped to `\"`.
+/// For (2) a `"` is treated as the string's CLOSER only when the next
+/// non-whitespace character is structural (`:` `,` `}` `]`) or end-of-input;
+/// otherwise it's interior content and gets escaped. Already-escaped sequences
+/// and structure outside strings are left untouched. The heuristic can't cover a
+/// quoted phrase that ends immediately before a comma, but it fixes the common
+/// cases and is strictly more tolerant than escaping control chars alone.
+fn repair_json(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let n = chars.len();
     let mut out = String::with_capacity(s.len() + 16);
     let mut in_str = false;
     let mut esc = false;
-    for ch in s.chars() {
+    let mut i = 0;
+    while i < n {
+        let ch = chars[i];
         if in_str {
             if esc {
                 out.push(ch);
@@ -389,8 +514,20 @@ fn escape_unescaped_controls(s: &str) -> String {
                 out.push(ch);
                 esc = true;
             } else if ch == '"' {
-                out.push(ch);
-                in_str = false;
+                let mut j = i + 1;
+                while j < n && chars[j].is_whitespace() {
+                    j += 1;
+                }
+                let closes = match chars.get(j) {
+                    None => true,
+                    Some(&c) => matches!(c, ':' | ',' | '}' | ']'),
+                };
+                if closes {
+                    out.push('"');
+                    in_str = false;
+                } else {
+                    out.push_str("\\\"");
+                }
             } else {
                 match ch {
                     '\n' => out.push_str("\\n"),
@@ -406,6 +543,7 @@ fn escape_unescaped_controls(s: &str) -> String {
             }
             out.push(ch);
         }
+        i += 1;
     }
     out
 }
@@ -446,6 +584,48 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("NOTE"));
+    }
+
+    // Live diagnostic (ignored by default). Run with the real key to see exactly
+    // what the OpenRouter call returns through the app's own client:
+    //   OPENROUTER_KEY=sk-or-... cargo test --lib live_openrouter -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_openrouter() {
+        let key = std::env::var("OPENROUTER_KEY").expect("set OPENROUTER_KEY");
+        let llm = OpenAiCompatLlm {
+            base_url: "https://openrouter.ai/api/v1".into(),
+            api_key: key,
+            model: "google/gemini-2.5-flash".into(),
+            label: "openrouter",
+        };
+        match llm.complete("You output JSON only.", "Return {\"ok\":true} and nothing else.") {
+            Ok(t) => println!("LIVE OK: {}", truncate(&t, 200)),
+            Err(e) => println!("LIVE ERR: {e}"),
+        }
+    }
+
+    #[test]
+    fn extract_json_repairs_unescaped_interior_quotes() {
+        // Rich cheatsheet content where the model forgot to escape interior
+        // quotes — the real production cause of "unstructured output".
+        let reply = "{\"sections\":[{\"title\":\"Defs\",\"items\":[{\"t\":\"Place\",\"d\":\"A \"place\" is a location with meaning.\"}]}]}";
+        let v = extract_json(reply).unwrap();
+        assert_eq!(v["sections"][0]["items"][0]["t"], "Place");
+        assert!(v["sections"][0]["items"][0]["d"]
+            .as_str()
+            .unwrap()
+            .contains("place"));
+    }
+
+    #[test]
+    fn extract_json_repairs_quotes_and_newlines_together() {
+        // Both failure shapes at once inside one rich body.
+        let reply = "Here:\n{\"sections\":[{\"title\":\"T\",\"items\":[{\"t\":\"X\",\"d\":\"Line one\nHe said \"hi\" here\"}]}]}\nDone.";
+        let v = extract_json(reply).unwrap();
+        let d = v["sections"][0]["items"][0]["d"].as_str().unwrap();
+        assert!(d.contains("hi"));
+        assert!(d.contains("Line one"));
     }
 
     #[test]

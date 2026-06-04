@@ -294,6 +294,57 @@ fn emit_progress(app: &AppHandle, source_id: &str, stage: &str, detail: &str, pc
     );
 }
 
+/// OCR an image source or a scanned (text-less) PDF using the configured
+/// multimodal model (e.g. an OpenRouter/Gemini vision model). PDFs are rendered
+/// to page PNGs via poppler, then sent to the model in small batches. Returns
+/// the concatenated transcribed Markdown (empty string ⇒ nothing recognised).
+fn ocr_via_vision(state: &State<AppState>, kind: &str, path: Option<&str>) -> Result<String> {
+    let path = path.ok_or_else(|| Error::Other("no file to OCR".into()))?;
+    let (spec, keys) = {
+        let c = state.db.lock().unwrap();
+        let spec = repo::get_setting(&c, "model_chat")?
+            .unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
+        (spec, read_keys(&c)?)
+    };
+    let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    let images: Vec<(String, String)> = if kind == "image" {
+        let bytes = std::fs::read(path)?;
+        vec![(ingest::image_mime(path).to_string(), llm::b64_encode(&bytes))]
+    } else {
+        // Cap pages so OCR of a huge scan can't run unbounded (cost + time).
+        ingest::pdf_page_images(path, 30)?
+            .into_iter()
+            .map(|b| ("image/png".to_string(), llm::b64_encode(&b)))
+            .collect()
+    };
+    if images.is_empty() {
+        return Ok(String::new());
+    }
+    // One image per request: batching several large page images made OpenRouter
+    // truncate the response ("EOF while parsing"). A failed page is skipped (not
+    // fatal) so one bad page can't lose the whole document.
+    let mut out = String::new();
+    let mut last_err: Option<Error> = None;
+    let mut ok_pages = 0;
+    for img in &images {
+        match model.ocr(std::slice::from_ref(img)) {
+            Ok(t) => {
+                out.push_str(t.trim());
+                out.push_str("\n\n");
+                ok_pages += 1;
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    // Only surface an error if EVERY page failed; otherwise return what we got.
+    if ok_pages == 0 {
+        if let Some(e) = last_err {
+            return Err(e);
+        }
+    }
+    Ok(out)
+}
+
 /// Full pipeline: detect → parse → chunk → embed → store, emitting progress.
 #[tauri::command]
 pub async fn add_source(
@@ -371,6 +422,31 @@ pub async fn add_source(
             let _ = repo::finalize_source(&c, &source_id, "error", None, None, Some(&e.to_string()));
             emit_progress(&app, &source_id, "error", &e.to_string(), 100);
             return Err(e);
+        }
+    };
+
+    // 2a. Enrich kinds `parse` can't read on its own:
+    //   • images and scanned (text-less) PDFs → OCR via the configured vision model
+    //   • audio files → local Whisper transcription
+    let (text, warning) = {
+        let needs_ocr = kind == "image" || (kind == "pdf" && text.trim().is_empty());
+        if needs_ocr {
+            emit_progress(&app, &source_id, "parsing", "reading pages with OCR (vision model)", 35);
+            match ocr_via_vision(&state, &kind, input.path.as_deref()) {
+                Ok(t) if !t.trim().is_empty() => (t, None),
+                Ok(_) => (text, warning),
+                Err(e) => (text, Some(format!("OCR failed: {e}"))),
+            }
+        } else if kind == "audio" {
+            if let Some(p) = input.path.as_deref() {
+                emit_progress(&app, &source_id, "parsing", "transcribing audio (Whisper)", 35);
+                let (t, w) = transcribe(Path::new(p));
+                if t.trim().is_empty() { (text, w.or(warning)) } else { (t, w) }
+            } else {
+                (text, warning)
+            }
+        } else {
+            (text, warning)
         }
     };
 
@@ -639,9 +715,11 @@ pub async fn chat_answer(
     let base_system = "You are Cortex, a study tutor. Be CONCISE — answer in short, focused chunks \
         (usually 2–5 sentences or a few short bullets), never an essay. Lead with the key idea, then \
         actively promote learning by ending the answer with ONE short guiding question. \
-        Ground answers in the provided source context and CITE sources inline as ⟦source-name · location⟧ \
-        whenever you use them. If the sources don't cover it, say so in one line, then explain briefly from \
-        general knowledge. Use light Markdown (bold key terms, short bullet lists; a `---` divider only when \
+        Answer STRICTLY and ONLY from the provided source context — treat it as your entire universe of \
+        knowledge. Do NOT use outside or prior knowledge, and never invent facts. CITE sources inline as \
+        ⟦source-name · location⟧ whenever you use them. If the provided sources don't contain the answer, \
+        say so plainly in one line (e.g. \"That isn't covered in the selected sources.\") and STOP — do not \
+        fall back to general knowledge. Use light Markdown (bold key terms, short bullet lists; a `---` divider only when \
         genuinely needed) and keep it scannable. \
         On the FINAL line, write 2–3 SPECIFIC next-step prompts the learner could tap, each a real \
         short phrase about THIS material (never placeholders like 'a' or 'b'), formatted exactly as: \
@@ -778,6 +856,42 @@ fn parse_cheatsheet(raw: &str) -> Vec<CsSection> {
     }
 }
 
+/// Render a self-contained HTML document (built by the frontend with print
+/// styles inlined) to a PDF file at `dest`. Used by "Save as PDF" / "Export all"
+/// for cheatsheets and notes — replaces the unreliable `window.print()` path
+/// (WebKitGTK frequently no-ops it). Runs off-thread since it shells out.
+#[tauri::command]
+pub async fn export_pdf(html: String, dest: String) -> Result<()> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<()> {
+        crate::ingest::html_to_pdf(&html, std::path::Path::new(&dest))
+    })
+    .await
+    .map_err(|e| Error::Other(format!("export task failed: {e}")))?
+}
+
+/// Export the entire database to a single portable SQLite file at `dest` (the
+/// locked-in "SQLite dump" export). Checkpoints the WAL first so the copy is
+/// complete and self-contained.
+#[tauri::command]
+pub async fn export_database(app: AppHandle, dest: String) -> Result<()> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<()> {
+        let state = app.state::<AppState>();
+        let db_path = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| Error::Other(e.to_string()))?
+            .join("cortex.db");
+        {
+            let c = state.db.lock().unwrap();
+            let _ = c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+        std::fs::copy(&db_path, &dest).map_err(Error::Io)?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| Error::Other(format!("export task failed: {e}")))?
+}
+
 /// Synthesize a sectioned cheatsheet from a subject/topic's indexed sources.
 #[tauri::command]
 pub async fn generate_cheatsheet(
@@ -789,7 +903,9 @@ pub async fn generate_cheatsheet(
     let state = app.state::<AppState>();
     let (context, sources, subject_name, topic_name, spec, keys, style) = {
         let c = state.db.lock().unwrap();
-        let (ctx, n) = repo::context_text(&c, &subject_id, topic_id.as_deref(), 24000)?;
+        // Roomy context so the cheatsheet can be exhaustive, but bounded so a
+        // single generation doesn't run so long the connection drops mid-stream.
+        let (ctx, n) = repo::context_text(&c, &subject_id, topic_id.as_deref(), 64_000)?;
         let subj = repo::get_subject(&c, &subject_id)?;
         let tname = topic_id
             .as_ref()
@@ -809,10 +925,21 @@ pub async fn generate_cheatsheet(
     }
 
     let system = format!("You are a world-class, exam-focused study-notes synthesizer. Build a \
-        COMPREHENSIVE, accurate, exam-ready cheatsheet from the source material. Be thorough and \
-        concrete: flesh out every item with real explanations, real examples drawn from the SOURCE \
-        MATERIAL, and exam-relevant detail — never terse one-liners. Completeness matters more than \
-        brevity.\n\
+        COMPLETE, accurate, exam-ready cheatsheet from the source material.\n\
+        \n\
+        EXHAUSTIVENESS IS THE #1 PRIORITY. Walk through the SOURCE MATERIAL from start to finish \
+        and cover EVERY exam-relevant element it contains: every term, definition, concept, theory, \
+        model, framework, classification, process, cause/effect, formula, law, rule, named \
+        example, case study, date, person, place, and distinction. If a subtopic, heading, or idea \
+        appears in the readings, it MUST appear in the cheatsheet — do NOT summarise, sample, or \
+        cherry-pick the 'main' ones and drop the rest. When in doubt, INCLUDE it. A student should \
+        be able to revise for the exam from this cheatsheet ALONE without reopening the sources. \
+        Prefer many thorough items over a few; never collapse several distinct concepts into one \
+        item.\n\
+        \n\
+        DEPTH: flesh out every item with a real, self-contained explanation drawn from the SOURCE \
+        MATERIAL — what it is, why it matters, how it relates to neighbouring ideas, and a concrete \
+        example or distinguishing detail. Never terse one-liners.\n\
         \n\
         OUTPUT CONTRACT: Respond with ONLY raw JSON — no markdown code fences, no prose before or \
         after. Use this EXACT shape (do not add or rename keys):\n\
@@ -830,18 +957,36 @@ pub async fn generate_cheatsheet(
         related concepts or list properties side by side.\n\
         - **Bold** key terms, inline `code`/`formulas`, ordered lists for step-by-step worked \
         examples, and short bullet lists.\n\
+        - A simple BAR CHART for quantitative comparisons: a fenced block opened with \
+        three backticks then the word barchart, then one `Label: number` per line, then closing \
+        backticks. Use ONLY for real numeric data from the sources (proportions, magnitudes, \
+        counts) — never invent numbers.\n\
         \n\
         Produce these sections, in THIS exact order, each fleshed out and comprehensive:\n\
         1. \"Overview\" — a high-level orientation: what this topic is, why it matters, how the \
-        pieces fit together.\n\
-        2. \"Definitions\" — precise definitions of the core terms.\n\
-        3. \"Key Concepts\" — the main ideas explained in depth; use comparison TABLES where \
-        concepts contrast.\n\
-        4. \"Formulas & Rules\" — formulas, laws, and rules with inline `code`, plus when-to-use \
-        guidance in callouts.\n\
-        5. \"Worked Examples\" — concrete examples from the source, solved with NUMBERED steps.\n\
+        pieces fit together, and a quick map of everything the cheatsheet covers below.\n\
+        2. \"Key Concepts\" — every main idea, theory, model, process and classification explained \
+        in depth; use comparison TABLES where concepts contrast, and a `\x60\x60\x60barchart` block \
+        (see below) when comparing quantities.\n\
+        3. \"Definitions\" — define EVERY key term the sources introduce, not just a handful. \
+        STRUCTURE each \"d\" so it never reads as a wall of text: start with a single concise \
+        definition sentence, then a short bulleted list (`- `) of the term's key attributes, \
+        examples, or use-cases, and bold (`**term**`) the defined term and any sub-terms. Where \
+        two terms are easily confused, contrast them in a small TABLE. Keep prose tight and prefer \
+        bullets over long paragraphs. Order terms logically (foundational first), not randomly.\n\
+        4. \"Formulas & Rules\" — every formula, law, and rule with inline `code`, plus when-to-use \
+        guidance in callouts. (Omit this section ONLY if the sources contain none.)\n\
+        5. \"Worked Examples\" — concrete examples and case studies from the source, solved with \
+        NUMBERED steps.\n\
         6. \"Common Pitfalls\" — mistakes and misconceptions, each as a `> [!WARNING]` callout.\n\
         7. \"Mnemonics & Quick Recall\" — memory aids and a tight recap for last-minute review.\n\
+        \n\
+        You may — and SHOULD — ADD extra, specifically-titled topical sections between Key Concepts \
+        and Mnemonics whenever the material has major themes that deserve their own section (e.g. \
+        \"Political Geography\", \"Population & Migration\", \"Climate Systems\"). Vary section \
+        titles to match the actual content rather than reusing only the generic seven — better to \
+        over-cover than to omit. Within any longer item, use Markdown `## subheadings` (and `###` \
+        below them) to give it internal structure instead of one long block.\n\
         {style}");
     let system = system.as_str();
     let user = format!("Subject: {subject_name} › {topic_name}\n\nSOURCE MATERIAL:\n{context}\n\nProduce the cheatsheet JSON now.");

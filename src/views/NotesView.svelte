@@ -10,6 +10,7 @@
   import Icon from "../components/Icon.svelte";
   import MarkdownEditor from "../components/MarkdownEditor.svelte";
   import RichText from "../components/RichText.svelte";
+  import { savePdf } from "../lib/pdf";
 
   let { embedded = false }: { embedded?: boolean } = $props();
 
@@ -125,8 +126,14 @@
     }
   }
 
-  function exportPdf() {
-    window.print();
+  async function exportPdf() {
+    const el = document.querySelector(".notes-print-preview");
+    if (!el) {
+      app.pushToast({ kind: "warning", title: "Nothing to export" });
+      return;
+    }
+    const body = `<article class="note-export cs-doc">${el.innerHTML}</article>`;
+    await savePdf(body, title || "note");
   }
 
   function relTime(ms: number): string {

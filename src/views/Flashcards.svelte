@@ -85,9 +85,11 @@
     void i; // read i so effect re-runs on card advance
 
     function onKey(e: KeyboardEvent) {
-      if (cur_done) return;
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
+      // Esc always exits the session (back to materials), even on the done screen.
+      if (e.key === "Escape") { e.preventDefault(); onExit?.(); return; }
+      if (cur_done) return;
       if (e.key === " ") {
         e.preventDefault();
         flipped = !flipped;
