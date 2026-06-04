@@ -3,12 +3,13 @@
   import * as api from "../lib/api";
   import type { Reference, CalEvent } from "../lib/api";
   import Icon from "../components/Icon.svelte";
+  import Picker from "../components/Picker.svelte";
 
   const subjectId = $derived(app.activeSubject?.id ?? null);
 
   // ── references ────────────────────────────────────────────────
   let refs = $state<Reference[]>([]);
-  let style = $state<"apa" | "mla">("apa");
+  let style = $state<"harvard" | "apa" | "mla">("harvard"); // Harvard is the default
   let editing = $state<string | null>(null); // ref id being edited, or "new"
 
   const CTYPES = [
@@ -87,7 +88,18 @@
     else if (r.doi) parts.push(`https://doi.org/${r.doi.trim()}.`);
     return parts.join(" ").replace(/\s+/g, " ").replace(/,\s*$/, ".").trim();
   }
-  const fmt = $derived(style === "apa" ? formatApa : formatMla);
+  // Harvard (author–date): Authors (Year) Title. Container. Available at: URL.
+  function formatHarvard(r: Reference): string {
+    const parts: string[] = [];
+    if (r.authors) parts.push(r.authors.trim());
+    parts.push(`(${r.year?.trim() || "no date"})`);
+    parts.push(dotted(r.title));
+    if (r.container) parts.push(dotted(r.container));
+    if (r.doi) parts.push(`Available at: https://doi.org/${r.doi.replace(/^https?:\/\/doi\.org\//, "").trim()}.`);
+    else if (r.url) parts.push(`Available at: ${r.url.trim()}.`);
+    return parts.join(" ").replace(/\s+/g, " ").trim();
+  }
+  const fmt = $derived(style === "harvard" ? formatHarvard : style === "apa" ? formatApa : formatMla);
 
   async function copyOne(r: Reference) {
     try { await navigator.clipboard.writeText(fmt(r)); app.pushToast({ kind: "success", title: "Citation copied" }); }
@@ -101,16 +113,18 @@
   }
 
   // ── deadlines (events with kind = 'deadline') ─────────────────
+  const DEADLINE_KINDS = ["exam", "assignment", "project", "deadline"];
   let deadlines = $state<CalEvent[]>([]);
   let dTitle = $state("");
   let dDate = $state("");
+  let dKind = $state("exam"); // exam | assignment | project
   async function loadDeadlines() {
     if (!subjectId) { deadlines = []; return; }
     try {
       const all = await api.listEvents(subjectId);
       const now = Date.now();
       deadlines = all
-        .filter((e) => e.kind === "deadline" && !e.done && e.start_ms >= now - 86_400_000)
+        .filter((e) => DEADLINE_KINDS.includes(e.kind) && !e.done && e.start_ms >= now - 86_400_000)
         .sort((a, b) => a.start_ms - b.start_ms);
     } catch { /* non-fatal */ }
   }
@@ -121,13 +135,13 @@
     const startMs = new Date(dDate + "T23:59:00").getTime();
     try {
       await api.createEvent({
-        title: dTitle.trim(), startMs, subjectId, kind: "deadline", allDay: true,
+        title: dTitle.trim(), startMs, subjectId, kind: dKind, allDay: true,
         reminderMs: startMs - 86_400_000, // remind 1 day before
         color: "var(--warn)",
       });
       dTitle = ""; dDate = "";
       await loadDeadlines();
-      app.pushToast({ kind: "success", title: "Deadline added" });
+      app.pushToast({ kind: "success", title: "Added" });
     } catch (e) {
       app.pushToast({ kind: "error", title: "Add failed", body: String(e) });
     }
@@ -156,7 +170,12 @@
         <h2 class="cit-h read"><Icon name="calendar" size={15} /> Upcoming deadlines</h2>
       </div>
       <div class="cit-deadline-add">
-        <input class="input" placeholder="Assignment / exam…" bind:value={dTitle} />
+        <div class="cit-kind-seg mono">
+          {#each ["exam", "assignment", "project"] as k (k)}
+            <button class={dKind === k ? "on" : ""} onclick={() => (dKind = k)}>{k}</button>
+          {/each}
+        </div>
+        <input class="input" placeholder="e.g. Midterm, Essay 2, Capstone…" bind:value={dTitle} />
         <input class="input cit-date" type="date" bind:value={dDate} />
         <button class="btn btn--sm btn--primary" disabled={!dTitle.trim() || !dDate} onclick={addDeadline}>
           <Icon name="plus" size={12} /> Add
@@ -172,6 +191,7 @@
               <button class="cit-dl-check" title="Mark done" aria-label="Mark done" onclick={() => completeDeadline(e)}>
                 <Icon name="check" size={11} />
               </button>
+              <span class="cit-dl-kind mono cit-dl-kind--{e.kind}">{e.kind === "deadline" ? "due" : e.kind}</span>
               <span class="cit-dl-title">{e.title}</span>
               <span class="cit-dl-date mono">{fmtDate(e.start_ms)}</span>
               <span class="cit-dl-left mono{overdue ? ' overdue' : ''}">{daysLeft(e.start_ms)}</span>
@@ -187,6 +207,7 @@
         <h2 class="cit-h read"><Icon name="book" size={15} /> References <span class="faint mono">{refs.length}</span></h2>
         <div class="grow"></div>
         <div class="cit-style-toggle mono">
+          <button class={style === "harvard" ? "on" : ""} onclick={() => (style = "harvard")}>Harvard</button>
           <button class={style === "apa" ? "on" : ""} onclick={() => (style = "apa")}>APA</button>
           <button class={style === "mla" ? "on" : ""} onclick={() => (style = "mla")}>MLA</button>
         </div>
@@ -234,12 +255,15 @@
 {#snippet form()}
   <div class="cit-form">
     <div class="cit-form-grid">
-      <label class="cit-field cit-field--type">
+      <div class="cit-field cit-field--type">
         <span class="onb-label mono">TYPE</span>
-        <select class="input" bind:value={f.ctype}>
-          {#each CTYPES as t (t.id)}<option value={t.id}>{t.label}</option>{/each}
-        </select>
-      </label>
+        <Picker
+          value={f.ctype}
+          onChange={(id) => (f.ctype = id)}
+          options={CTYPES.map((t) => ({ id: t.id, label: t.label }))}
+          placeholder="Type"
+        />
+      </div>
       <label class="cit-field cit-field--wide">
         <span class="onb-label mono">TITLE</span>
         <input class="input" bind:value={f.title} placeholder="Title of the work" />
@@ -287,6 +311,13 @@
   /* deadlines */
   .cit-deadline-add { display: flex; gap: 8px; align-items: center; }
   .cit-deadline-add .input { flex: 1; }
+  .cit-kind-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--rad-2); overflow: hidden; flex: none; }
+  .cit-kind-seg button { padding: 5px 9px; font-size: var(--t-xs); text-transform: capitalize; background: transparent; border: none; color: var(--fg-muted); cursor: pointer; border-right: 1px solid var(--border); }
+  .cit-kind-seg button:last-child { border-right: none; }
+  .cit-kind-seg button.on { background: var(--accent); color: var(--bg); }
+  .cit-dl-kind { flex: none; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 6px; border-radius: 999px; background: color-mix(in oklab, var(--accent) 16%, var(--surface)); color: var(--accent); }
+  .cit-dl-kind--exam { background: color-mix(in oklab, var(--warn) 18%, var(--surface)); color: var(--warn); }
+  .cit-dl-kind--project { background: color-mix(in oklab, var(--info) 18%, var(--surface)); color: var(--info); }
   .cit-date { flex: none !important; width: 160px; }
   .cit-deadlines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .cit-deadline { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--rad-3); background: var(--surface); }

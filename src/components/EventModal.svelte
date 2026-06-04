@@ -55,7 +55,13 @@
   let startVal = $state("");
   let endVal = $state("");
   let allDay = $state(false);
-  let kind = $state<"event" | "task" | "deadline">("event");
+  // Deadlines are typed: exam | assignment | project. The segmented control shows
+  // Event / Task / Deadline, and a sub-row picks the deadline type when relevant.
+  const DEADLINE_KINDS = ["exam", "assignment", "project"] as const;
+  type Kind = "event" | "task" | "exam" | "assignment" | "project";
+  let kind = $state<Kind>("event");
+  const isDeadline = $derived((DEADLINE_KINDS as readonly string[]).includes(kind));
+  function setDeadline() { if (!isDeadline) kind = "exam"; }
   let color = $state<string | null>(null);
   let subjectId = $state<string>("");
   let reminder = $state<string>("none");
@@ -71,7 +77,11 @@
       startVal = msToLocalInput(e.start_ms);
       endVal = e.end_ms != null ? msToLocalInput(e.end_ms) : "";
       allDay = !!e.all_day;
-      kind = e.kind === "task" || e.kind === "deadline" ? e.kind : "event";
+      kind = (["task", "exam", "assignment", "project"] as readonly string[]).includes(e.kind)
+        ? (e.kind as Kind)
+        : e.kind === "deadline" // legacy generic deadline → default to exam
+          ? "exam"
+          : "event";
       color = e.color ?? null;
       subjectId = e.subject_id ?? "";
       reminder = deriveReminder(e.reminder_ms, e.start_ms);
@@ -225,11 +235,26 @@
         >
         <button
           type="button"
-          class={"ev-seg-btn" + (kind === "deadline" ? " on" : "")}
-          onclick={() => (kind = "deadline")}>Deadline</button
+          class={"ev-seg-btn" + (isDeadline ? " on" : "")}
+          onclick={setDeadline}>Deadline</button
         >
       </div>
     </div>
+
+    {#if isDeadline}
+      <div class="ev-field">
+        <span class="ev-lbl">Deadline type</span>
+        <div class="ev-seg" role="group" aria-label="Deadline type">
+          {#each DEADLINE_KINDS as dk (dk)}
+            <button
+              type="button"
+              class={"ev-seg-btn" + (kind === dk ? " on" : "")}
+              onclick={() => (kind = dk)}
+            >{dk.charAt(0).toUpperCase() + dk.slice(1)}</button>
+          {/each}
+        </div>
+      </div>
+    {/if}
 
     <div class="ev-row">
       <label class="ev-field ev-grow">
