@@ -5,6 +5,7 @@
   import * as api from "../lib/api";
   import type { CalEvent } from "../lib/api";
   import Picker from "./Picker.svelte";
+  import DatePicker from "./DatePicker.svelte";
 
   let {
     event,
@@ -33,10 +34,11 @@
   }
   function localInputToMs(v: string): number | null {
     if (!v) return null;
-    const m = v.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+    // Accepts "YYYY-MM-DDTHH:MM" or date-only "YYYY-MM-DD" (all-day).
+    const m = v.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
     if (!m) return null;
     const [, y, mo, da, h, mi] = m;
-    return new Date(+y, +mo - 1, +da, +h, +mi, 0, 0).getTime();
+    return new Date(+y, +mo - 1, +da, +(h ?? 0), +(mi ?? 0), 0, 0).getTime();
   }
 
   // ---- reminder offsets ----
@@ -257,14 +259,14 @@
     {/if}
 
     <div class="ev-row">
-      <label class="ev-field ev-grow">
+      <div class="ev-field ev-grow">
         <span class="ev-lbl">Start</span>
-        <input type="datetime-local" bind:value={startVal} class="input" />
-      </label>
-      <label class="ev-field ev-grow">
+        <DatePicker value={startVal} onChange={(v) => (startVal = v)} withTime={!allDay} placeholder="Pick a date" />
+      </div>
+      <div class="ev-field ev-grow">
         <span class="ev-lbl">End <span class="ev-opt">(optional)</span></span>
-        <input type="datetime-local" bind:value={endVal} class="input" />
-      </label>
+        <DatePicker value={endVal} onChange={(v) => (endVal = v)} withTime={!allDay} placeholder="—" />
+      </div>
     </div>
 
     <label class="ev-toggle">
@@ -408,6 +410,9 @@
     opacity: 0.7;
   }
   .ev-field .input {
+    width: 100%;
+  }
+  .ev-field :global(.dp) {
     width: 100%;
   }
   .ev-textarea {
