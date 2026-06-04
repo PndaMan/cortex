@@ -137,7 +137,7 @@
       await api.createEvent({
         title: dTitle.trim(), startMs, subjectId, kind: dKind, allDay: true,
         reminderMs: startMs - 86_400_000, // remind 1 day before
-        color: "var(--warn)",
+        // colour comes from the deadline kind in the calendar
       });
       dTitle = ""; dDate = "";
       await loadDeadlines();

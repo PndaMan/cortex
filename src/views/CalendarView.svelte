@@ -254,9 +254,34 @@
     Object.fromEntries(app.subjects.map((s) => [s.id, app.subjectColor(s)]))
   );
 
-  // Color for an event: explicit color, else its subject color, else accent.
+  // Deadline family (typed) — these get their own colour + a tick-to-complete box.
+  const DEADLINE_KINDS = ["exam", "assignment", "project", "deadline"];
+  function isDeadline(e: CalEvent): boolean { return DEADLINE_KINDS.includes(e.kind); }
+  function completable(e: CalEvent): boolean { return e.kind === "task" || isDeadline(e); }
+  function kindColor(kind: string): string | null {
+    switch (kind) {
+      case "exam": return "var(--warn)";
+      case "assignment": return "var(--accent)";
+      case "project": return "var(--info)";
+      case "deadline": return "var(--warn)";
+      default: return null;
+    }
+  }
+  function kindGlyph(kind: string): string {
+    switch (kind) {
+      case "exam": return "✎";
+      case "assignment": return "▤";
+      case "project": return "◆";
+      case "deadline": return "⏰";
+      default: return "";
+    }
+  }
+
+  // Color for an event: explicit color, else deadline-kind color, else its
+  // subject color, else accent.
   function pillColor(e: CalEvent): string {
     if (e.color) return e.color;
+    if (isDeadline(e)) return kindColor(e.kind) ?? "var(--warn)";
     if (e.subject_id && subjectColorMap[e.subject_id]) return subjectColorMap[e.subject_id];
     return "var(--accent)";
   }
@@ -412,13 +437,13 @@
             {#each dayEvents as e (e.id)}
               <button
                 type="button"
-                class={"pill" + (e.kind === "task" && e.done ? " done" : "")}
+                class={"pill" + (completable(e) && e.done ? " done" : "")}
                 style:--pill-color={pillColor(e)}
                 onclick={(ev) => openEdit(e, ev)}
                 title={e.title}
               >
                 <div class="pill-row">
-                  {#if e.kind === "task"}
+                  {#if completable(e)}
                     <span
                       class={"pill-check" + (e.done ? " on" : "")}
                       role="checkbox"
@@ -433,6 +458,7 @@
                   {:else}
                     <span class="pill-dot"></span>
                   {/if}
+                  {#if isDeadline(e)}<span class="pill-glyph" aria-hidden="true" title={e.kind}>{kindGlyph(e.kind)}</span>{/if}
                   {#if !e.all_day}<span class="pill-time">{timeLabel(e)}</span>{/if}
                   <span class="pill-title">{e.title}</span>
                 </div>
@@ -461,12 +487,12 @@
             {#each allDayEvents as e (e.id)}
               <button
                 type="button"
-                class={"ad-pill" + (e.kind === "task" && e.done ? " done" : "")}
+                class={"ad-pill" + (completable(e) && e.done ? " done" : "")}
                 style:--blk-color={pillColor(e)}
                 onclick={(ev) => openEdit(e, ev)}
                 title={e.title}
               >
-                {#if e.kind === "task"}
+                {#if completable(e)}
                   <span
                     class={"pill-check ad-check" + (e.done ? " on" : "")}
                     role="checkbox"
@@ -479,6 +505,7 @@
                     {#if e.done}<Icon name="check" size={9} />{/if}
                   </span>
                 {/if}
+                {#if isDeadline(e)}<span class="ad-glyph" aria-hidden="true" title={e.kind}>{kindGlyph(e.kind)}</span>{/if}
                 <span class="ad-title">{e.title}</span>
               </button>
             {/each}
@@ -509,14 +536,14 @@
             {@const endLbl = timeLabelEnd(e)}
             <button
               type="button"
-              class={"blk" + (e.kind === "task" && e.done ? " blk--done" : "")}
+              class={"blk" + (completable(e) && e.done ? " blk--done" : "")}
               style:--blk-color={pillColor(e)}
               style:top={`${b.top}px`}
               style:height={`${b.height}px`}
               onclick={(ev) => openEdit(e, ev)}
             >
               <div class="blk-head">
-                {#if e.kind === "task"}
+                {#if completable(e)}
                   <span
                     class={"pill-check blk-check" + (e.done ? " on" : "")}
                     role="checkbox"
@@ -751,6 +778,13 @@
     background: var(--pill-color);
     flex: none;
   }
+  .pill-glyph, .ad-glyph {
+    flex: none;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--pill-color, var(--blk-color));
+  }
+  .ad-glyph { color: var(--blk-color); }
   .pill-check {
     width: 12px;
     height: 12px;
