@@ -92,6 +92,9 @@ pub struct ChatAnswer {
     pub text: String,
     pub citations: Vec<Citation>,
     pub model: String,
+    /// Images fetched from the web when web mode is on (diagrams/examples).
+    #[serde(default)]
+    pub images: Vec<WebImage>,
 }
 
 /// A persisted chat message (belongs to one conversation thread).
@@ -126,6 +129,9 @@ pub struct CsSection {
     #[serde(default = "default_state")]
     pub state: String,
     pub items: Vec<CsItem>,
+    /// Optional illustrative image (web-sourced when "include images" is on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
 }
 
 fn default_state() -> String {
@@ -179,6 +185,24 @@ pub struct WebResult {
     pub host: String,
     pub snippet: String,
     pub engine: String,
+    /// Direct image URL (only for the "images" category).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub img_src: Option<String>,
+    /// Smaller preview image URL, when the engine provides one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<String>,
+}
+
+/// An image result attached to a chat answer or cheatsheet section.
+#[derive(Debug, Clone, Serialize)]
+pub struct WebImage {
+    /// Full-resolution image URL.
+    pub img: String,
+    /// Thumbnail/preview URL (falls back to `img`).
+    pub thumb: String,
+    pub title: String,
+    /// The page the image was found on.
+    pub source: String,
 }
 
 // ---- long-term memory -------------------------------------------------

@@ -80,13 +80,20 @@ export interface Citation {
   loc: string | null;
   snippet: string;
 }
+export interface WebImage {
+  img: string;
+  thumb: string;
+  title: string;
+  source: string;
+}
 export interface ChatAnswer {
   text: string;
   citations: Citation[];
   model: string;
+  images?: WebImage[];
 }
 export interface CsItem { t: string; d: string }
-export interface CsSection { id: string; title: string; state: string; items: CsItem[] }
+export interface CsSection { id: string; title: string; state: string; items: CsItem[]; image?: string | null }
 export interface CheatsheetData {
   subject: string;
   topic: string;
@@ -170,10 +177,11 @@ export const chatAnswer = (
   level: "subject" | "topic" | "source",
   query: string,
   sourceId?: string,
-  sourceIds?: string[]
-) => invoke<ChatAnswer>("chat_answer", { subjectId, level, query, sourceId, sourceIds });
-export const generateCheatsheet = (subjectId: string, topicId?: string) =>
-  invoke<CheatsheetData>("generate_cheatsheet", { subjectId, topicId });
+  sourceIds?: string[],
+  web?: boolean
+) => invoke<ChatAnswer>("chat_answer", { subjectId, level, query, sourceId, sourceIds, web });
+export const generateCheatsheet = (subjectId: string, topicId?: string, withImages?: boolean) =>
+  invoke<CheatsheetData>("generate_cheatsheet", { subjectId, topicId, withImages });
 export const getCheatsheet = (subjectId: string, topicId?: string) =>
   invoke<CheatsheetData | null>("get_cheatsheet", { subjectId, topicId });
 /** Render a self-contained HTML doc to a PDF at `dest` (headless Chromium). */
@@ -253,6 +261,8 @@ export interface WebResult {
   host: string;
   snippet: string;
   engine: string;
+  img_src?: string | null;
+  thumbnail?: string | null;
 }
 export const webSearch = (query: string, categories?: string) =>
   invoke<WebResult[]>("web_search", { query, categories });

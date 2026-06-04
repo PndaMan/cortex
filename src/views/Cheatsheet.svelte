@@ -29,6 +29,8 @@
   // ── topic selection ──────────────────────────────────────────
   // null = the whole-subject cheatsheet ("All"); otherwise a topic id.
   let selectedTopicId = $state<string | null>(null);
+  // Optionally illustrate sections with web images (diagrams). Needs SearXNG.
+  let withImages = $state(false);
 
   // Topics that actually have sources — only these get their own cheatsheet tab.
   const topicTabs = $derived(
@@ -149,7 +151,7 @@
       label: topicName,
       subjectId: sub.id,
       topicId,
-      run: () => api.generateCheatsheet(sub.id, topicId ?? undefined),
+      run: () => api.generateCheatsheet(sub.id, topicId ?? undefined, withImages),
       onDone: () => {
         // Only refresh the view if the user is still on this subject AND still
         // looking at the selection we generated for.
@@ -333,6 +335,12 @@
               {scopeSources} source{scopeSources !== 1 ? "s" : ""}.
             {/if}
           </p>
+          {#if !noSources}
+            <label class="cs-imgopt mono">
+              <input type="checkbox" bind:checked={withImages} />
+              Include diagrams/images <span class="faint">· needs SearXNG</span>
+            </label>
+          {/if}
           <button class="btn btn--primary btn--sm" onclick={generate} disabled={csGenerating || noSources}>
             <Icon name="refresh" size={13} /> {csGenerating ? "Synthesizing…" : "Generate cheatsheet"}
           </button>
@@ -387,6 +395,12 @@
                   <span class="cs-sec-count mono">{sec.items.length}</span>
                 {/if}
               </header>
+
+              {#if sec.image}
+                <a class="cs-sec-img" href={sec.image} target="_blank" rel="noreferrer" title="Open image">
+                  <img src={sec.image} alt={sec.title} loading="lazy" />
+                </a>
+              {/if}
 
               <dl class="cs-list">
                 {#each sec.items as item, i (i)}
@@ -672,6 +686,16 @@
   .cs-working .btn {
     margin-top: 4px;
   }
+  .cs-imgopt {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: var(--t-xs); color: var(--fg-muted); cursor: pointer; margin-top: 4px;
+  }
+  .cs-imgopt input { accent-color: var(--accent); cursor: pointer; }
+  .cs-sec-img {
+    display: block; margin: 0 0 12px; max-width: 360px; border-radius: var(--rad-3);
+    overflow: hidden; border: 1px solid var(--border);
+  }
+  .cs-sec-img img { width: 100%; height: auto; display: block; }
 
   /* export-all block is hidden on screen; print rules reveal it */
   .cs-export-all {

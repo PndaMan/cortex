@@ -35,7 +35,10 @@
   // ── scope state ──────────────────────────────────────────────────────────
   type Level = "subject" | "topic" | "source" | "sources";
 
-  interface ChatMessage { role: "system" | "user" | "assistant"; text: string }
+  interface ChatMessage { role: "system" | "user" | "assistant"; text: string; images?: api.WebImage[] }
+
+  // Web mode: let the AI pull live web snippets + images (diagrams/examples).
+  let webOn = $state(false);
 
   let level = $state<Level>("subject");
   let srcId = $state<string | null>(null);
@@ -309,9 +312,10 @@
             : "subject";
     const sourceId = !multi && sendLevel === "source" && curSrcObj ? curSrcObj.id : undefined;
     api
-      .chatAnswer(sid, sendLevel, text, sourceId, multi ? pickedIds : undefined)
+      .chatAnswer(sid, sendLevel, text, sourceId, multi ? pickedIds : undefined, webOn)
       .then((result) => {
         if (cancelled) { streaming = null; dequeue(); return; }
+        const imgs = result.images ?? [];
         const { body, sugg } = splitSuggestions(result.text);
         let i = 0;
         typeIv = setInterval(() => {
@@ -319,7 +323,7 @@
             if (typeIv) clearInterval(typeIv);
             typeIv = null;
             const partial = body.slice(0, i) || body;
-            messages = [...messages, { role: "assistant", text: partial }];
+            messages = [...messages, { role: "assistant", text: partial, images: imgs }];
             api.addChatMessage(sid, "assistant", partial).catch(() => {}); // persist
             streaming = null;
             suggestions = sugg;
@@ -331,7 +335,7 @@
           if (i >= body.length) {
             if (typeIv) clearInterval(typeIv);
             typeIv = null;
-            messages = [...messages, { role: "assistant", text: body }];
+            messages = [...messages, { role: "assistant", text: body, images: imgs }];
             api.addChatMessage(sid, "assistant", body).catch(() => {}); // persist
             streaming = null;
             suggestions = sugg;
@@ -553,6 +557,15 @@
         {:else}
           <div class="bubble assistant">
             <RichText text={m.text} />
+            {#if m.images && m.images.length}
+              <div class="chat-images">
+                {#each m.images as img (img.img)}
+                  <a class="chat-img" href={img.source || img.img} target="_blank" rel="noreferrer" title={img.title}>
+                    <img src={img.thumb} alt={img.title} loading="lazy" />
+                  </a>
+                {/each}
+              </div>
+            {/if}
             <div class="bubble-actions">
               <button
                 type="button"
@@ -604,6 +617,15 @@
         onblur={() => app.setMode("NOR")}
         onkeydown={handleKey}
       ></textarea>
+      <button
+        type="button"
+        class="btn btn--icon btn--sm chat-web{webOn ? ' is-on' : ''}"
+        onclick={() => (webOn = !webOn)}
+        title={webOn ? "Web mode on — pulls live results + images (needs SearXNG)" : "Web mode off — answers from your sources only"}
+        aria-pressed={webOn}
+      >
+        <Icon name="globe" size={13} />
+      </button>
       {#if streaming !== null}
         <button class="btn btn--icon btn--sm chat-stop" onclick={stop} title="Stop generating">
           <span class="stop-sq"></span>
@@ -732,6 +754,17 @@
 </div>
 
 <style>
+  /* web image gallery under an assistant answer */
+  .chat-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chat-img {
+    display: block; width: 116px; height: 86px; border-radius: var(--rad-2);
+    overflow: hidden; border: 1px solid var(--border); background: var(--surface-2);
+  }
+  .chat-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .chat-img:hover { border-color: var(--accent); }
+  /* web-mode toggle in the composer */
+  .chat-web.is-on { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 55%, var(--border)); background: color-mix(in oklab, var(--accent) 12%, transparent); }
+
   /* ── chat history panel ────────────────────────────────────────────────── */
   .hist-overlay {
     position: absolute; inset: 0; z-index: 80; display: flex;

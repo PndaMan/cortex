@@ -835,10 +835,11 @@ pub async fn chat_answer(
     source_id: Option<String>,
     source_ids: Option<Vec<String>>,
     query: String,
+    web: Option<bool>,
 ) -> Result<ChatAnswer> {
     tauri::async_runtime::spawn_blocking(move || -> Result<ChatAnswer> {
     let state = app.state::<AppState>();
-    let (embed_provider, ollama_url, chat_spec, keys, preamble) = {
+    let (embed_provider, ollama_url, chat_spec, keys, preamble, searxng) = {
         let c = state.db.lock().unwrap();
         (
             repo::get_setting(&c, "embed_provider")?.unwrap_or_else(|| "stub".into()),
@@ -846,6 +847,7 @@ pub async fn chat_answer(
             repo::get_setting(&c, "model_chat")?.unwrap_or_else(|| "gemini:gemini-2.5-flash".into()),
             read_keys(&c)?,
             profile_preamble(&c)?,
+            searxng_base(&c)?,
         )
     };
     // Require a real model before doing any work.
@@ -905,6 +907,38 @@ pub async fn chat_answer(
         .collect::<Vec<_>>()
         .join("\n\n");
 
+    // Web mode: pull live web snippets (for grounding/examples) and — when the
+    // question is visual — image results to show alongside the answer. Requires a
+    // configured SearXNG; any failure degrades gracefully to source-only.
+    let web_on = web.unwrap_or(false);
+    let mut images: Vec<WebImage> = Vec::new();
+    let mut web_block = String::new();
+    if web_on {
+        if let Some(base) = &searxng {
+            if let Ok(results) = searxng_raw(base, &query, "general") {
+                let snippets: Vec<String> = results
+                    .iter()
+                    .take(5)
+                    .filter_map(|r| {
+                        let title = r["title"].as_str().unwrap_or("");
+                        let content = r["content"].as_str().unwrap_or("");
+                        if title.is_empty() && content.is_empty() {
+                            return None;
+                        }
+                        let host = host_from_url(r["url"].as_str().unwrap_or(""));
+                        Some(format!("[web · {host}] {title}\n{content}"))
+                    })
+                    .collect();
+                if !snippets.is_empty() {
+                    web_block = format!("\n\nWEB RESULTS:\n{}", snippets.join("\n\n"));
+                }
+            }
+            if wants_images(&query) {
+                images = searxng_images(base, &query, 4);
+            }
+        }
+    }
+
     let base_system = "You are Cortex, a study tutor. Be CONCISE — answer in short, focused chunks \
         (usually 2–5 sentences or a few short bullets), never an essay. Lead with the key idea, then \
         actively promote learning by ending the answer with ONE short guiding question. \
@@ -919,7 +953,7 @@ pub async fn chat_answer(
         `SUGGESTIONS: <first prompt> | <second prompt> | <third prompt>` — e.g. \
         `SUGGESTIONS: Walk me through an example | Why does this hold? | Move on to the next topic`. \
         Do not otherwise mention the suggestions line.";
-    let system = if preamble.is_empty() {
+    let mut system = if preamble.is_empty() {
         base_system.to_string()
     } else {
         format!("{preamble}\nUse the above to personalize tone and examples, but {}", {
@@ -931,11 +965,22 @@ pub async fn chat_answer(
             }
         })
     };
+    if web_on {
+        // Override the strict sources-only rule above: web mode permits using the
+        // WEB RESULTS block and light general knowledge, cited as ⟦web · host⟧.
+        system.push_str(
+            " WEB MODE IS ON: in addition to the sources, you have a WEB RESULTS block (live web \
+             snippets) and MAY use it — plus light general knowledge — to add examples, current \
+             facts, or visual explanation. Cite web-derived facts as ⟦web · host⟧. When images or \
+             diagrams were fetched they are shown directly beneath your answer, so you can say \
+             e.g. \"see the diagram below\" rather than describing pixels.",
+        );
+    }
     let system = system.as_str();
     let user = if context.is_empty() {
-        format!("(No indexed sources are in scope yet.)\n\nQUESTION: {query}")
+        format!("(No indexed sources are in scope yet.){web_block}\n\nQUESTION: {query}")
     } else {
-        format!("SOURCE CONTEXT:\n{context}\n\nQUESTION: {query}")
+        format!("SOURCE CONTEXT:\n{context}{web_block}\n\nQUESTION: {query}")
     };
 
     let text = model.complete(system, &user)?;
@@ -954,6 +999,7 @@ pub async fn chat_answer(
         text,
         citations,
         model: model.name(),
+        images,
     })
     })
     .await
@@ -1039,6 +1085,7 @@ fn parse_cheatsheet(raw: &str) -> Vec<CsSection> {
                             title,
                             state: "approved".into(),
                             items,
+                            image: None,
                         })
                     })
                     .collect();
@@ -1192,10 +1239,11 @@ pub async fn generate_cheatsheet(
     app: AppHandle,
     subject_id: String,
     topic_id: Option<String>,
+    with_images: Option<bool>,
 ) -> Result<CheatsheetData> {
     tauri::async_runtime::spawn_blocking(move || -> Result<CheatsheetData> {
     let state = app.state::<AppState>();
-    let (context, sources, subject_name, topic_name, spec, keys, style) = {
+    let (context, sources, subject_name, topic_name, spec, keys, style, searxng) = {
         let c = state.db.lock().unwrap();
         // Roomy context so the cheatsheet can be exhaustive, but bounded so a
         // single generation doesn't run so long the connection drops mid-stream.
@@ -1209,7 +1257,7 @@ pub async fn generate_cheatsheet(
             .unwrap_or_default();
         let spec =
             repo::get_setting(&c, "model_cheatsheet")?.unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
-        (ctx, n, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c))
+        (ctx, n, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c), searxng_base(&c)?)
     };
     let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
     if context.trim().is_empty() {
@@ -1297,7 +1345,30 @@ pub async fn generate_cheatsheet(
                 t: "Model returned unstructured output".into(),
                 d: truncate(&raw, 600),
             }],
+            image: None,
         }];
+    }
+
+    // Optionally illustrate sections with a web image (diagrams/figures). Skipped
+    // for the generic framing sections; capped so generation stays quick.
+    if with_images.unwrap_or(false) {
+        if let Some(base) = &searxng {
+            const SKIP: &[&str] = &["overview", "mnemonics & quick recall", "common pitfalls"];
+            let mut used = 0;
+            for sec in sections.iter_mut() {
+                if used >= 6 {
+                    break;
+                }
+                if SKIP.contains(&sec.title.to_lowercase().as_str()) {
+                    continue;
+                }
+                let q = format!("{subject_name} {} diagram", sec.title);
+                if let Some(first) = searxng_images(base, &q, 1).into_iter().next() {
+                    sec.image = Some(first.img);
+                    used += 1;
+                }
+            }
+        }
     }
 
     {
@@ -1825,29 +1896,12 @@ pub async fn web_search(
     let state = app.state::<AppState>();
     let base = {
         let c = state.db.lock().unwrap();
-        repo::get_setting(&c, "searxng_url")?
-    };
-    let base = base
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| Error::Other("searxng_url not configured".into()))?;
-    let base = base.trim_end_matches('/');
+        searxng_base(&c)?
+    }
+    .ok_or_else(|| Error::Other("searxng_url not configured".into()))?;
     let cats = categories.filter(|s| !s.is_empty()).unwrap_or_else(|| "general".into());
 
-    let client = http_client(15);
-    let resp = client
-        .get(format!("{base}/search"))
-        .query(&[
-            ("q", query.as_str()),
-            ("format", "json"),
-            ("categories", cats.as_str()),
-            ("pageno", "1"),
-        ])
-        .send()?;
-    if !resp.status().is_success() {
-        return Err(Error::Other(format!("searxng returned {}", resp.status())));
-    }
-    let json: serde_json::Value = resp.json()?;
-    let results = json["results"].as_array().cloned().unwrap_or_default();
+    let results = searxng_raw(&base, &query, &cats)?;
     let out = results
         .iter()
         .map(|r| {
@@ -1858,6 +1912,8 @@ pub async fn web_search(
                 url,
                 snippet: r["content"].as_str().unwrap_or("").to_string(),
                 engine: r["engine"].as_str().unwrap_or("").to_string(),
+                img_src: r["img_src"].as_str().map(normalize_img_url),
+                thumbnail: r["thumbnail_src"].as_str().map(normalize_img_url),
             }
         })
         .collect();
@@ -1865,6 +1921,76 @@ pub async fn web_search(
     })
     .await
     .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+}
+
+/// Configured SearXNG base URL (trailing slash trimmed), or None if unset.
+fn searxng_base(c: &Connection) -> Result<Option<String>> {
+    Ok(repo::get_setting(c, "searxng_url")?
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim_end_matches('/').to_string()))
+}
+
+/// Raw SearXNG JSON `results` array for a query + category.
+fn searxng_raw(base: &str, query: &str, category: &str) -> Result<Vec<serde_json::Value>> {
+    let client = http_client(15);
+    let resp = client
+        .get(format!("{base}/search"))
+        .query(&[
+            ("q", query),
+            ("format", "json"),
+            ("categories", category),
+            ("pageno", "1"),
+        ])
+        .send()?;
+    if !resp.status().is_success() {
+        return Err(Error::Other(format!("searxng returned {}", resp.status())));
+    }
+    let json: serde_json::Value = resp.json()?;
+    Ok(json["results"].as_array().cloned().unwrap_or_default())
+}
+
+/// Top image results for a query (only entries with a usable image URL).
+fn searxng_images(base: &str, query: &str, limit: usize) -> Vec<WebImage> {
+    searxng_raw(base, query, "images")
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|r| {
+            let img = normalize_img_url(r["img_src"].as_str().filter(|s| !s.is_empty())?);
+            let thumb = r["thumbnail_src"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(normalize_img_url)
+                .unwrap_or_else(|| img.clone());
+            Some(WebImage {
+                img,
+                thumb,
+                title: r["title"].as_str().unwrap_or("").to_string(),
+                source: r["url"].as_str().unwrap_or("").to_string(),
+            })
+        })
+        .take(limit)
+        .collect()
+}
+
+/// Normalize a SearXNG image URL: protocol-relative `//host/…` → `https://…`.
+fn normalize_img_url(u: &str) -> String {
+    let u = u.trim();
+    if let Some(rest) = u.strip_prefix("//") {
+        format!("https://{rest}")
+    } else {
+        u.to_string()
+    }
+}
+
+/// Heuristic: does this question want a visual (diagram/image/figure)?
+fn wants_images(query: &str) -> bool {
+    let q = query.to_lowercase();
+    const CUES: &[&str] = &[
+        "diagram", "image", "picture", "photo", "visual", "illustrat", "figure",
+        "graph", "chart", "map", "sketch", "drawing", "anatomy", "structure of",
+        "what does", "look like", "show me", "label", "cross-section", "schematic",
+    ];
+    CUES.iter().any(|c| q.contains(c))
 }
 
 // ---- long-term memory -------------------------------------------------

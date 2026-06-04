@@ -624,15 +624,16 @@ pub fn save_cheatsheet(
     )?;
     for (i, sec) in sections.iter().enumerate() {
         conn.execute(
-            "INSERT INTO cheatsheet_sections (id, cheatsheet_id, title, state, ord, body)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO cheatsheet_sections (id, cheatsheet_id, title, state, ord, body, image)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 new_id(),
                 cid,
                 sec.title,
                 sec.state,
                 i as i64,
-                serde_json::to_string(&sec.items)?
+                serde_json::to_string(&sec.items)?,
+                sec.image,
             ],
         )?;
     }
@@ -654,7 +655,7 @@ pub fn get_cheatsheet_sections(
         .optional()?;
     let Some(cid) = cid else { return Ok(Vec::new()) };
     let mut stmt = conn.prepare(
-        "SELECT id, title, state, body FROM cheatsheet_sections WHERE cheatsheet_id=?1 ORDER BY ord",
+        "SELECT id, title, state, body, image FROM cheatsheet_sections WHERE cheatsheet_id=?1 ORDER BY ord",
     )?;
     let rows = stmt.query_map(params![cid], |r| {
         let body: Option<String> = r.get(3)?;
@@ -666,6 +667,7 @@ pub fn get_cheatsheet_sections(
             title: r.get(1)?,
             state: r.get(2)?,
             items,
+            image: r.get(4)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
