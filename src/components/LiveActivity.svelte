@@ -337,11 +337,17 @@
   }
   .la-pill .la-ring {
     position: absolute;
-    inset: 5px;
-    width: auto;
-    height: auto;
+    inset: 0;            /* concentric with the pill (and the leaf) */
+    width: 100%;
+    height: 100%;
   }
+  /* Leaf absolutely centered (inset:0) so it sits exactly on the ring's centre. */
   .la-pill-leaf {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     font-size: 14px;
     line-height: 1;
     filter: saturate(0.85);

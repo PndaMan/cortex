@@ -191,7 +191,7 @@
           <span class="s-count">{s.sourceCount}</span>
           <span
             class="s-dot"
-            style:background={s.status === "ready" ? "var(--ok)" : "var(--warn)"}
+            style:background={s.status === "ready" ? "var(--ok)" : s.status === "error" ? "var(--err, #e5484d)" : "var(--warn)"}
           ></span>
         </div>
 

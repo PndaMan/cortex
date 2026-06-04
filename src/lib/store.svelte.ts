@@ -262,7 +262,7 @@ class AppStore {
   theme = $state<Theme>("osaka-jade");
   cmdkOpen = $state(false);
   leaderOpen = $state(false);
-  chatOpen = $state(true);
+  chatOpen = $state(false); // closed by default; user opens with `c`. Persists across views.
   sidebarCollapsed = $state(false);
   findOpen = $state(false);
   musicOpen = $state(false);

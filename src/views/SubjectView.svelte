@@ -292,7 +292,10 @@
                         <span class="badge badge--{kindBadge(src.kind)}">
                           <span class="dot"></span>{kindLabel(src.kind)}
                         </span>
-                        <span class="status-pill status-pill--{src.status === 'ready' ? 'ready' : 'draft'}">
+                        <span
+                          class="status-pill status-pill--{src.status === 'ready' ? 'ready' : src.status === 'error' ? 'error' : 'pending'}"
+                          title={src.status === 'ready' ? 'Ready' : src.status === 'error' ? 'Failed — re-ingest' : 'Not generated yet'}
+                        >
                           <span class="dot"></span>
                         </span>
                         <div class="grow"></div>

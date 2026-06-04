@@ -501,6 +501,9 @@ a { color: inherit; }
 .status-pill--ready .dot   { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ok) 22%, transparent); }
 .status-pill--review .dot  { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in oklab, var(--warn) 22%, transparent); }
 .status-pill--draft .dot   { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent); }
+/* Source not yet ingested/generated → amber; failed → red (never green). */
+.status-pill--pending .dot { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in oklab, var(--warn) 22%, transparent); }
+.status-pill--error .dot   { background: var(--err, #e5484d); box-shadow: 0 0 0 3px color-mix(in oklab, var(--err, #e5484d) 22%, transparent); }
 
 /* ============================================================
    BUTTONS
