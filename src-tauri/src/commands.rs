@@ -196,9 +196,10 @@ pub fn create_topic(
     subject_id: String,
     name: String,
     glyph: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> Result<Subject> {
     let c = state.db.lock().unwrap();
-    repo::insert_topic(&c, &subject_id, &name, glyph.as_deref())?;
+    repo::insert_topic(&c, &subject_id, &name, glyph.as_deref(), &tags.unwrap_or_default())?;
     repo::get_subject(&c, &subject_id)
 }
 
@@ -209,9 +210,10 @@ pub fn update_topic(
     name: String,
     subject_id: String,
     glyph: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> Result<Subject> {
     let c = state.db.lock().unwrap();
-    repo::update_topic(&c, &id, &name, glyph.as_deref())?;
+    repo::update_topic(&c, &id, &name, glyph.as_deref(), &tags.unwrap_or_default())?;
     repo::get_subject(&c, &subject_id)
 }
 
@@ -804,7 +806,7 @@ pub fn seed_demo(state: State<AppState>) -> Result<Vec<Subject>> {
     for (name, code, topics) in demo {
         let sid = repo::insert_subject(&c, name, Some(code), None, None)?;
         for (tname, sources) in *topics {
-            let tid = repo::insert_topic(&c, &sid, tname, None)?;
+            let tid = repo::insert_topic(&c, &sid, tname, None, &[])?;
             for (sname, kind) in *sources {
                 let srcid = repo::insert_source(&c, &sid, Some(&tid), sname, kind, None)?;
                 repo::finalize_source(

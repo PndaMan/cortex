@@ -77,9 +77,9 @@
     });
   }
 
-  function editTopic(t: { id: string; name: string; glyph?: string | null }, subjectId: string, e: Event) {
+  function editTopic(t: { id: string; name: string; glyph?: string | null; tags?: string[] }, subjectId: string, e: Event) {
     e.stopPropagation();
-    app.openEdit({ kind: "topic", id: t.id, name: t.name, subjectId, glyph: t.glyph || topicGlyph(t.id) });
+    app.openEdit({ kind: "topic", id: t.id, name: t.name, subjectId, glyph: t.glyph || topicGlyph(t.id), tags: t.tags ?? [] });
   }
 
   // Sources directly under a subject that belong to no topic (topic_id null).

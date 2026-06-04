@@ -108,6 +108,7 @@ pub fn insert_topic(
     subject_id: &str,
     name: &str,
     glyph: Option<&str>,
+    tags: &[String],
 ) -> Result<String> {
     let id = new_id();
     let ts = now_ms();
@@ -119,21 +120,28 @@ pub fn insert_topic(
         )
         .unwrap_or(0);
     conn.execute(
-        "INSERT INTO topics (id, subject_id, name, glyph, position, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-        params![id, subject_id, name, glyph, pos, ts],
+        "INSERT INTO topics (id, subject_id, name, glyph, position, tags, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+        params![id, subject_id, name, glyph, pos, tags_to_text(tags), ts],
     )?;
     Ok(id)
 }
 
-pub fn update_topic(conn: &Connection, id: &str, name: &str, glyph: Option<&str>) -> Result<()> {
+pub fn update_topic(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    glyph: Option<&str>,
+    tags: &[String],
+) -> Result<()> {
     let n = conn.execute(
         "UPDATE topics SET
             name=?2,
             glyph=CASE WHEN ?3 IS NULL THEN glyph ELSE ?3 END,
-            updated_at=?4
+            tags=?4,
+            updated_at=?5
          WHERE id=?1",
-        params![id, name, glyph, now_ms()],
+        params![id, name, glyph, tags_to_text(tags), now_ms()],
     )?;
     if n == 0 {
         return Err(Error::NotFound(format!("topic {id}")));
@@ -148,7 +156,7 @@ pub fn delete_topic(conn: &Connection, id: &str) -> Result<()> {
 
 pub fn list_topics(conn: &Connection, subject_id: &str) -> Result<Vec<Topic>> {
     let mut stmt = conn.prepare(
-        "SELECT id, subject_id, name, glyph, position FROM topics
+        "SELECT id, subject_id, name, glyph, position, tags FROM topics
          WHERE subject_id=?1 ORDER BY position, created_at",
     )?;
     let rows = stmt.query_map(params![subject_id], |r| {
@@ -158,6 +166,7 @@ pub fn list_topics(conn: &Connection, subject_id: &str) -> Result<Vec<Topic>> {
             name: r.get(2)?,
             glyph: r.get(3)?,
             position: r.get(4)?,
+            tags: text_to_tags(r.get(5)?),
             sources: Vec::new(),
         })
     })?;
@@ -1110,6 +1119,25 @@ pub fn delete_note(conn: &Connection, id: &str) -> Result<()> {
 
 // ---- calendar events / tasks ------------------------------------------
 
+/// Tags are stored as a ';'-separated text list (tags shouldn't contain ';').
+pub fn tags_to_text(tags: &[String]) -> Option<String> {
+    let t: Vec<&str> = tags.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    if t.is_empty() { None } else { Some(t.join(";")) }
+}
+fn text_to_tags(s: Option<String>) -> Vec<String> {
+    s.map(|s| {
+        s.split(';')
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+/// The deadline checklist (done topic ids) is stored as a JSON array.
+fn text_to_ids(s: Option<String>) -> Vec<String> {
+    s.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
 fn map_event(r: &rusqlite::Row) -> rusqlite::Result<CalEvent> {
     Ok(CalEvent {
         id: r.get(0)?,
@@ -1126,13 +1154,15 @@ fn map_event(r: &rusqlite::Row) -> rusqlite::Result<CalEvent> {
         reminder_ms: r.get(11)?,
         notified: r.get::<_, i64>(12)? != 0,
         google_id: r.get(13)?,
+        tags: text_to_tags(r.get(16)?),
+        checklist: text_to_ids(r.get(17)?),
         created_at: r.get(14)?,
         updated_at: r.get(15)?,
     })
 }
 
 const EVENT_COLS: &str = "id, subject_id, title, description, location, color, start_ms, end_ms, \
-    all_day, kind, done, reminder_ms, notified, google_id, created_at, updated_at";
+    all_day, kind, done, reminder_ms, notified, google_id, created_at, updated_at, tags, checklist";
 
 #[allow(clippy::too_many_arguments)]
 pub fn insert_event(
@@ -1147,17 +1177,18 @@ pub fn insert_event(
     all_day: bool,
     kind: &str,
     reminder_ms: Option<i64>,
+    tags: &[String],
 ) -> Result<String> {
     let id = new_id();
     let ts = now_ms();
     conn.execute(
         "INSERT INTO events
             (id, subject_id, title, description, location, color, start_ms, end_ms,
-             all_day, kind, done, reminder_ms, notified, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, 0, ?12, ?12)",
+             all_day, kind, done, reminder_ms, notified, created_at, updated_at, tags)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, 0, ?12, ?12, ?13)",
         params![
             id, subject_id, title, description, location, color, start_ms, end_ms,
-            all_day as i64, kind, reminder_ms, ts
+            all_day as i64, kind, reminder_ms, ts, tags_to_text(tags)
         ],
     )?;
     Ok(id)
@@ -1201,17 +1232,31 @@ pub fn update_event(
     all_day: bool,
     kind: &str,
     reminder_ms: Option<i64>,
+    tags: &[String],
 ) -> Result<()> {
     // Editing an event resets its notified flag so a moved reminder fires again.
     let n = conn.execute(
         "UPDATE events SET
             title=?2, description=?3, location=?4, color=?5, start_ms=?6, end_ms=?7,
-            all_day=?8, kind=?9, reminder_ms=?10, notified=0, updated_at=?11
+            all_day=?8, kind=?9, reminder_ms=?10, notified=0, updated_at=?11, tags=?12
          WHERE id=?1",
         params![
             id, title, description, location, color, start_ms, end_ms,
-            all_day as i64, kind, reminder_ms, now_ms()
+            all_day as i64, kind, reminder_ms, now_ms(), tags_to_text(tags)
         ],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound(format!("event {id}")));
+    }
+    Ok(())
+}
+
+/// Set the deadline study checklist (the topic ids ticked off for this event).
+pub fn set_event_checklist(conn: &Connection, id: &str, topic_ids: &[String]) -> Result<()> {
+    let json = serde_json::to_string(topic_ids).unwrap_or_else(|_| "[]".into());
+    let n = conn.execute(
+        "UPDATE events SET checklist=?2, updated_at=?3 WHERE id=?1",
+        params![id, json, now_ms()],
     )?;
     if n == 0 {
         return Err(Error::NotFound(format!("event {id}")));
@@ -1590,7 +1635,7 @@ mod tests {
         let st = AppState::in_memory().unwrap();
         let c = st.db.lock().unwrap();
         let sid = insert_subject(&c, "Algorithms", Some("CS-3490"), None, None).unwrap();
-        let tid = insert_topic(&c, &sid, "Recursion", None).unwrap();
+        let tid = insert_topic(&c, &sid, "Recursion", None, &[]).unwrap();
         let srcid = insert_source(&c, &sid, Some(&tid), "lec3.md", "md", None).unwrap();
         finalize_source(&c, &srcid, "ready", Some("3 pages"), Some("body"), None).unwrap();
         attach_tags(&c, &srcid, &["lecture".into(), "exam".into()]).unwrap();
@@ -1695,11 +1740,11 @@ mod tests {
         let st = AppState::in_memory().unwrap();
         let c = st.db.lock().unwrap();
         let due = insert_event(
-            &c, None, "Exam", None, None, None, 1_000, Some(2_000), false, "event", Some(500),
+            &c, None, "Exam", None, None, None, 1_000, Some(2_000), false, "event", Some(500), &[],
         )
         .unwrap();
         let _future = insert_event(
-            &c, None, "Later", None, None, None, 9_000, None, false, "task", Some(8_000),
+            &c, None, "Later", None, None, None, 9_000, None, false, "task", Some(8_000), &[],
         )
         .unwrap();
         // only the past-due, un-notified reminder comes back at now=1000
@@ -1733,7 +1778,7 @@ mod tests {
         let c = st.db.lock().unwrap();
         let a = insert_subject(&c, "A", None, None, None).unwrap();
         let b = insert_subject(&c, "B", None, None, None).unwrap();
-        let bt = insert_topic(&c, &b, "T", None).unwrap();
+        let bt = insert_topic(&c, &b, "T", None, &[]).unwrap();
         let src = insert_source(&c, &a, None, "s.md", "md", None).unwrap();
         insert_chunk(&c, &src, &a, None, 0, "text", None, 1, &[0u8, 0, 0, 0]).unwrap();
         move_source(&c, &src, &b, Some(&bt)).unwrap();

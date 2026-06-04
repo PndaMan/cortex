@@ -83,6 +83,7 @@
       name,
       subjectId: subj!.id,
       glyph: t?.glyph || topicGlyph(topicId),
+      tags: t?.tags ?? [],
     });
   }
 

@@ -25,7 +25,7 @@
     if (t.kind === "subject") {
       name = t.name; code = t.code ?? ""; glyph = t.glyph || "◆"; color = t.color || SUBJECT_COLORS[0];
     } else if (t.kind === "topic") {
-      name = t.name; glyph = t.glyph || TOPIC_GLYPHS[0];
+      name = t.name; glyph = t.glyph || TOPIC_GLYPHS[0]; tagsText = (t.tags ?? []).join(", ");
     } else {
       name = t.name; topicId = t.topicId ?? ""; tagsText = (t.tags ?? []).join(", ");
       // The source's current subject is carried on the target (no app.subjects
@@ -61,7 +61,8 @@
       app.updateSubject(t.id, name.trim(), code.trim() || undefined, glyph.trim() || undefined, color);
       app.closeEdit();
     } else if (t.kind === "topic") {
-      app.updateTopic(t.id, name.trim(), t.subjectId, glyph.trim() || undefined);
+      const tags = tagsText.split(",").map((s) => s.trim()).filter(Boolean);
+      app.updateTopic(t.id, name.trim(), t.subjectId, glyph.trim() || undefined, tags);
       app.closeEdit();
     } else {
       const tags = tagsText.split(",").map((s) => s.trim()).filter(Boolean);
@@ -126,6 +127,10 @@
           <span class="edit-lbl">Icon</span>
           <EmojiPicker value={glyph} onPick={(e) => (glyph = e)} />
         </div>
+        <label class="edit-field">
+          <span class="edit-lbl">Tags <span class="faint">e.g. A2 · chat &amp; deadlines group by tag</span></span>
+          <input bind:value={tagsText} class="input" placeholder="comma, separated, tags" />
+        </label>
       {/if}
 
       {#if t.kind === "subject"}

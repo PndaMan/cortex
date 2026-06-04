@@ -67,6 +67,7 @@
   let color = $state<string | null>(null);
   let subjectId = $state<string>("");
   let reminder = $state<string>("none");
+  let tagsText = $state("");
   let firstInput = $state<HTMLInputElement | null>(null);
 
   // Seed the form whenever the target event (or default date) changes.
@@ -87,6 +88,7 @@
       color = e.color ?? null;
       subjectId = e.subject_id ?? "";
       reminder = deriveReminder(e.reminder_ms, e.start_ms);
+      tagsText = (e.tags ?? []).join(", ");
     } else {
       title = "";
       description = "";
@@ -109,6 +111,7 @@
       color = null;
       subjectId = "";
       reminder = "none";
+      tagsText = "";
     }
     queueMicrotask(() => {
       firstInput?.focus();
@@ -157,6 +160,7 @@
       allDay,
       kind,
       reminderMs,
+      tags: tagsText.split(",").map((s) => s.trim()).filter(Boolean),
     };
     try {
       if (event) {
@@ -257,6 +261,11 @@
         </div>
       </div>
     {/if}
+
+    <label class="ev-field">
+      <span class="ev-lbl">Tags <span class="ev-opt">{isDeadline ? "— topics with these tags become this deadline's checklist" : "(optional)"}</span></span>
+      <input bind:value={tagsText} class="input" placeholder="e.g. A2, midterm" />
+    </label>
 
     <div class="ev-row">
       <div class="ev-field ev-grow">

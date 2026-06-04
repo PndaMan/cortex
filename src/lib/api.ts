@@ -27,6 +27,7 @@ export interface Topic {
   name: string;
   glyph: string | null;
   position: number;
+  tags: string[];
   sources: Source[];
 }
 
@@ -137,10 +138,10 @@ export const updateSubject = (
 export const deleteSubject = (id: string) => invoke<void>("delete_subject", { id });
 
 // ---- topics ----
-export const createTopic = (subjectId: string, name: string, glyph?: string) =>
-  invoke<Subject>("create_topic", { subjectId, name, glyph });
-export const updateTopic = (id: string, name: string, subjectId: string, glyph?: string) =>
-  invoke<Subject>("update_topic", { id, name, subjectId, glyph });
+export const createTopic = (subjectId: string, name: string, glyph?: string, tags?: string[]) =>
+  invoke<Subject>("create_topic", { subjectId, name, glyph, tags });
+export const updateTopic = (id: string, name: string, subjectId: string, glyph?: string, tags?: string[]) =>
+  invoke<Subject>("update_topic", { id, name, subjectId, glyph, tags });
 export const deleteTopic = (id: string, subjectId: string) =>
   invoke<Subject>("delete_topic", { id, subjectId });
 
@@ -357,11 +358,13 @@ export interface CalEvent {
   start_ms: number;
   end_ms: number | null;
   all_day: boolean;
-  kind: string; // event | task
+  kind: string; // event | task | exam | assignment | project
   done: boolean;
   reminder_ms: number | null;
   notified: boolean;
   google_id: string | null;
+  tags: string[];
+  checklist: string[]; // ticked topic ids (deadline study checklist)
   created_at: number;
   updated_at: number;
 }
@@ -376,6 +379,7 @@ export const createEvent = (e: {
   allDay?: boolean;
   kind?: string;
   reminderMs?: number | null;
+  tags?: string[];
 }) =>
   invoke<CalEvent>("create_event", {
     subjectId: e.subjectId,
@@ -388,6 +392,7 @@ export const createEvent = (e: {
     allDay: e.allDay,
     kind: e.kind,
     reminderMs: e.reminderMs,
+    tags: e.tags,
   });
 export const listEvents = (
   subjectId?: string | null,
@@ -405,6 +410,7 @@ export const updateEvent = (e: {
   allDay?: boolean;
   kind?: string;
   reminderMs?: number | null;
+  tags?: string[];
 }) =>
   invoke<CalEvent>("update_event", {
     id: e.id,
@@ -417,10 +423,14 @@ export const updateEvent = (e: {
     allDay: e.allDay,
     kind: e.kind,
     reminderMs: e.reminderMs,
+    tags: e.tags,
   });
 export const deleteEvent = (id: string) => invoke<void>("delete_event", { id });
 export const setEventDone = (id: string, done: boolean) =>
   invoke<CalEvent>("set_event_done", { id, done });
+/** Set the deadline study checklist (ticked topic ids). */
+export const setEventChecklist = (id: string, topicIds: string[]) =>
+  invoke<CalEvent>("set_event_checklist", { id, topicIds });
 export const checkReminders = () => invoke<CalEvent[]>("check_reminders");
 
 // ---- citations (per-subject bibliography) ----

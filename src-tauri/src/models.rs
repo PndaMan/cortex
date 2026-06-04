@@ -25,6 +25,8 @@ pub struct Topic {
     pub name: String,
     pub glyph: Option<String>,
     pub position: i64,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub sources: Vec<Source>,
 }
 
@@ -254,6 +256,11 @@ pub struct CalEvent {
     pub reminder_ms: Option<i64>,
     pub notified: bool,
     pub google_id: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Topic ids ticked off for this deadline's study checklist.
+    #[serde(default)]
+    pub checklist: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }

@@ -23,6 +23,7 @@ pub fn create_event(
     all_day: Option<bool>,
     kind: Option<String>,
     reminder_ms: Option<i64>,
+    tags: Option<Vec<String>>,
 ) -> Result<CalEvent> {
     let c = state.db.lock().unwrap();
     let id = repo::insert_event(
@@ -37,6 +38,7 @@ pub fn create_event(
         all_day.unwrap_or(false),
         kind.as_deref().unwrap_or("event"),
         reminder_ms,
+        &tags.unwrap_or_default(),
     )?;
     repo::get_event(&c, &id)
 }
@@ -66,6 +68,7 @@ pub fn update_event(
     all_day: Option<bool>,
     kind: Option<String>,
     reminder_ms: Option<i64>,
+    tags: Option<Vec<String>>,
 ) -> Result<CalEvent> {
     let c = state.db.lock().unwrap();
     repo::update_event(
@@ -80,7 +83,20 @@ pub fn update_event(
         all_day.unwrap_or(false),
         kind.as_deref().unwrap_or("event"),
         reminder_ms,
+        &tags.unwrap_or_default(),
     )?;
+    repo::get_event(&c, &id)
+}
+
+/// Set the per-deadline study checklist (ticked topic ids).
+#[tauri::command]
+pub fn set_event_checklist(
+    state: State<AppState>,
+    id: String,
+    topic_ids: Vec<String>,
+) -> Result<CalEvent> {
+    let c = state.db.lock().unwrap();
+    repo::set_event_checklist(&c, &id, &topic_ids)?;
     repo::get_event(&c, &id)
 }
 

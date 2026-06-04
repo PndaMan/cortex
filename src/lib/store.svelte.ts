@@ -64,7 +64,7 @@ export type DialogSpec = {
 // Rich edit-modal targets — carry the current field values to seed the form.
 export type EditTarget =
   | { kind: "subject"; id: string; name: string; code: string; glyph: string; color: string }
-  | { kind: "topic"; id: string; name: string; subjectId: string; glyph: string }
+  | { kind: "topic"; id: string; name: string; subjectId: string; glyph: string; tags: string[] }
   | {
       kind: "source";
       id: string;
@@ -473,11 +473,11 @@ class AppStore {
     }
   }
 
-  async updateTopic(id: string, name: string, subjectId?: string, glyph?: string) {
+  async updateTopic(id: string, name: string, subjectId?: string, glyph?: string, tags?: string[]) {
     const sid = subjectId ?? this.activeSubjectId;
     if (!sid || !name.trim()) return;
     try {
-      await api.updateTopic(id, name.trim(), sid, glyph);
+      await api.updateTopic(id, name.trim(), sid, glyph, tags);
       await this.refresh();
       this.pushToast({ kind: "success", title: "Topic updated" });
     } catch (e) {
@@ -510,11 +510,11 @@ class AppStore {
     }
   }
 
-  async createTopic(name: string, glyph?: string) {
+  async createTopic(name: string, glyph?: string, tags?: string[]) {
     const sid = this.activeSubjectId;
     if (!sid || !name.trim()) return;
     try {
-      await api.createTopic(sid, name.trim(), glyph);
+      await api.createTopic(sid, name.trim(), glyph, tags);
       await this.refresh();
       this.pushToast({ kind: "success", title: "Topic added" });
     } catch (e) {
