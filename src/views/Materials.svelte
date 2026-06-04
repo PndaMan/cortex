@@ -16,7 +16,7 @@
     flashcards:  { label: "Flashcards",      group: "Flashcards",       icon: "cards", color: "var(--accent)"       },
     quiz:        { label: "Quiz",             group: "Quizzes",          icon: "check", color: "var(--info)"         },
     audio:       { label: "Audio overview",   group: "Audio overviews",  icon: "music", color: "var(--mode-select)"  },
-    slideshow:   { label: "Slideshow video",  group: "Slideshow videos", icon: "play",  color: "var(--warn)"         },
+    slideshow:   { label: "Slides",           group: "Slides",           icon: "grid",  color: "var(--warn)"         },
     infographic: { label: "Infographic",      group: "Infographics",     icon: "grid",  color: "var(--ok)"           },
   };
   const MAT_ORDER = ["flashcards", "quiz", "audio", "slideshow", "infographic"];
@@ -171,7 +171,7 @@
             <Icon name="bolt" size={26} color="var(--fg-faint)" />
           </div>
           <h2 class="read mat-empty-h">No materials yet</h2>
-          <p class="mono faint mat-empty-sub">Generate flashcards, quizzes, audio, slideshows, or infographics from your sources.</p>
+          <p class="mono faint mat-empty-sub">Generate flashcards, quizzes, study guides, slides, or infographics from your sources.</p>
           <button
             class="btn btn--primary"
             onclick={() => app.setView("gen-material")}

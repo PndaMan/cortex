@@ -9,7 +9,7 @@
     { id: "flashcards", label: "Flashcards",      ico: "cards", desc: "Spaced-repetition deck",    color: "var(--accent)"      },
     { id: "quiz",       label: "Quiz",             ico: "check", desc: "MCQ · short answer · cloze", color: "var(--info)"        },
     { id: "audio",      label: "Audio overview",   ico: "music", desc: "Two-host podcast",           color: "var(--mode-select)" },
-    { id: "slideshow",  label: "Slideshow video",  ico: "play",  desc: "Narrated slides",            color: "var(--warn)"        },
+    { id: "slideshow",  label: "Slides",           ico: "grid",  desc: "Presentation slide deck",     color: "var(--warn)"        },
     { id: "infographic",label: "Infographic",      ico: "grid",  desc: "One-poster summary",         color: "var(--ok)"          },
   ] as const;
 
