@@ -3,13 +3,14 @@
   import { topicGlyph } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
   import { stations } from "../lib/mock";
-  import { moveItem } from "../lib/dnd";
+  import { moveItem, hideDragImage } from "../lib/dnd";
 
   // ── drag-and-drop reordering (subjects + a subject's topics) ──
   let subjFrom = $state(-1);
   let subjOver = $state(-1);
   function subjDragStart(e: DragEvent, i: number) {
     subjFrom = i;
+    hideDragImage(e);
     if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
   }
   function subjDragOver(e: DragEvent, i: number) { e.preventDefault(); subjOver = i; }
@@ -27,6 +28,7 @@
   let topicOverKey = $state("");
   function topicDragStart(e: DragEvent, i: number) {
     topicFrom = i;
+    hideDragImage(e);
     if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
   }
   function topicDragOver(e: DragEvent, key: string) { e.preventDefault(); topicOverKey = key; }

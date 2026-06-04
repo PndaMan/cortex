@@ -1,12 +1,12 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import Icon from "../components/Icon.svelte";
-  import { moveItem } from "../lib/dnd";
+  import { moveItem, hideDragImage } from "../lib/dnd";
 
   // ── drag-and-drop card reordering ──
   let dragFrom = $state(-1);
   let dragOver = $state(-1);
-  function dragStart(e: DragEvent, i: number) { dragFrom = i; if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; }
+  function dragStart(e: DragEvent, i: number) { dragFrom = i; hideDragImage(e); if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; }
   function dragOverCard(e: DragEvent, i: number) { e.preventDefault(); dragOver = i; }
   function dropCard(e: DragEvent, i: number) {
     e.preventDefault();
