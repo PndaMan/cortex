@@ -311,6 +311,23 @@
     }).catch(() => {});
   });
 
+  // ---- focus timer (pomodoro) durations — bound to the app-wide timer ----
+  const pomoFields = [
+    { key: "workMin",            label: "Focus length",  unit: " min", step: 5, min: 5, max: 90 },
+    { key: "breakMin",           label: "Short break",   unit: " min", step: 1, min: 1, max: 30 },
+    { key: "longBreakMin",       label: "Long break",    unit: " min", step: 5, min: 5, max: 60 },
+    { key: "sessionsBeforeLong", label: "Sessions / set", unit: "",    step: 1, min: 2, max: 8  },
+  ] as const;
+  function pomoVal(key: string): number {
+    return (app.pomo as unknown as Record<string, number>)[key];
+  }
+  function setPomo(key: string, delta: number) {
+    const f = pomoFields.find((x) => x.key === key)!;
+    const next = Math.max(f.min, Math.min(f.max, pomoVal(key) + delta));
+    (app.pomo as unknown as Record<string, number>)[key] = next;
+    api.setSettings({ ["pomo_" + key]: String(next) }).catch(() => {});
+  }
+
   // ---- audio state ----
   let autoplay = $state(false);
   let station  = $state("lofi");
@@ -1108,6 +1125,27 @@ Notes: {about}</pre>
                 <button type="button" class={"st-toggle" + (autoplay ? " on" : "")} onclick={() => (autoplay = !autoplay)} role="switch" aria-checked={autoplay} aria-label="autoplay"><span class="st-knob"></span></button>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">Focus timer</h3>
+            <p class="set-group-d">Pomodoro session lengths (applies app-wide).</p>
+          </div>
+          <div class="set-card">
+            {#each pomoFields as f (f.key)}
+              <div class="set-row">
+                <div class="set-row-l"><div class="set-row-t">{f.label}</div></div>
+                <div class="set-row-r">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <button class="btn btn--icon btn--sm" onclick={() => setPomo(f.key, -f.step)} aria-label="decrease {f.label}">−</button>
+                    <span class="mono" style="min-width:62px;text-align:center;color:var(--fg-bright)">{pomoVal(f.key)}{f.unit}</span>
+                    <button class="btn btn--icon btn--sm" onclick={() => setPomo(f.key, f.step)} aria-label="increase {f.label}">+</button>
+                  </div>
+                </div>
+              </div>
+            {/each}
           </div>
         </section>
 

@@ -327,6 +327,11 @@ class AppStore {
       if (last && this.subjects.some((s) => s.id === last)) this.activeSubjectId = last;
       if (all["default_station"]) this.music = { ...this.music, current: all["default_station"] };
       if (all["autoplay"] === "true") this.toggleMusic();
+      // Restore focus-timer (pomodoro) durations.
+      for (const k of ["workMin", "breakMin", "longBreakMin", "sessionsBeforeLong"] as const) {
+        const v = parseInt(all["pomo_" + k] ?? "", 10);
+        if (Number.isFinite(v) && v > 0) (this.pomo as unknown as Record<string, number>)[k] = v;
+      }
     } catch {
       this.applyTheme(this.theme);
     }
