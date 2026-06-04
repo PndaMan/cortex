@@ -118,7 +118,10 @@
       }
       if (e.key === "g") { gPrefix = true; setTimeout(() => (gPrefix = false), 600); return; }
 
-      if (e.key === k.toggleChat) { app.toggleChat(); return; }
+      // "c" is the app-wide chat toggle (shown as "Ask c" everywhere). Accept it
+      // literally in addition to the configured bind, so a corrupted keybind map
+      // can never break closing the chat.
+      if (e.key === k.toggleChat || e.key === "c") { app.toggleChat(); return; }
       if (e.key === k.newSubject) { e.preventDefault(); app.setView("add-subject"); return; }
       if (e.key === k.recorder) { app.setView("recorder"); return; }
       if (e.key === k.websearch) { app.setView("websearch"); return; }

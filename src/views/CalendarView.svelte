@@ -134,24 +134,13 @@
     return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
   }
 
-  // Day key for an event. All-day events are canonically anchored at UTC
-  // midnight (especially Google-synced ones), so reading them with local
-  // getters shifts them onto the previous/next calendar day for any non-UTC
-  // timezone — that off-by-one is why all-day events "didn't show" on their
-  // real date. Bucket all-day events by their UTC date; timed events by local.
-  function eventDayKey(e: CalEvent): string {
-    const d = new Date(e.start_ms);
-    if (e.all_day) {
-      return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
-    }
-    return dayKey(d);
-  }
-
-  // Bucket events by their start day.
+  // Bucket events by their LOCAL start day — the same key the day cells and
+  // selectedDay lookups use (dayKey). Bucketing all-day events by a *different*
+  // (UTC) key than the lookup was why they never appeared. One key everywhere.
   const byDay = $derived.by<Record<string, CalEvent[]>>(() => {
     const map: Record<string, CalEvent[]> = {};
     for (const e of events) {
-      const k = eventDayKey(e);
+      const k = dayKey(new Date(e.start_ms));
       (map[k] ??= []).push(e);
     }
     // All-day items first, then by start time, so the strip mirrors order.
