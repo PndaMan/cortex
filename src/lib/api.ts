@@ -167,8 +167,9 @@ export const chatAnswer = (
   subjectId: string,
   level: "subject" | "topic" | "source",
   query: string,
-  sourceId?: string
-) => invoke<ChatAnswer>("chat_answer", { subjectId, level, query, sourceId });
+  sourceId?: string,
+  sourceIds?: string[]
+) => invoke<ChatAnswer>("chat_answer", { subjectId, level, query, sourceId, sourceIds });
 export const generateCheatsheet = (subjectId: string, topicId?: string) =>
   invoke<CheatsheetData>("generate_cheatsheet", { subjectId, topicId });
 export const getCheatsheet = (subjectId: string, topicId?: string) =>

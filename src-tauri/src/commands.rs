@@ -651,6 +651,7 @@ pub async fn chat_answer(
     subject_id: String,
     level: String,
     source_id: Option<String>,
+    source_ids: Option<Vec<String>>,
     query: String,
 ) -> Result<ChatAnswer> {
     tauri::async_runtime::spawn_blocking(move || -> Result<ChatAnswer> {
@@ -671,6 +672,12 @@ pub async fn chat_answer(
     // Scope: source-level chats are restricted to a single source's chunks; the
     // keyword path applies this in SQL, the vector path filters its results.
     let scoped_source = if level == "source" { source_id.as_deref() } else { None };
+
+    // Multi-source scope: restrict retrieval to exactly these source ids (the
+    // chat scope-switcher's tick-list). Applied to BOTH retrieval paths in Rust.
+    let source_set: Option<std::collections::HashSet<String>> = source_ids
+        .filter(|v| !v.is_empty())
+        .map(|v| v.into_iter().collect());
 
     // The "stub" embedder (and an empty/unset provider) produces meaningless
     // vectors, so cosine search returns irrelevant chunks. In that case rely on
@@ -701,6 +708,10 @@ pub async fn chat_answer(
         let c = state.db.lock().unwrap();
         repo::keyword_search_chunks(&c, Some(&subject_id), scoped_source, &query, 8)?
     };
+    // Restrict to the explicitly-selected sources, if any.
+    if let Some(set) = &source_set {
+        hits.retain(|h| set.contains(&h.source_id));
+    }
     hits.truncate(6);
 
     let context = hits

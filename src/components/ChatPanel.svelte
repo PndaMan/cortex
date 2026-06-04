@@ -33,13 +33,16 @@
   }
 
   // ── scope state ──────────────────────────────────────────────────────────
-  type Level = "subject" | "topic" | "source";
+  type Level = "subject" | "topic" | "source" | "sources";
 
   interface ChatMessage { role: "system" | "user" | "assistant"; text: string }
 
   let level = $state<Level>("subject");
   let srcId = $state<string | null>(null);
   let topicId = $state<string | null>(null);
+  // Multi-source scope: which specific sources to chat with (level === "sources").
+  let picked = $state<Record<string, boolean>>({});
+  const pickedIds = $derived(Object.keys(picked).filter((k) => picked[k]));
   let messages = $state<ChatMessage[]>([]);
   let draft = $state("");
   let streaming = $state<string | null>(null);
@@ -133,7 +136,9 @@
   // Plain display name of the current scope (no "Source:" prefix), used in the
   // breadcrumb selector and the empty state.
   const scopeName = $derived(
-    effLevel === "source" ? (curSrcObj?.name ?? "")
+    level === "sources" && pickedIds.length
+      ? `${pickedIds.length} selected source${pickedIds.length === 1 ? "" : "s"}`
+      : effLevel === "source" ? (curSrcObj?.name ?? "")
       : effLevel === "topic" ? (curTopic?.name ?? "")
       : (app.activeSubject?.name ?? "")
   );
@@ -195,6 +200,7 @@
 
   function applyOption(o: ScopeOption) {
     // Silent scope change — no system message in the thread.
+    picked = {}; // single-select clears any multi-source pick
     if (o.kind === "subject") {
       level = "subject";
     } else if (o.kind === "topic") {
@@ -207,6 +213,19 @@
     }
     switcherOpen = false;
     // Return focus to the composer so typing keeps working.
+    composeEl?.focus();
+  }
+
+  // Toggle a source into/out of the multi-source selection (checkbox in the switcher).
+  function togglePick(id: string, e: Event) {
+    e.stopPropagation();
+    picked = { ...picked, [id]: !picked[id] };
+  }
+  // Confirm the multi-source selection as the active scope.
+  function applyMulti() {
+    if (pickedIds.length === 0) return;
+    level = "sources";
+    switcherOpen = false;
     composeEl?.focus();
   }
 
@@ -270,9 +289,18 @@
     streaming = "";
     cancelled = false;
 
-    const sourceId = effLevel === "source" && curSrcObj ? curSrcObj.id : undefined;
+    const multi = level === "sources" && pickedIds.length > 0;
+    const sendLevel: "subject" | "topic" | "source" =
+      multi || effLevel === "sources"
+        ? "subject"
+        : effLevel === "topic"
+          ? "topic"
+          : effLevel === "source"
+            ? "source"
+            : "subject";
+    const sourceId = !multi && sendLevel === "source" && curSrcObj ? curSrcObj.id : undefined;
     api
-      .chatAnswer(sid, effLevel, text, sourceId)
+      .chatAnswer(sid, sendLevel, text, sourceId, multi ? pickedIds : undefined)
       .then((result) => {
         if (cancelled) { streaming = null; dequeue(); return; }
         const { body, sugg } = splitSuggestions(result.text);
@@ -631,18 +659,31 @@
                 <span class="scopesw-label">{o.label}</span>
                 <span class="scopesw-kindtag mono">TOPIC</span>
               {:else}
+                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                <span
+                  class="scopesw-check{picked[o.src.id] ? ' on' : ''}"
+                  title="Add to multi-source selection"
+                  onclick={(e) => togglePick(o.src.id, e)}
+                >
+                  {#if picked[o.src.id]}<Icon name="check" size={10} />{/if}
+                </span>
                 <span class="badge badge--{o.src.kind === 'audio' ? 'audio' : o.src.kind}" style="height:15px;padding:0 5px">{kindLabel[o.src.kind] ?? o.src.kind.toUpperCase()}</span>
                 <span class="scopesw-label mono">{o.label}</span>
               {/if}
-              {#if isCur}
+              {#if isCur && o.kind !== "source"}
                 <Icon name="check" size={13} color="var(--accent)" />
               {/if}
             </div>
           {/each}
         </div>
+        {#if pickedIds.length > 0}
+          <button class="btn btn--sm btn--primary" style="margin:8px 10px 0" onclick={applyMulti}>
+            Chat with {pickedIds.length} selected source{pickedIds.length === 1 ? "" : "s"}
+          </button>
+        {/if}
         <div class="scopesw-foot mono">
           <span><span class="kbd">↑</span><span class="kbd">↓</span> move</span>
-          <span><span class="kbd">⏎</span> select</span>
+          <span><span class="kbd">⏎</span> select · tick = multi</span>
           <span><span class="kbd">esc</span> close</span>
         </div>
       </div>
@@ -895,6 +936,21 @@
   .scopesw-item--source {
     padding-left: 22px; /* indent sources under their topic */
   }
+  .scopesw-check {
+    flex: none;
+    width: 15px;
+    height: 15px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg);
+    color: var(--bg);
+    cursor: pointer;
+  }
+  .scopesw-check:hover { border-color: var(--accent); }
+  .scopesw-check.on { background: var(--accent); border-color: var(--accent); }
   .scopesw-item.sel {
     background: var(--surface-3);
     color: var(--fg-bright);
