@@ -5,13 +5,24 @@
   // still carry a raw { svg } payload — we fall back to rendering that.
   interface Stat { value?: string; label?: string }
   interface Section { emoji?: string; heading?: string; points?: string[]; stat?: Stat }
-  interface InfoData { title?: string; subtitle?: string; sections?: Section[]; svg?: string; image?: string }
+  interface TimelineEvent { date?: string; title?: string; detail?: string }
+  interface InfoData {
+    title?: string; subtitle?: string; sections?: Section[];
+    timeline?: TimelineEvent[]; takeaway?: string;
+    svg?: string; image?: string;
+  }
 
   let { data, onExit }: { data?: InfoData; onExit?: () => void } = $props();
 
   const image = $derived(typeof data?.image === "string" ? data!.image! : "");
   const sections = $derived(Array.isArray(data?.sections) ? data!.sections! : []);
-  const hasPoster = $derived(sections.length > 0);
+  const timeline = $derived(
+    (Array.isArray(data?.timeline) ? data!.timeline! : []).filter(
+      (e) => e && (e.date || e.title || e.detail)
+    )
+  );
+  const takeaway = $derived(typeof data?.takeaway === "string" ? data!.takeaway!.trim() : "");
+  const hasPoster = $derived(sections.length > 0 || timeline.length > 0 || !!takeaway);
   const legacySvg = $derived(typeof data?.svg === "string" ? data!.svg! : "");
 </script>
 
@@ -36,27 +47,54 @@
           {#if data?.title}<h1 class="poster-title read">{data.title}</h1>{/if}
           {#if data?.subtitle}<p class="poster-sub mono">{data.subtitle}</p>{/if}
         </header>
-        <div class="poster-grid">
-          {#each sections as sec, i (i)}
-            <section class="poster-card">
-              <div class="pc-head">
-                {#if sec.emoji}<span class="pc-emoji" aria-hidden="true">{sec.emoji}</span>{/if}
-                <h2 class="pc-heading">{sec.heading ?? ""}</h2>
-              </div>
-              {#if sec.stat?.value}
-                <div class="pc-stat">
-                  <span class="pc-stat-val">{sec.stat.value}</span>
-                  {#if sec.stat.label}<span class="pc-stat-label">{sec.stat.label}</span>{/if}
+        {#if takeaway}
+          <div class="poster-takeaway">
+            <span class="ptk-label mono">KEY TAKEAWAY</span>
+            <p class="ptk-text">{takeaway}</p>
+          </div>
+        {/if}
+
+        {#if sections.length}
+          <div class="poster-grid">
+            {#each sections as sec, i (i)}
+              <section class="poster-card">
+                <div class="pc-head">
+                  {#if sec.emoji}<span class="pc-emoji" aria-hidden="true">{sec.emoji}</span>{/if}
+                  <h2 class="pc-heading">{sec.heading ?? ""}</h2>
                 </div>
-              {/if}
-              {#if sec.points?.length}
-                <ul class="pc-points">
-                  {#each sec.points as p (p)}<li>{p}</li>{/each}
-                </ul>
-              {/if}
-            </section>
-          {/each}
-        </div>
+                {#if sec.stat?.value}
+                  <div class="pc-stat">
+                    <span class="pc-stat-val">{sec.stat.value}</span>
+                    {#if sec.stat.label}<span class="pc-stat-label">{sec.stat.label}</span>{/if}
+                  </div>
+                {/if}
+                {#if sec.points?.length}
+                  <ul class="pc-points">
+                    {#each sec.points as p (p)}<li>{p}</li>{/each}
+                  </ul>
+                {/if}
+              </section>
+            {/each}
+          </div>
+        {/if}
+
+        {#if timeline.length}
+          <section class="poster-timeline">
+            <h2 class="ptl-heading"><span aria-hidden="true">🕑</span> Timeline</h2>
+            <ol class="ptl-list">
+              {#each timeline as ev, i (i)}
+                <li class="ptl-item">
+                  <span class="ptl-node" aria-hidden="true"></span>
+                  <div class="ptl-body">
+                    {#if ev.date}<span class="ptl-date mono">{ev.date}</span>{/if}
+                    {#if ev.title}<span class="ptl-title">{ev.title}</span>{/if}
+                    {#if ev.detail}<p class="ptl-detail">{ev.detail}</p>{/if}
+                  </div>
+                </li>
+              {/each}
+            </ol>
+          </section>
+        {/if}
       </div>
     {:else if legacySvg}
       <div class="infographic-canvas">{@html legacySvg}</div>
@@ -105,4 +143,40 @@
   .pc-points { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
   .pc-points li { font-size: 13.5px; line-height: 1.45; color: var(--fg); }
   .pc-points li::marker { color: var(--accent); }
+
+  /* ── key takeaway banner ─────────────────────────────────── */
+  .poster-takeaway {
+    margin: 0 0 var(--sp-5);
+    padding: 14px 18px;
+    border-radius: var(--rad-4);
+    background: color-mix(in oklab, var(--accent) 12%, var(--surface));
+    border: 1px solid color-mix(in oklab, var(--accent) 34%, var(--border));
+    border-left: 3px solid var(--accent);
+  }
+  .ptk-label { display: block; font-size: var(--t-xs); letter-spacing: 0.08em; color: var(--accent); margin-bottom: 3px; }
+  .ptk-text { margin: 0; font-size: 15px; line-height: 1.5; color: var(--fg-bright); font-weight: 500; }
+
+  /* ── timeline ────────────────────────────────────────────── */
+  .poster-timeline { margin-top: var(--sp-6); }
+  .ptl-heading {
+    font-size: 18px; font-weight: 700; color: var(--fg-bright);
+    margin: 0 0 var(--sp-4); display: flex; align-items: center; gap: 8px;
+  }
+  .ptl-list { list-style: none; margin: 0; padding: 0 0 0 4px; position: relative; }
+  /* vertical connecting line running through all nodes */
+  .ptl-list::before {
+    content: ""; position: absolute; left: 7px; top: 6px; bottom: 6px;
+    width: 2px; background: color-mix(in oklab, var(--accent) 35%, var(--border));
+  }
+  .ptl-item { position: relative; padding: 0 0 var(--sp-4) 30px; }
+  .ptl-item:last-child { padding-bottom: 0; }
+  .ptl-node {
+    position: absolute; left: 1px; top: 4px; width: 14px; height: 14px;
+    border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 18%, transparent);
+  }
+  .ptl-body { display: flex; flex-direction: column; gap: 2px; }
+  .ptl-date { font-size: var(--t-xs); color: var(--accent); letter-spacing: 0.03em; }
+  .ptl-title { font-size: 14.5px; font-weight: 650; color: var(--fg-bright); line-height: 1.3; }
+  .ptl-detail { margin: 1px 0 0; font-size: 13px; line-height: 1.5; color: var(--fg-muted); }
 </style>

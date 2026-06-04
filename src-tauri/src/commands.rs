@@ -108,6 +108,23 @@ fn style_instruction(c: &Connection) -> String {
     }
 }
 
+/// NotebookLM-style custom steering. The user's free-text instructions are woven
+/// into the prompt as a SUBORDINATE "focus" block — they steer emphasis, scope,
+/// tone, and what to prioritise, but explicitly defer to the system prompt's
+/// output format/JSON contract above them. Empty/whitespace input yields an empty
+/// string so prompts stay byte-identical to before when no custom prompt is set.
+fn custom_focus(custom: Option<&str>) -> String {
+    match custom.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(c) => format!(
+            "\n\nUSER FOCUS — the student gave these custom instructions for what to \
+             emphasise, include, or how to frame this material. Follow them as closely as \
+             possible WHILE STILL obeying the exact output format and JSON contract described \
+             above (never break the schema, never add prose outside it): {c}"
+        ),
+        None => String::new(),
+    }
+}
+
 fn slug(s: &str) -> String {
     s.to_lowercase()
         .chars()
@@ -1036,6 +1053,11 @@ fn parse_cheatsheet(raw: &str) -> Vec<CsSection> {
 /// image model (nano-banana, openrouter:google/gemini-2.5-flash-image). The text
 /// model already produced accurate headings/points; the image model only lays
 /// them out, so spelling/figures stay correct. Returns a data:image/...;base64 URL.
+// Currently unused: infographics render as a crisp HTML poster (InfographicView)
+// instead of an image. Retained (not deleted) so the poster-image path can be
+// re-enabled later without rebuilding it. Legacy materials that already stored an
+// `image` still display via the frontend's `image` branch, which doesn't call this.
+#[allow(dead_code)]
 fn render_infographic_image(spec: &serde_json::Value, keys: &llm::Keys) -> Option<String> {
     let mut text = String::new();
     if let Some(t) = spec["title"].as_str() {
@@ -1292,6 +1314,7 @@ pub async fn generate_material(
     topic_id: Option<String>,
     kind: String,
     title: Option<String>,
+    custom_prompt: Option<String>,
 ) -> Result<MaterialRec> {
     tauri::async_runtime::spawn_blocking(move || -> Result<MaterialRec> {
     let state = app.state::<AppState>();
@@ -1336,15 +1359,29 @@ pub async fn generate_material(
             format!("{topic_name} — audio overview"),
         ),
         "infographic" => (
-            "You distill the study material into a ONE-POSTER infographic as STRUCTURED JSON (NOT \
-             an image, NOT SVG). Output ONLY JSON of this exact shape:\n\
-             {\"title\":string,\"subtitle\":string,\"sections\":[{\"emoji\":string,\"heading\":string,\
-             \"points\":[string],\"stat\":{\"value\":string,\"label\":string}}]}\n\
-             Rules: 4-8 sections; \"heading\" 1-4 words; 2-4 \"points\", each a punchy phrase \
-             (<= 12 words, plain text, NO markdown); \"emoji\" is ONE relevant emoji; \"stat\" is \
-             OPTIONAL — include only when the source has a real headline figure (e.g. value \"30%\" \
-             or \"1990\", short label). Cover the most exam-relevant ideas. Keep it tight so the \
-             poster never overflows. No prose outside the JSON.".to_string(),
+            "You distill the study material into a DETAILED ONE-POSTER infographic as STRUCTURED \
+             JSON (NOT an image, NOT SVG) — it is rendered as a crisp HTML poster, so be \
+             information-rich. Output ONLY JSON of this exact shape:\n\
+             {\"title\":string,\"subtitle\":string,\
+             \"sections\":[{\"emoji\":string,\"heading\":string,\"points\":[string],\
+             \"stat\":{\"value\":string,\"label\":string}}],\
+             \"timeline\":[{\"date\":string,\"title\":string,\"detail\":string}],\
+             \"takeaway\":string}\n\
+             Rules:\n\
+             - 5-8 \"sections\"; \"heading\" 1-4 words; 3-5 \"points\" per section, each an \
+             informative phrase (<= 16 words, plain text, NO markdown) — favour concrete facts, \
+             definitions, and cause/effect over vague labels.\n\
+             - \"emoji\" is ONE relevant emoji per section.\n\
+             - \"stat\" is OPTIONAL per section — include only for a real headline figure from the \
+             source (value e.g. \"30%\"/\"1990\", short label).\n\
+             - \"timeline\" is a chronological list of 4-8 KEY EVENTS, developments, steps, or \
+             milestones the material describes. Each has a \"date\" (a year, range, phase name, or \
+             ordinal like \"Step 1\" when no real dates exist), a short \"title\" (<= 8 words), and \
+             a \"detail\" (one clear sentence, <= 24 words). Order earliest→latest. Omit the \
+             timeline ONLY if the material is genuinely non-sequential and has no events, stages, \
+             or process.\n\
+             - \"takeaway\" is ONE punchy sentence summarising the single most important idea.\n\
+             Cover the most exam-relevant ideas thoroughly. No prose outside the JSON.".to_string(),
             format!("{topic_name} — infographic"),
         ),
         "slideshow" => (
@@ -1364,24 +1401,19 @@ pub async fn generate_material(
     // extract_json tolerates that, but instructing raw JSON makes it far more
     // reliable end-to-end (and avoids truncation from wasted fence tokens).
     let system = format!(
-        "{system}{style} Respond with ONLY raw JSON — no markdown code fences, no prose before or after."
+        "{system}{style} Respond with ONLY raw JSON — no markdown code fences, no prose before or after.{custom}",
+        custom = custom_focus(custom_prompt.as_deref())
     );
     let user = format!("Subject: {subject_name} › {topic_name}\n\nSOURCE MATERIAL:\n{context}\n\nGenerate now.");
 
     let raw = model.complete(&system, &user)?;
-    let mut payload = llm::extract_json(&raw)
+    let payload = llm::extract_json(&raw)
         .map_err(|_| Error::Other("model returned unstructured output; try again".into()))?;
 
-    // Infographic: render the accurate structured spec into a designed POSTER
-    // IMAGE via an image model ("nano-banana"). Merged as `image`; if generation
-    // is unavailable/fails, the structured card renderer is used as a fallback.
-    if kind == "infographic" {
-        if let Some(url) = render_infographic_image(&payload, &keys) {
-            if let Some(obj) = payload.as_object_mut() {
-                obj.insert("image".into(), serde_json::Value::String(url));
-            }
-        }
-    }
+    // Infographic now renders as a DETAILED HTML poster (with a timeline) from the
+    // structured spec — crisp, correct text instead of an image model's garbled
+    // typography. The poster-image path (`render_infographic_image`) is retained but
+    // unused; new infographics use the HTML renderer (InfographicView) directly.
 
     let meta = match kind.as_str() {
         "quiz" => format!("{} questions", payload.as_array().map(|a| a.len()).unwrap_or(0)),

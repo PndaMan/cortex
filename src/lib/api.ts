@@ -188,8 +188,9 @@ export const generateMaterial = (
   subjectId: string,
   kind: "flashcards" | "quiz" | "audio" | "infographic" | "slideshow",
   topicId?: string,
-  title?: string
-) => invoke<MaterialRec>("generate_material", { subjectId, kind, topicId, title });
+  title?: string,
+  customPrompt?: string
+) => invoke<MaterialRec>("generate_material", { subjectId, kind, topicId, title, customPrompt });
 export const listMaterials = (subjectId: string) =>
   invoke<MaterialRec[]>("list_materials", { subjectId });
 export const deleteMaterial = (id: string) => invoke<void>("delete_material", { id });

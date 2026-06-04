@@ -29,6 +29,7 @@
   let type  = $state<string>("flashcards");
   let sel   = $state<string[]>([]);
   let title = $state("");
+  let customPrompt = $state("");
 
   // ── Derived ───────────────────────────────────────────────────
   const selSources = $derived(allSources.filter(s => sel.includes(s.id)));
@@ -106,6 +107,7 @@
           kind as "flashcards" | "quiz" | "audio" | "infographic" | "slideshow",
           topicId,
           matTitle,
+          customPrompt.trim() || undefined,
         ),
     });
 
@@ -222,6 +224,19 @@
             bind:value={title}
             placeholder={suggested || "Select sources first…"}
           />
+        </div>
+        <div class="field">
+          <!-- svelte-ignore a11y_label_has_associated_control -->
+          <label class="onb-label mono">CUSTOM INSTRUCTIONS <span class="faint">optional · steers the AI</span></label>
+          <textarea
+            class="input set-textarea"
+            bind:value={customPrompt}
+            rows="3"
+            placeholder={`e.g. “Focus on exam-likely topics and define every key term”, “Explain like I'm new to ${app.activeSubject?.name ?? "this"}”, “Emphasise dates and the order of events”…`}
+          ></textarea>
+          <div class="mono faint" style="font-size: var(--t-xs); margin-top: 4px;">
+            Woven into the prompt alongside Cortex's format — like NotebookLM. Leave blank for the default.
+          </div>
         </div>
         <div class="gm-autotag">
           <div class="gm-autotag-l">
