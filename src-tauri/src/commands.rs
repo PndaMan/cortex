@@ -294,6 +294,51 @@ fn emit_progress(app: &AppHandle, source_id: &str, stage: &str, detail: &str, pc
     );
 }
 
+/// After ingest, give the source a concise content-based name via the chat
+/// model. Best-effort: any failure leaves the original name untouched. Keeps a
+/// lecture/week/chapter number from the original filename if present.
+fn auto_rename_source(state: &State<AppState>, source_id: &str, original_name: &str, text: &str) {
+    if text.trim().chars().count() < 80 {
+        return; // too little content to name meaningfully
+    }
+    let (spec, keys) = {
+        let c = state.db.lock().unwrap();
+        let spec = match repo::get_setting(&c, "model_chat") {
+            Ok(Some(s)) => s,
+            _ => "gemini:gemini-2.5-flash".to_string(),
+        };
+        match read_keys(&c) {
+            Ok(k) => (spec, k),
+            Err(_) => return,
+        }
+    };
+    let Some(model) = llm::from_spec_or_any(&spec, &keys) else {
+        return;
+    };
+    let excerpt: String = text.chars().take(2500).collect();
+    let sys = "You name a study source. Reply with ONLY a concise, specific title (Title Case, \
+        max 8 words, no quotes, no file extension, no trailing punctuation). If the original \
+        filename contains a lecture/week/chapter/unit/topic number (e.g. \"Lecture 14\", \
+        \"Week 3\"), KEEP that number in the title.";
+    let user = format!("Original filename: {original_name}\n\nContent excerpt:\n{excerpt}\n\nTitle:");
+    let Ok(raw) = model.complete(sys, &user) else {
+        return;
+    };
+    let title = raw
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('"')
+        .trim();
+    let title: String = title.chars().take(80).collect();
+    if title.chars().count() < 3 {
+        return;
+    }
+    let c = state.db.lock().unwrap();
+    let _ = repo::rename_source(&c, source_id, &title);
+}
+
 /// OCR an image source or a scanned (text-less) PDF using the configured
 /// multimodal model (e.g. an OpenRouter/Gemini vision model). PDFs are rendered
 /// to page PNGs via poppler, then sent to the model in small batches. Returns
@@ -444,6 +489,7 @@ pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult>
             };
             repo::finalize_source(&c, &id, status, Some(&meta), Some(&text), warning.as_deref())?;
         }
+        auto_rename_source(&state, &id, &src.name, &text);
         emit_progress(&app, &id, "done", "re-ingested", 100);
 
         let c = state.db.lock().unwrap();
@@ -664,6 +710,10 @@ pub async fn add_source(
             warning.as_deref(),
         )?;
     }
+
+    // Content-based auto-rename (best-effort, before we return so the refreshed
+    // source list shows the new name).
+    auto_rename_source(&state, &source_id, &display_name, &text);
 
     emit_progress(&app, &source_id, "done", "ingested", 100);
     let _ = dim;
@@ -1406,10 +1456,18 @@ fn transcribe(file: &Path) -> (String, Option<String>) {
     // in case the app was launched without it on PATH (desktop launchers often
     // don't inherit the user's shell PATH).
     let whisper_bin = ingest::which("whisper").or_else(|| {
-        std::env::var("HOME").ok().and_then(|h| {
-            let p = std::path::Path::new(&h).join(".local/bin/whisper");
-            if p.exists() { Some(p.to_string_lossy().into_owned()) } else { None }
-        })
+        // Desktop launchers often don't inherit the user's shell PATH, so also
+        // probe the common pip/user/system install locations explicitly.
+        let mut cands: Vec<std::path::PathBuf> = Vec::new();
+        if let Ok(h) = std::env::var("HOME") {
+            cands.push(std::path::Path::new(&h).join(".local/bin/whisper"));
+        }
+        cands.push("/usr/local/bin/whisper".into());
+        cands.push("/usr/bin/whisper".into());
+        cands
+            .into_iter()
+            .find(|p| p.is_file())
+            .map(|p| p.to_string_lossy().into_owned())
     });
     if let Some(bin) = whisper_bin {
         let out = Command::new(&bin)

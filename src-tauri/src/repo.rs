@@ -273,6 +273,15 @@ fn list_sources_for_topic(conn: &Connection, topic_id: &str) -> Result<Vec<Sourc
 /// Rename/re-file a source and replace its tag set. Tags live in the
 /// `source_tags` join table (same as `attach_tags`), so we clear the existing
 /// links and re-attach the provided list.
+/// Rename a source (used by content-based auto-naming after ingest).
+pub fn rename_source(conn: &Connection, id: &str, name: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE sources SET name=?2, updated_at=?3 WHERE id=?1",
+        params![id, name, now_ms()],
+    )?;
+    Ok(())
+}
+
 pub fn update_source(
     conn: &Connection,
     id: &str,
