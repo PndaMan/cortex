@@ -264,6 +264,7 @@ class AppStore {
   leaderOpen = $state(false);
   chatOpen = $state(true);
   sidebarCollapsed = $state(false);
+  findOpen = $state(false);
   musicOpen = $state(false);
   diffOpen = $state(false);
   helpOpen = $state(false);

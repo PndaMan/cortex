@@ -10,6 +10,7 @@
   import LeaderPane from "./components/LeaderPane.svelte";
   import ChatPanel from "./components/ChatPanel.svelte";
   import Icon from "./components/Icon.svelte";
+  import FindBar from "./components/FindBar.svelte";
   import HelpOverlay from "./components/HelpOverlay.svelte";
   import Dialog from "./components/Dialog.svelte";
   import EditModal from "./components/EditModal.svelte";
@@ -67,8 +68,16 @@
       const typing =
         !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 
+      // Find-in-page (Ctrl/Cmd+F) — works even while typing, like a browser.
+      if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+        e.preventDefault();
+        app.findOpen = true;
+        return;
+      }
+
       if (e.key === "Escape") {
         // 1. Close any transient overlay first.
+        if (app.findOpen) { app.findOpen = false; return; }
         if (app.cmdkOpen || app.leaderOpen || app.musicOpen) {
           app.cmdkOpen = false; app.leaderOpen = false; app.musicOpen = false; return;
         }
@@ -206,6 +215,7 @@
     <StatusBar />
 
     <!-- overlays -->
+    <FindBar />
     <CommandPalette />
     <LeaderPane />
     <HelpOverlay />
