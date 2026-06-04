@@ -3,47 +3,25 @@
   import Icon from "./Icon.svelte";
 
   // ─────────────────────────────────────────────────────────────────────────
-  // POMODORO PANEL — focus timer with a generative bonsai that grows as the
-  // current work session elapses. The tree is generated ONCE per session from a
-  // seeded PRNG (so it never reshuffles between frames) and revealed
-  // progressively; breaks show a calmer swaying / petal-fall state. A soft
-  // Web-Audio bell plays on each work↔break transition.
+  // POMODORO PANEL — a calming focus timer with a generative bonsai that grows
+  // as the current work session elapses. The tree structure is generated ONCE
+  // per session from a seeded PRNG (so it never reshuffles between frames) and
+  // revealed progressively along smooth bezier branches; foliage blooms in the
+  // final stretch. Breaks show the full tree in a gentle sway with drifting
+  // petals. A soft Web-Audio bell plays on each work↔break transition.
+  //
+  // The timer itself lives in the store (`app.pomo`) so it keeps running while
+  // the panel is closed and the floating LiveActivity widget mirrors it.
   // ─────────────────────────────────────────────────────────────────────────
 
-  type Phase = "work" | "short" | "long";
+  const pomo = app.pomo;
 
-  // ── settings (minutes) ──
-  let workMin = $state(25);
-  let shortMin = $state(5);
-  let longMin = $state(15);
-  const CYCLES = 4; // long break after every 4th focus session
+  // local UI-only state
   let showSettings = $state(false);
 
-  // ── timer state ──
-  let phase = $state<Phase>("work");
-  let cycle = $state(1); // 1..CYCLES — which focus session we're on
-  let running = $state(false);
-  let elapsedMs = $state(0); // accrued elapsed within the current phase
-  let lastTickAt = 0; // wall-clock anchor for the running segment
-  let sessionSeed = $state(seedFrom(Date.now())); // re-rolled each new work session
-
-  const phaseMin = $derived(
-    phase === "work" ? workMin : phase === "short" ? shortMin : longMin
-  );
-  const totalMs = $derived(Math.max(1, phaseMin) * 60_000);
-  const remainMs = $derived(Math.max(0, totalMs - elapsedMs));
-  const progress = $derived(Math.min(1, elapsedMs / totalMs)); // 0..1 of current phase
-
-  const mmss = $derived.by(() => {
-    const s = Math.ceil(remainMs / 1000);
-    const m = Math.floor(s / 60);
-    const r = s % 60;
-    return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
-  });
-
-  const phaseLabel = $derived(
-    phase === "work" ? `Focus ${cycle} of ${CYCLES}` : phase === "long" ? "Long break" : "Short break"
-  );
+  // The bonsai seed is derived from the timer's completed-session count so each
+  // focus session grows a distinct tree, stable for that session.
+  const sessionSeed = $derived(seedFrom(pomo.completedSessions + pomo.cycle * 97 + 1));
 
   // ── animation / canvas ──
   let canvas = $state<HTMLCanvasElement | null>(null);
@@ -51,6 +29,7 @@
 
   // ── audio ──
   let audioCtx: AudioContext | null = null;
+  let lastChimePhase: string = pomo.phase;
 
   // ───────────────────────── seeded PRNG (mulberry32) ─────────────────────────
   function seedFrom(n: number) {
@@ -68,117 +47,104 @@
   }
 
   // ─────────────────────── procedural bonsai generation ───────────────────────
-  // Each segment is a small straight stroke with curvature baked into a chain.
-  // We precompute the whole tree as a flat list, each segment carrying an
-  // `appearAt` fraction (when in the [0,1] reveal it begins) and `span` (how much
-  // of the reveal it takes), so the SAME structure animates smoothly every frame.
-  type Seg = {
-    x1: number; y1: number; x2: number; y2: number;
-    w: number; // line width
+  // A branch is stored as a smooth quadratic curve (start, control, end) so it
+  // bends organically and can be partially revealed by sampling the curve. Each
+  // branch carries an `appearAt` reveal fraction (deeper → later) and a `span`
+  // over which it draws in, giving an unhurried trunk → twig → leaf growth.
+  type Branch = {
+    x0: number; y0: number; cx: number; cy: number; x1: number; y1: number;
+    w0: number; w1: number; // tapered width
     depth: number;
-    appearAt: number; // reveal fraction at which this seg starts drawing
-    span: number; // reveal fraction width over which it completes
+    appearAt: number;
+    span: number;
   };
   type Leaf = {
     x: number; y: number; r: number;
     appearAt: number;
-    hueShift: number; // 0..1 picks between accent/ok foliage
-    sway: number; // per-leaf phase offset for break sway
+    tone: number; // 0..1 blends accent → ok foliage
+    sway: number; // per-leaf phase offset
   };
+  type Tree = { branches: Branch[]; leaves: Leaf[]; w: number; h: number; maxDepth: number };
 
-  type Tree = { segs: Seg[]; leaves: Leaf[]; w: number; h: number; maxDepth: number };
-
-  // Grow a tree into `segs`/`leaves`. Branches deeper => later appearAt, so the
-  // reveal naturally goes trunk → branches → twigs → leaves over the session.
   function buildTree(seed: number, w: number, h: number): Tree {
     const rng = makeRng(seed);
-    const segs: Seg[] = [];
+    const branches: Branch[] = [];
     const leaves: Leaf[] = [];
-    const maxDepth = 9;
-    // appearAt is assigned per depth band so the trunk shows first; we reserve
-    // the final ~22% of the session for foliage to bloom.
-    const FOLIAGE_START = 0.78;
+    const maxDepth = 8;
+    const FOLIAGE_START = 0.74; // last ~26% of the session is leaf bloom
 
-    function branch(
+    function grow(
       x: number, y: number,
       angle: number, // radians, -PI/2 == straight up
       len: number,
       width: number,
       depth: number,
-      tBase: number // reveal fraction this branch begins at
+      tBase: number,
     ) {
-      if (depth > maxDepth || len < 5 || width < 0.5) {
-        // tip → spawn a small cluster of leaves that bloom late
-        const cluster = 2 + Math.floor(rng() * 3);
+      if (depth > maxDepth || len < 7 || width < 0.6) {
+        // tip → a soft cluster of leaves that bloom late
+        const cluster = 3 + Math.floor(rng() * 3);
         for (let i = 0; i < cluster; i++) {
+          const a = rng() * Math.PI * 2;
+          const d = rng() * 11;
           leaves.push({
-            x: x + (rng() - 0.5) * 14,
-            y: y + (rng() - 0.5) * 14,
-            r: 2.2 + rng() * 3.2,
+            x: x + Math.cos(a) * d,
+            y: y + Math.sin(a) * d,
+            r: 2.6 + rng() * 3.4,
             appearAt: FOLIAGE_START + rng() * (1 - FOLIAGE_START),
-            hueShift: rng(),
+            tone: rng(),
             sway: rng() * Math.PI * 2,
           });
         }
         return;
       }
 
-      // Split this branch into N curving sub-segments so it bends organically.
-      const SUB = 5;
-      const depthFrac = depth / maxDepth;
-      // depth band of the reveal: trunk (depth 0) occupies the first slice,
-      // deeper branches fill progressively later, all before FOLIAGE_START.
-      const bandStart = tBase;
-      const bandLen = (FOLIAGE_START / maxDepth) * (1.1 - 0.4 * rng());
+      const bandLen = (FOLIAGE_START / maxDepth) * (1.05 - 0.35 * rng());
+      // Gentle organic curvature: bow the branch sideways via a control point.
+      const lean = (rng() - 0.5) * 0.55; // overall bend of this branch
+      const ex = x + Math.cos(angle) * len;
+      const ey = y + Math.sin(angle) * len;
+      // perpendicular offset for the control point → smooth arc
+      const perp = angle + Math.PI / 2;
+      const bow = lean * len * 0.5;
+      const cx = (x + ex) / 2 + Math.cos(perp) * bow;
+      const cy = (y + ey) / 2 + Math.sin(perp) * bow;
 
-      let cx = x, cy = y;
-      let curAngle = angle;
-      const curveBias = (rng() - 0.5) * 0.5; // gentle consistent lean per branch
-      for (let i = 0; i < SUB; i++) {
-        const segLen = len / SUB;
-        curAngle += curveBias / SUB + (rng() - 0.5) * 0.08;
-        const nx = cx + Math.cos(curAngle) * segLen;
-        const ny = cy + Math.sin(curAngle) * segLen;
-        const tA = bandStart + (i / SUB) * bandLen;
-        segs.push({
-          x1: cx, y1: cy, x2: nx, y2: ny,
-          w: width,
-          depth,
-          appearAt: Math.min(tA, FOLIAGE_START),
-          span: Math.max(0.012, bandLen / SUB),
-        });
-        cx = nx; cy = ny;
-      }
+      const w1 = width * 0.64;
+      branches.push({
+        x0: x, y0: y, cx, cy, x1: ex, y1: ey,
+        w0: width, w1,
+        depth,
+        appearAt: Math.min(tBase, FOLIAGE_START),
+        span: Math.max(0.02, bandLen),
+      });
 
-      const childBase = Math.min(bandStart + bandLen, FOLIAGE_START);
-      // Number of children tapers with depth; randomized for variety.
-      const kids = depth < 2 ? 2 : 1 + (rng() < 0.62 ? 1 : 0) + (rng() < 0.16 ? 1 : 0);
+      const childBase = Math.min(tBase + bandLen, FOLIAGE_START);
+      const endAngle = Math.atan2(ey - cy, ex - cx); // tangent at the tip
+      const kids = depth < 2 ? 2 : 1 + (rng() < 0.66 ? 1 : 0) + (rng() < 0.14 ? 1 : 0);
       for (let k = 0; k < kids; k++) {
-        const dir = k === 0 ? -1 : 1;
-        const spread = (0.42 + rng() * 0.5) * (kids === 1 ? (rng() < 0.5 ? -1 : 1) : dir);
-        const childAngle = curAngle + spread + (rng() - 0.5) * 0.18;
-        const childLen = len * (0.66 + rng() * 0.2);
-        const childW = width * (0.62 + rng() * 0.16);
-        branch(cx, cy, childAngle, childLen, childW, depth + 1, childBase);
+        const dir = kids === 1 ? (rng() < 0.5 ? -1 : 1) : k === 0 ? -1 : 1;
+        const spread = (0.36 + rng() * 0.46) * dir;
+        const childAngle = endAngle + spread + (rng() - 0.5) * 0.16;
+        const childLen = len * (0.68 + rng() * 0.16);
+        const childW = w1 * (0.92 + rng() * 0.12);
+        grow(ex, ey, childAngle, childLen, childW, depth + 1, childBase);
       }
     }
 
-    // Root: trunk rises from near the bottom-center with a slight natural lean.
-    const rootX = w * (0.46 + rng() * 0.08);
-    const rootY = h * 0.97;
-    const trunkLen = h * (0.2 + rng() * 0.05);
-    const trunkW = Math.max(7, w * 0.018);
-    const lean = -Math.PI / 2 + (rng() - 0.5) * 0.22;
-    branch(rootX, rootY, lean, trunkLen, trunkW, 0, 0);
+    const rootX = w * (0.47 + rng() * 0.06);
+    const rootY = h * 0.96;
+    const trunkLen = h * (0.21 + rng() * 0.05);
+    const trunkW = Math.max(8, w * 0.02);
+    const lean = -Math.PI / 2 + (rng() - 0.5) * 0.18;
+    grow(rootX, rootY, lean, trunkLen, trunkW, 0, 0);
 
-    return { segs, leaves, w, h, maxDepth };
+    return { branches, leaves, w, h, maxDepth };
   }
 
-  // Cache the tree for the active session; rebuild when seed or size changes.
   let tree: Tree | null = null;
   let treeKey = "";
-
-  function ensureTree(w: number, h: number) {
+  function ensureTree(w: number, h: number): Tree {
     const key = `${sessionSeed}:${Math.round(w)}x${Math.round(h)}`;
     if (key !== treeKey || !tree) {
       tree = buildTree(sessionSeed, w, h);
@@ -187,15 +153,11 @@
     return tree;
   }
 
-  // ─────────────────────────────── rendering ───────────────────────────────
+  // ─────────────────────────────── palette ───────────────────────────────
   function cssVar(name: string, fallback: string) {
     const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     return v || fallback;
   }
-
-  // Theme tokens only change on a theme switch, so reading them every frame via
-  // getComputedStyle (a layout-flushing call) is wasted work on a 60fps path.
-  // Cache the palette and refresh it sparingly.
   type Palette = { barkLo: string; barkHi: string; folA: string; folB: string };
   let palette: Palette | null = null;
   let paletteFrame = 0;
@@ -212,6 +174,13 @@
     return palette;
   }
 
+  // sample a point on a quadratic bezier at t∈[0,1]
+  function qbez(p0: number, p1: number, p2: number, t: number) {
+    const mt = 1 - t;
+    return mt * mt * p0 + 2 * mt * t * p1 + t * t * p2;
+  }
+
+  // ─────────────────────────────── rendering ───────────────────────────────
   function draw(now: number) {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -228,141 +197,116 @@
     ctx.clearRect(0, 0, cw, ch);
 
     const { barkLo, barkHi, folA, folB } = getPalette();
-
     const t = ensureTree(cw, ch);
 
-    // During work the reveal tracks the session progress; on break the tree is
-    // fully grown (reveal = 1) and we layer a gentle sway / petal fall instead.
-    const onBreak = phase !== "work";
-    const reveal = onBreak ? 1 : progress;
+    const onBreak = pomo.phase !== "work";
+    // ease the reveal so growth feels gentle near the start and end
+    const raw = onBreak ? 1 : pomo.progress;
+    const reveal = raw * raw * (3 - 2 * raw); // smoothstep
     const tSec = now / 1000;
+    // calm global breathing of the whole canopy
+    const breath = Math.sin(tSec * 0.5) * (onBreak ? 1.4 : 0.6);
 
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
 
-    // Bark: draw segments whose appearAt has been reached. The frontier segment
-    // (appearAt..appearAt+span straddling `reveal`) is drawn partially for
-    // smooth growth rather than popping in.
-    for (const s of t.segs) {
-      if (reveal <= s.appearAt) continue;
+    // ── soft halo behind the foliage (calming glow) ──
+    const haloR = Math.min(cw, ch) * (0.18 + 0.16 * reveal);
+    const halo = ctx.createRadialGradient(
+      cw * 0.5, ch * 0.42, haloR * 0.1,
+      cw * 0.5, ch * 0.42, haloR,
+    );
+    halo.addColorStop(0, withAlpha(folA, 0.1 * reveal));
+    halo.addColorStop(1, withAlpha(folA, 0));
+    ctx.fillStyle = halo;
+    ctx.fillRect(0, 0, cw, ch);
+
+    // ── bark: draw each curve up to the revealed fraction ──
+    for (const b of t.branches) {
+      if (reveal <= b.appearAt) continue;
       let f = 1;
-      if (reveal < s.appearAt + s.span) {
-        f = (reveal - s.appearAt) / s.span; // 0..1 partial
-      }
-      // optional break-time sway: deeper segments drift more
-      let sx = 0, sy = 0;
-      if (onBreak) {
-        const amp = (s.depth / t.maxDepth) * 1.6;
-        sx = Math.sin(tSec * 0.7 + s.y1 * 0.01) * amp;
-      }
-      const x2 = s.x1 + (s.x2 - s.x1) * f + sx;
-      const y2 = s.y1 + (s.y2 - s.y1) * f + sy;
-      // darker bark at the base, lighter toward the tips
-      const mix = Math.min(1, s.depth / 5);
-      ctx.strokeStyle = mix > 0.5 ? barkHi : barkLo;
-      ctx.lineWidth = Math.max(0.6, s.w * (0.55 + 0.45 * f));
+      if (reveal < b.appearAt + b.span) f = (reveal - b.appearAt) / b.span;
+      const steps = 10;
+      const swayAmp = (b.depth / t.maxDepth) * (onBreak ? 2.2 : 1) + breath * (b.depth / t.maxDepth);
+      const mix = Math.min(1, b.depth / 4.5);
+      ctx.strokeStyle = mix > 0.55 ? barkHi : barkLo;
       ctx.beginPath();
-      ctx.moveTo(s.x1 + (onBreak ? sx * 0.5 : 0), s.y1);
-      ctx.lineTo(x2, y2);
+      for (let i = 0; i <= steps; i++) {
+        const u = (i / steps) * f;
+        let px = qbez(b.x0, b.cx, b.x1, u);
+        let py = qbez(b.y0, b.cy, b.y1, u);
+        // sway grows toward the tip of the branch and with depth
+        const s = Math.sin(tSec * 0.6 + b.y0 * 0.012 + b.depth) * swayAmp * u;
+        px += s;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      // taper the stroke along reveal
+      ctx.lineWidth = Math.max(0.7, ((b.w0 + b.w1) / 2) * (0.55 + 0.45 * f));
       ctx.stroke();
     }
 
-    // Foliage: leaves bloom in the final stretch (or are full on break).
+    // ── foliage: leaves bloom late, drawn as soft glowing dots ──
     for (const lf of t.leaves) {
       if (reveal <= lf.appearAt) continue;
       const grow = Math.min(1, (reveal - lf.appearAt) / Math.max(0.001, 1 - lf.appearAt));
       let lx = lf.x, ly = lf.y;
-      let alpha = 0.85;
+      let alpha = 0.8;
       if (onBreak) {
-        // petals drift: gentle bob + slow downward fall that loops
-        const fall = ((tSec * 8 + lf.sway * 9) % 60);
-        lx += Math.sin(tSec * 0.9 + lf.sway) * 3;
-        ly += Math.sin(tSec * 0.6 + lf.sway) * 2 + fall * 0.15;
-        alpha = 0.55 + 0.3 * Math.sin(tSec + lf.sway);
+        const fall = (tSec * 7 + lf.sway * 9) % 70;
+        lx += Math.sin(tSec * 0.8 + lf.sway) * 3 + breath;
+        ly += Math.sin(tSec * 0.5 + lf.sway) * 2 + fall * 0.12;
+        alpha = 0.5 + 0.32 * Math.sin(tSec * 0.9 + lf.sway);
+      } else {
+        lx += breath * 0.6;
       }
-      ctx.globalAlpha = alpha * Math.min(1, grow * 1.4);
-      ctx.fillStyle = lf.hueShift < 0.5 ? folA : folB;
+      const col = blend(folA, folB, lf.tone);
+      const r = lf.r * (0.45 + 0.55 * grow);
+      // soft radial leaf
+      const g = ctx.createRadialGradient(lx, ly, 0, lx, ly, r * 1.8);
+      g.addColorStop(0, withAlpha(col, alpha * Math.min(1, grow * 1.5)));
+      g.addColorStop(1, withAlpha(col, 0));
+      ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.arc(lx, ly, lf.r * (0.5 + 0.5 * grow), 0, Math.PI * 2);
+      ctx.arc(lx, ly, r * 1.8, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.globalAlpha = 1;
 
-    // soft ground line
+    // ── soft ground line + reflection-ish glow ──
     ctx.strokeStyle = barkLo;
-    ctx.globalAlpha = 0.35;
+    ctx.globalAlpha = 0.3;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(cw * 0.18, ch * 0.965);
-    ctx.lineTo(cw * 0.82, ch * 0.965);
+    ctx.moveTo(cw * 0.16, ch * 0.955);
+    ctx.lineTo(cw * 0.84, ch * 0.955);
     ctx.stroke();
     ctx.globalAlpha = 1;
   }
 
-  // ─────────────────────────── timer / rAF loop ───────────────────────────
+  // colour helpers — accept hex or rgb()/oklab vars; fall back gracefully
+  function withAlpha(c: string, a: number): string {
+    return `color-mix(in oklab, ${c} ${Math.round(Math.max(0, Math.min(1, a)) * 100)}%, transparent)`;
+  }
+  function blend(a: string, b: string, t: number): string {
+    return `color-mix(in oklab, ${a} ${Math.round((1 - t) * 100)}%, ${b})`;
+  }
+
+  // ─────────────────────────── rAF loop (panel-only) ───────────────────────────
   function loop(now: number) {
-    if (running) {
-      if (lastTickAt) elapsedMs += now - lastTickAt;
-      lastTickAt = now;
-      if (elapsedMs >= totalMs) {
-        elapsedMs = totalMs;
-        advancePhase();
-      }
+    // chime on phase change (the store advances phases on its own interval)
+    if (pomo.phase !== lastChimePhase) {
+      lastChimePhase = pomo.phase;
+      chime();
     }
     draw(now);
     raf = requestAnimationFrame(loop);
   }
 
-  // ─────────────────────────── phase transitions ───────────────────────────
-  function advancePhase() {
-    chime();
-    if (phase === "work") {
-      // work just ended → break
-      app.pushToast({ kind: "success", title: "Break time", body: "Nice focus — take 5." });
-      const isLong = cycle % CYCLES === 0;
-      phase = isLong ? "long" : "short";
-    } else {
-      // break just ended → next focus session
-      const wasLong = phase === "long";
-      if (wasLong) cycle = 1;
-      else cycle = cycle + 1;
-      phase = "work";
-      sessionSeed = seedFrom(Date.now() + cycle * 2654435761); // new tree each focus session
-      tree = null; treeKey = "";
-      app.pushToast({ kind: "info", title: "Back to focus", body: `Session ${cycle} starting.` });
-    }
-    elapsedMs = 0;
-    lastTickAt = 0;
-    running = true; // auto-continue into the next phase
-  }
-
-  // ─────────────────────────────── controls ───────────────────────────────
-  function start() {
-    if (running) return;
-    running = true;
-    lastTickAt = 0; // re-anchored on next rAF tick to avoid a jump
-  }
-  function pause() {
-    running = false;
-    lastTickAt = 0;
-  }
-  function reset() {
-    running = false;
-    elapsedMs = 0;
-    lastTickAt = 0;
-    if (phase === "work") {
-      sessionSeed = seedFrom(Date.now()); // fresh tree on reset of a focus session
-      tree = null; treeKey = "";
-    }
-  }
-
   // ─────────────────────────── Web Audio chime ───────────────────────────
-  // Soft bell: two sine partials (fundamental + a quiet upper partial) through
-  // an exponential decay envelope. Low volume, no external files.
   function chime() {
     try {
       if (!audioCtx) {
-        const AC = window.AudioContext || (window as any).webkitAudioContext;
+        const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         if (!AC) return;
         audioCtx = new AC();
       }
@@ -372,12 +316,11 @@
       const master = ctx.createGain();
       master.gain.value = 0.0001;
       master.connect(ctx.destination);
-      // gentle swell + long exponential decay
       master.gain.setValueAtTime(0.0001, t0);
-      master.gain.exponentialRampToValueAtTime(0.16, t0 + 0.04);
-      master.gain.exponentialRampToValueAtTime(0.0001, t0 + 2.4);
+      master.gain.exponentialRampToValueAtTime(0.16, t0 + 0.05);
+      master.gain.exponentialRampToValueAtTime(0.0001, t0 + 2.6);
 
-      const base = phase === "work" ? 528 : 440; // brighter going into a break
+      const base = pomo.phase === "work" ? 528 : 440;
       const partials = [
         { f: base, g: 1.0 },
         { f: base * 2.01, g: 0.4 },
@@ -392,7 +335,7 @@
         osc.connect(g);
         g.connect(master);
         osc.start(t0);
-        osc.stop(t0 + 2.5);
+        osc.stop(t0 + 2.7);
       }
     } catch {
       /* audio is best-effort; never block the timer */
@@ -403,8 +346,6 @@
   function teardown() {
     if (raf) cancelAnimationFrame(raf);
     raf = 0;
-    running = false;
-    lastTickAt = 0;
     palette = null; // re-read theme tokens on next open
     if (audioCtx) {
       audioCtx.close().catch(() => {});
@@ -416,11 +357,11 @@
     app.pomodoroOpen = false;
   }
 
-  // Start the rAF loop only while the panel is open; tear everything down when it
-  // closes or the component unmounts. Returning the teardown from $effect handles
-  // both close (open flips false) and unmount.
+  // Run the rAF draw loop only while the panel is open. The timer keeps ticking
+  // in the store regardless, so closing the panel never pauses the session.
   $effect(() => {
     if (!app.pomodoroOpen) return;
+    lastChimePhase = pomo.phase;
     raf = requestAnimationFrame(loop);
     return teardown;
   });
@@ -433,12 +374,13 @@
     }
     if (e.key === " " && (e.target as HTMLElement)?.tagName !== "INPUT") {
       e.preventDefault();
-      running ? pause() : start();
+      pomo.pomoToggle();
     }
   }
 
-  function clampMin(v: number) {
-    return Math.max(1, Math.min(180, Math.round(v) || 1));
+  // settings inputs feed back through the store so durations apply globally
+  function commitSettings(work: number, brk: number, long: number) {
+    pomo.setDurations(work, brk, long);
   }
 </script>
 
@@ -470,20 +412,20 @@
       </header>
 
       <!-- the bonsai -->
-      <div class="pom-canvas-wrap" class:break={phase !== "work"}>
+      <div class="pom-canvas-wrap" class:break={pomo.phase !== "work"}>
         <canvas bind:this={canvas} class="pom-canvas"></canvas>
-        <div class="pom-phase-tag mono">{phaseLabel}</div>
+        <div class="pom-phase-tag mono">{pomo.phaseLabel}</div>
       </div>
 
       <!-- countdown -->
       <div class="pom-clock">
-        <div class="pom-time mono" class:rest={phase !== "work"}>{mmss}</div>
+        <div class="pom-time mono" class:rest={pomo.phase !== "work"}>{pomo.mmss}</div>
         <div class="pom-cycles">
-          {#each Array(CYCLES) as _, i}
+          {#each Array(pomo.sessionsBeforeLong) as _, i (i)}
             <span
               class="pom-dot"
-              class:done={phase === "work" ? i < cycle - 1 : i < cycle}
-              class:active={phase === "work" && i === cycle - 1}
+              class:done={pomo.phase === "work" ? i < pomo.cycle - 1 : i < pomo.cycle}
+              class:active={pomo.phase === "work" && i === pomo.cycle - 1}
             ></span>
           {/each}
         </div>
@@ -491,17 +433,20 @@
 
       <!-- controls -->
       <div class="pom-controls">
-        {#if running}
-          <button class="btn btn--sm" onclick={pause}>
+        {#if pomo.running}
+          <button class="btn btn--sm" onclick={() => pomo.pomoPause()}>
             <Icon name="pause" size={12} /> Pause
           </button>
         {:else}
-          <button class="btn btn--sm btn--primary" onclick={start}>
-            <Icon name="play" size={12} /> {elapsedMs > 0 ? "Resume" : "Start"}
+          <button class="btn btn--sm btn--primary" onclick={() => pomo.pomoStart()}>
+            <Icon name="play" size={12} /> {pomo.progress > 0 ? "Resume" : "Start"}
           </button>
         {/if}
-        <button class="btn btn--sm btn--ghost" onclick={reset} title="Reset phase">
-          <Icon name="x" size={12} /> Reset
+        <button class="btn btn--sm btn--ghost" onclick={() => pomo.pomoReset()} title="Reset phase">
+          <Icon name="refresh" size={12} /> Reset
+        </button>
+        <button class="btn btn--sm btn--ghost" onclick={() => pomo.pomoSkip()} title="Skip to next phase">
+          <Icon name="arrowR" size={12} /> Skip
         </button>
       </div>
 
@@ -511,28 +456,28 @@
           <div class="pom-set-row">
             <label class="mono" for="pm-work">Focus</label>
             <input
-              id="pm-work" type="number" min="1" max="180" value={workMin}
-              onchange={(e) => (workMin = clampMin(+(e.target as HTMLInputElement).value))}
+              id="pm-work" type="number" min="1" max="180" value={pomo.workMin}
+              onchange={(e) => commitSettings(+(e.target as HTMLInputElement).value, pomo.breakMin, pomo.longBreakMin)}
             />
             <span class="pom-set-unit mono">min</span>
           </div>
           <div class="pom-set-row">
             <label class="mono" for="pm-short">Short break</label>
             <input
-              id="pm-short" type="number" min="1" max="180" value={shortMin}
-              onchange={(e) => (shortMin = clampMin(+(e.target as HTMLInputElement).value))}
+              id="pm-short" type="number" min="1" max="180" value={pomo.breakMin}
+              onchange={(e) => commitSettings(pomo.workMin, +(e.target as HTMLInputElement).value, pomo.longBreakMin)}
             />
             <span class="pom-set-unit mono">min</span>
           </div>
           <div class="pom-set-row">
             <label class="mono" for="pm-long">Long break</label>
             <input
-              id="pm-long" type="number" min="1" max="180" value={longMin}
-              onchange={(e) => (longMin = clampMin(+(e.target as HTMLInputElement).value))}
+              id="pm-long" type="number" min="1" max="180" value={pomo.longBreakMin}
+              onchange={(e) => commitSettings(pomo.workMin, pomo.breakMin, +(e.target as HTMLInputElement).value)}
             />
             <span class="pom-set-unit mono">min</span>
           </div>
-          <div class="pom-set-note mono">Long break every {CYCLES}th focus session.</div>
+          <div class="pom-set-note mono">Long break every {pomo.sessionsBeforeLong}th focus session · {pomo.completedSessions} done today.</div>
         </div>
       {/if}
     </div>
@@ -593,7 +538,7 @@
     transition: box-shadow var(--dur-slow) var(--ease);
   }
   .pom-canvas-wrap.break {
-    box-shadow: inset 0 0 60px color-mix(in oklab, var(--accent) 12%, transparent);
+    box-shadow: inset 0 0 70px color-mix(in oklab, var(--accent) 14%, transparent);
   }
   .pom-canvas {
     width: 100%;

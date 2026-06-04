@@ -48,6 +48,8 @@ export const THEME_LABELS: Record<Theme, string> = {
 
 export type Music = { current: string; playing: boolean; volume: number };
 
+export type PomoPhase = "work" | "break" | "long";
+
 export type DialogSpec = {
   kind: "confirm" | "prompt";
   title: string;
@@ -113,6 +115,132 @@ function uid() {
   return Math.random().toString(36).slice(2);
 }
 
+// ───────────────────────────── Pomodoro timer ─────────────────────────────
+// App-wide focus timer. Lives in the store so it keeps ticking after the panel
+// closes and the LiveActivity widget can mirror it. A single setInterval (started
+// lazily on first pomoStart) drives `remainingMs` down and auto-advances phases:
+// work → break → work … with a long break after every Nth focus session.
+class PomoTimer {
+  phase = $state<PomoPhase>("work");
+  running = $state(false);
+  completedSessions = $state(0); // total focus sessions finished
+  cycle = $state(1); // 1..sessionsBeforeLong — focus session within the current set
+
+  // configurable durations (minutes)
+  workMin = $state(25);
+  breakMin = $state(5);
+  longBreakMin = $state(15);
+  sessionsBeforeLong = $state(4);
+
+  remainingMs = $state(25 * 60_000);
+
+  // anchor for the running segment + the interval handle
+  #lastAt = 0;
+  #interval: ReturnType<typeof setInterval> | null = null;
+  #onPhaseChange: ((to: PomoPhase) => void) | null = null;
+
+  phaseMin(p: PomoPhase = this.phase): number {
+    return p === "work" ? this.workMin : p === "long" ? this.longBreakMin : this.breakMin;
+  }
+  totalMs(p: PomoPhase = this.phase): number {
+    return Math.max(1, this.phaseMin(p)) * 60_000;
+  }
+  /** 0..1 elapsed fraction of the current phase. */
+  get progress(): number {
+    const total = this.totalMs();
+    return Math.min(1, Math.max(0, 1 - this.remainingMs / total));
+  }
+  get mmss(): string {
+    const s = Math.max(0, Math.ceil(this.remainingMs / 1000));
+    const m = Math.floor(s / 60);
+    return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  }
+  get phaseLabel(): string {
+    if (this.phase === "work") return `Focus ${this.cycle} of ${this.sessionsBeforeLong}`;
+    return this.phase === "long" ? "Long break" : "Short break";
+  }
+  /** Whether the live activity has anything worth showing. */
+  get active(): boolean {
+    return this.running || this.remainingMs < this.totalMs();
+  }
+
+  onPhaseChange(fn: (to: PomoPhase) => void) {
+    this.#onPhaseChange = fn;
+  }
+
+  #ensureInterval() {
+    if (this.#interval) return;
+    this.#lastAt = Date.now();
+    this.#interval = setInterval(() => this.#tick(), 250);
+  }
+  #stopInterval() {
+    if (this.#interval) {
+      clearInterval(this.#interval);
+      this.#interval = null;
+    }
+  }
+  #tick() {
+    if (!this.running) return;
+    const now = Date.now();
+    this.remainingMs = Math.max(0, this.remainingMs - (now - this.#lastAt));
+    this.#lastAt = now;
+    if (this.remainingMs <= 0) this.#advance();
+  }
+
+  #advance() {
+    const from = this.phase;
+    if (from === "work") {
+      this.completedSessions += 1;
+      const isLong = this.cycle % this.sessionsBeforeLong === 0;
+      this.phase = isLong ? "long" : "break";
+    } else {
+      if (from === "long") this.cycle = 1;
+      else this.cycle += 1;
+      this.phase = "work";
+    }
+    this.remainingMs = this.totalMs();
+    this.#lastAt = Date.now();
+    this.running = true; // auto-continue into the next phase
+    this.#onPhaseChange?.(this.phase);
+  }
+
+  // ── actions ──
+  pomoStart() {
+    if (this.running) return;
+    if (this.remainingMs <= 0) this.remainingMs = this.totalMs();
+    this.running = true;
+    this.#lastAt = Date.now();
+    this.#ensureInterval();
+  }
+  pomoPause() {
+    this.running = false;
+  }
+  pomoToggle() {
+    this.running ? this.pomoPause() : this.pomoStart();
+  }
+  pomoReset() {
+    this.running = false;
+    this.remainingMs = this.totalMs();
+    this.#stopInterval();
+  }
+  /** Skip to the next phase immediately (counts a completed focus session). */
+  pomoSkip() {
+    this.remainingMs = 0;
+    this.#advance();
+    this.#ensureInterval();
+  }
+  /** Apply a duration change; if it's the current phase and idle, reflect it. */
+  setDurations(work: number, brk: number, long: number) {
+    const clamp = (v: number) => Math.max(1, Math.min(180, Math.round(v) || 1));
+    this.workMin = clamp(work);
+    this.breakMin = clamp(brk);
+    this.longBreakMin = clamp(long);
+    if (!this.running && this.remainingMs >= this.totalMs() - 50) {
+      this.remainingMs = this.totalMs();
+    }
+  }
+}
+
 class AppStore {
   // data
   subjects = $state<Subject[]>([]);
@@ -139,6 +267,11 @@ class AppStore {
   diffOpen = $state(false);
   helpOpen = $state(false);
   pomodoroOpen = $state(false);
+  // App-wide focus timer + its floating live-activity widget.
+  pomo = new PomoTimer();
+  pomoCorner = $state<"tl" | "tr" | "bl" | "br">("br"); // snapped corner (session)
+  pomoLiveMin = $state(false); // live widget minimised to a pill
+  pomoLiveForce = $state(false); // keep showing the widget even when idle
   onboarding = $state(false);
   metaModal = $state<any | null>(null);
   toasts = $state<Toast[]>([]);
@@ -158,6 +291,18 @@ class AppStore {
     this.loading = true;
     // Surface stream/playback failures instead of swallowing them.
     music.onError = (m) => this.pushToast({ kind: "warning", title: "Music", body: m });
+    // Toast on every focus↔break transition.
+    this.pomo.onPhaseChange((to) => {
+      if (to === "work") {
+        this.pushToast({ kind: "info", title: "Back to focus", body: `Session ${this.pomo.cycle} — let's go.` });
+      } else {
+        this.pushToast({
+          kind: "success",
+          title: to === "long" ? "Long break" : "Break time",
+          body: "Nice focus — step away for a bit.",
+        });
+      }
+    });
     try {
       // Start empty on a fresh install — no demo seeding. Every view renders a
       // proper empty state when there are no subjects/sources.

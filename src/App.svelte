@@ -13,6 +13,7 @@
   import Dialog from "./components/Dialog.svelte";
   import EditModal from "./components/EditModal.svelte";
   import PomodoroPanel from "./components/PomodoroPanel.svelte";
+  import LiveActivity from "./components/LiveActivity.svelte";
   import { keybinds } from "./lib/keybinds.svelte";
 
   import Dashboard from "./views/Dashboard.svelte";
@@ -208,6 +209,7 @@
     <Dialog />
     <EditModal />
     <PomodoroPanel />
+    <LiveActivity />
     <ToastStack />
   </div>
 {/if}

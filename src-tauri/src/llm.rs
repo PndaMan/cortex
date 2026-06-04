@@ -231,6 +231,8 @@ pub struct Keys {
     pub openai: Option<String>,
     pub claude: Option<String>,
     pub custom_endpoint: Option<String>,
+    /// Ollama base URL (e.g. http://localhost:11434) — local, keyless.
+    pub ollama_url: Option<String>,
 }
 
 fn nonempty(o: &Option<String>) -> Option<&str> {
@@ -277,7 +279,17 @@ pub fn from_spec(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
                 label: "custom",
             }) as Box<dyn Llm>
         }),
-        // ollama lands in a later slice.
+        // Ollama exposes an OpenAI-compatible API at <base>/v1; it's keyless, so
+        // pass a dummy bearer token (Ollama ignores it).
+        "ollama" => {
+            let base = nonempty(&keys.ollama_url).unwrap_or("http://localhost:11434");
+            Some(Box::new(OpenAiCompatLlm {
+                base_url: format!("{}/v1", base.trim_end_matches('/')),
+                api_key: "ollama".to_string(),
+                model,
+                label: "ollama",
+            }) as Box<dyn Llm>)
+        }
         _ => None,
     }
 }

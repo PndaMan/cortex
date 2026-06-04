@@ -16,7 +16,8 @@
   let notes = $state<Note[]>([]);
   let loading = $state(true);
   let selectedId = $state<string | null>(null);
-  let listCollapsed = $state(false);
+  let listCollapsed = $state(true); // collapsed by default — more room for the editor
+  let fullscreen = $state(false);
 
   // Draft fields for the selected note; saved status tracks persistence.
   let title = $state("");
@@ -30,6 +31,16 @@
   $effect(() => {
     const sid = app.activeSubjectId ?? null;
     void load(sid);
+  });
+
+  // Escape key exits fullscreen.
+  $effect(() => {
+    if (!fullscreen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") fullscreen = false;
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   });
 
   async function load(sid: string | null) {
@@ -145,6 +156,7 @@
           aria-label="Expand note list"
           onclick={() => (listCollapsed = false)}
         >
+          <!-- Chevron points right → "open left panel" -->
           <Icon name="chevron" size={14} />
         </button>
         <button
@@ -165,6 +177,7 @@
             <button class="btn btn--primary btn--sm" type="button" onclick={newNote} title="New note">
               <Icon name="plus" size={12} /> New note
             </button>
+            <!-- Collapse button: visually prominent, chevron points left (← close) -->
             <button
               type="button"
               class="notes-collapse-btn"
@@ -172,7 +185,8 @@
               aria-label="Collapse note list"
               onclick={() => (listCollapsed = true)}
             >
-              <Icon name="chevron" size={13} style="transform:rotate(180deg)" />
+              <!-- Chevron default points right; rotate 180° to point left = collapse -->
+              <Icon name="chevron" size={14} style="transform:rotate(180deg)" />
             </button>
           </div>
         </div>
@@ -218,6 +232,20 @@
           <span class={"notes-saved" + (saved ? " on" : "")}>
             {#if saved}<Icon name="check" size={12} /> Saved{:else}Editing…{/if}
           </span>
+          <!-- Fullscreen toggle -->
+          <button
+            type="button"
+            class={"notes-fullscreen-btn" + (fullscreen ? " on" : "")}
+            title={fullscreen ? "Exit fullscreen (Esc)" : "Enter fullscreen"}
+            aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            onclick={() => (fullscreen = !fullscreen)}
+          >
+            {#if fullscreen}
+              <Icon name="x" size={14} />
+            {:else}
+              <Icon name="external" size={14} />
+            {/if}
+          </button>
         </div>
 
         <div class="notes-editor-wrap">
@@ -246,7 +274,7 @@
             onclick={exportPdf}
             title="Export note as PDF"
           >
-            <Icon name="doc" size={13} /> Export PDF
+            <Icon name="doc" size={13} /> Save as PDF
           </button>
           <span class="notes-convert-wrap" title={canConvert ? "" : "Notes need a subject to become a source"}>
             <button class="btn btn--ghost btn--sm" type="button" disabled={!canConvert} onclick={convert}>
@@ -267,6 +295,62 @@
     </section>
   </div>
 {/snippet}
+
+<!-- Fullscreen overlay: renders the editor maximised over the whole window -->
+{#if fullscreen && selected}
+  <div class="notes-fs-overlay" role="dialog" aria-modal="true" aria-label="Note — fullscreen">
+    <div class="notes-fs-head">
+      <input
+        class="notes-fs-title"
+        placeholder="Untitled"
+        value={title}
+        oninput={(e) => { title = (e.target as HTMLInputElement).value; markDirty(); }}
+      />
+      <span class={"notes-saved notes-fs-saved" + (saved ? " on" : "")}>
+        {#if saved}<Icon name="check" size={12} /> Saved{:else}Editing…{/if}
+      </span>
+      <button
+        type="button"
+        class="notes-fs-exit-btn"
+        title="Exit fullscreen (Esc)"
+        aria-label="Exit fullscreen"
+        onclick={() => (fullscreen = false)}
+      >
+        <Icon name="x" size={15} /> Exit fullscreen
+      </button>
+    </div>
+    <div class="notes-fs-editor">
+      <MarkdownEditor value={body} onChange={(v) => { body = v; markDirty(); }} />
+    </div>
+    <div class="notes-fs-actions">
+      <button
+        class="btn btn--danger btn--sm"
+        type="button"
+        style="margin-right:auto"
+        onclick={remove}
+        title="Delete this note"
+      >
+        Delete
+      </button>
+      <button
+        class="btn btn--ghost btn--sm"
+        type="button"
+        onclick={exportPdf}
+        title="Export note as PDF"
+      >
+        <Icon name="doc" size={13} /> Save as PDF
+      </button>
+      <span class="notes-convert-wrap" title={canConvert ? "" : "Notes need a subject to become a source"}>
+        <button class="btn btn--ghost btn--sm" type="button" disabled={!canConvert} onclick={convert}>
+          <Icon name="arrowR" size={13} /> Convert to source
+        </button>
+      </span>
+      <button class="btn btn--primary btn--sm" type="button" disabled={saved} onclick={save} title="Save note">
+        Save
+      </button>
+    </div>
+  </div>
+{/if}
 
 {#if embedded}
   {@render notesWorkspace()}
@@ -352,7 +436,7 @@
   .notes-list-head {
     flex: none;
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    padding: 12px 12px 10px;
+    padding: 10px 8px 10px 12px;
     border-bottom: 1px solid var(--border);
     background: var(--surface-2);
   }
@@ -363,18 +447,19 @@
   }
 
   .notes-list-head-actions {
-    display: flex; align-items: center; gap: 4px;
+    display: flex; align-items: center; gap: 6px;
   }
 
-  /* Collapse toggle button in the list header. */
+  /* Collapse toggle button in the list header — visible solid border so it's
+     easy to spot alongside the New note button. */
   .notes-collapse-btn {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 24px; height: 24px; padding: 0;
-    background: none; border: 1px solid transparent; border-radius: 6px;
-    color: var(--fg-faint); cursor: pointer;
-    transition: background 0.1s ease, color 0.1s ease;
+    width: 28px; height: 28px; padding: 0; flex-shrink: 0;
+    background: var(--surface-3); border: 1px solid var(--border-strong); border-radius: 7px;
+    color: var(--fg-muted); cursor: pointer;
+    transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
   }
-  .notes-collapse-btn:hover { background: var(--surface-3); color: var(--fg-bright); }
+  .notes-collapse-btn:hover { background: var(--surface); color: var(--fg-bright); border-color: var(--border-strong); }
 
   /* List items area scrolls independently within the fixed column height. */
   .notes-items {
@@ -414,14 +499,14 @@
   .notes-rail-toggle,
   .notes-rail-new {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 28px; height: 28px; padding: 0;
-    background: none; border: 1px solid transparent; border-radius: 7px;
-    color: var(--fg-faint); cursor: pointer;
+    width: 30px; height: 30px; padding: 0;
+    background: var(--surface-3); border: 1px solid var(--border-strong); border-radius: 7px;
+    color: var(--fg-muted); cursor: pointer;
     transition: background 0.1s ease, color 0.1s ease;
   }
   .notes-rail-toggle:hover,
   .notes-rail-new:hover {
-    background: var(--surface-3); color: var(--fg-bright);
+    background: var(--surface); color: var(--fg-bright);
   }
 
   /* ── Right: detail pane ─────────────────────────────────────────────────── */
@@ -435,8 +520,8 @@
 
   .notes-detail-head {
     flex: none;
-    display: flex; align-items: center; gap: 12px;
-    padding: 14px 20px 12px;
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px 12px 20px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
   }
@@ -456,6 +541,17 @@
   }
   .notes-saved.on { color: var(--accent); }
 
+  /* Fullscreen toggle button in the detail header. */
+  .notes-fullscreen-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; padding: 0; flex-shrink: 0;
+    background: var(--surface-3); border: 1px solid var(--border-strong); border-radius: 7px;
+    color: var(--fg-muted); cursor: pointer;
+    transition: background 0.1s ease, color 0.1s ease;
+  }
+  .notes-fullscreen-btn:hover,
+  .notes-fullscreen-btn.on { background: var(--surface); color: var(--accent); border-color: var(--accent); }
+
   .notes-editor-wrap {
     flex: 1 1 0;
     min-height: 0;
@@ -472,6 +568,64 @@
     background: var(--surface);
   }
   .notes-convert-wrap { display: inline-flex; }
+
+  /* ── Fullscreen overlay ─────────────────────────────────────────────────── */
+  /* Covers the entire viewport above normal content (z-index 900, below modals
+     which typically live at 1000+). Uses the app's bg/surface tokens. */
+  .notes-fs-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg, #1a1a2e);
+  }
+
+  .notes-fs-head {
+    flex: none;
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 20px 13px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .notes-fs-title {
+    flex: 1; min-width: 0;
+    font-size: var(--t-lg, 18px); font-weight: 700; color: var(--fg-bright);
+    background: transparent; border: none; outline: none;
+    padding: 0;
+  }
+  .notes-fs-title:focus { color: var(--fg-bright); }
+
+  .notes-fs-saved {
+    flex-shrink: 0;
+  }
+
+  .notes-fs-exit-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 12px; flex-shrink: 0;
+    background: var(--surface-3); border: 1px solid var(--border-strong); border-radius: 7px;
+    color: var(--fg-muted); cursor: pointer; font: inherit; font-size: var(--t-xs, 12.5px); font-weight: 600;
+    transition: background 0.1s ease, color 0.1s ease;
+  }
+  .notes-fs-exit-btn:hover { background: var(--surface); color: var(--fg-bright); border-color: var(--fg-faint); }
+
+  .notes-fs-editor {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 20px 28px;
+    background: var(--bg, #1a1a2e);
+  }
+
+  .notes-fs-actions {
+    flex: none;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 20px 14px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
 
   /* ── Print-only preview block ───────────────────────────────────────────── */
   /* Hidden on screen; only the @media print rule makes it visible. */

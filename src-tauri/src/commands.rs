@@ -45,6 +45,7 @@ fn read_keys(c: &Connection) -> Result<llm::Keys> {
         openai: key("openai_api_key")?,
         claude: key("claude_api_key")?,
         custom_endpoint: key("custom_endpoint")?,
+        ollama_url: key("ollama_url")?,
     })
 }
 
