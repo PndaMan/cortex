@@ -574,6 +574,11 @@ class AppStore {
     });
     try {
       await api.reorderTopics(subjectId, ids);
+      // The whole-subject cheatsheet is composed from the topics in their stored
+      // position order; now that the new order is persisted, refresh it so its
+      // topic dividers match the sidebar (the tabs already reflect the in-memory
+      // reorder above). Only matters for the currently-open subject.
+      if (this.activeSubjectId === subjectId) this.cheatsheetReloadNonce++;
     } catch (e) {
       this.pushToast({ kind: "error", title: "Reorder failed", body: String(e) });
       await this.refresh();
