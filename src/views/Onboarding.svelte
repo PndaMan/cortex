@@ -2,6 +2,7 @@
   import { app, THEMES } from "../lib/store.svelte";
   import type { Theme } from "../lib/store.svelte";
   import Icon from "../components/Icon.svelte";
+  import logo from "../assets/cortex-logo.png";
 
   let { onFinish }: { onFinish?: () => void } = $props();
 
@@ -40,7 +41,7 @@
   <!-- Left rail: step list -->
   <div class="onb-rail">
     <div class="onb-brand">
-      <span class="ds-logo-glyph">C</span> Cortex
+      <img class="ds-logo-glyph" src={logo} alt="Cortex" /> Cortex
     </div>
     <div class="onb-steps">
       {#each steps as s, i}

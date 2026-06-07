@@ -1,6 +1,6 @@
 <div align="center">
 
-<!-- Drop the generated logo here, e.g.: <img src="src-tauri/icons/icon.png" width="120" alt="Cortex logo" /> -->
+<img src="assets/cortex-logo-withbg.png" width="128" alt="Cortex logo" />
 
 # Cortex
 

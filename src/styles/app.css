@@ -20,7 +20,7 @@
   min-height: 0;
 }
 .sb-brand { display: flex; align-items: center; gap: 9px; height: 46px; padding: 0 14px; border-bottom: 1px solid var(--border); flex: none; }
-.sb-brand .glyph { width: 22px; height: 22px; border-radius: var(--rad-2); background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; font-weight: 800; font-size: 13px; }
+.sb-brand .glyph { width: 24px; height: 24px; object-fit: contain; display: block; flex: none; }
 .sb-brand .b-name { font-weight: 700; color: var(--fg-bright); letter-spacing: 0.03em; }
 .sb-brand .b-spacer { flex: 1; }
 .sb-brand .b-cmd { color: var(--fg-faint); cursor: pointer; }
@@ -379,7 +379,7 @@
 .onb { position: fixed; inset: 0; z-index: 100; display: grid; grid-template-columns: 264px 1fr; background: var(--bg); }
 .onb-rail { background: var(--bg-sunken); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: var(--sp-6); }
 .onb-brand { display: flex; align-items: center; gap: 9px; font-weight: 700; color: var(--fg-bright); margin-bottom: var(--sp-8); }
-.ds-logo-glyph { width: 24px; height: 24px; border-radius: var(--rad-2); background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; font-weight: 800; font-size: 14px; }
+.ds-logo-glyph { width: 26px; height: 26px; object-fit: contain; display: block; flex: none; }
 .onb-steps { display: flex; flex-direction: column; gap: 4px; }
 .onb-step { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: var(--rad-2); font-size: var(--t-sm); color: var(--fg-faint); }
 .onb-step.on { background: var(--surface-2); color: var(--fg-bright); }

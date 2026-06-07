@@ -4,6 +4,7 @@
   import Icon from "./Icon.svelte";
   import { stations } from "../lib/mock";
   import { moveItem, reorderable } from "../lib/dnd";
+  import logo from "../assets/cortex-logo.png";
 
   // ── pointer-based reordering (subjects + a subject's topics). No native
   //    HTML5 drag — it crashes WebKitGTK; see lib/dnd.ts. ──
@@ -101,7 +102,7 @@
 <div class="sidebar">
   <!-- Brand row -->
   <div class="sb-brand">
-    <span class="glyph">C</span>
+    <img class="glyph" src={logo} alt="Cortex" />
     <span class="b-name">Cortex</span>
     <span class="b-spacer"></span>
     <button class="b-cmd" type="button" title="Minimize sidebar (b)" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;display:inline-flex;align-items:center;transform:rotate(180deg)" onclick={() => app.toggleSidebar()}>
