@@ -510,7 +510,7 @@ pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult>
         } else if src.kind == "audio" {
             if let Some(p) = input.path.as_deref() {
                 emit_progress(&app, &id, "parsing", "transcribing audio (Whisper)", 35);
-                let (t, w) = transcribe(Path::new(p));
+                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true);
                 if !t.trim().is_empty() {
                     text = t;
                     warning = w;
@@ -671,7 +671,7 @@ pub async fn add_source(
         } else if kind == "audio" {
             if let Some(p) = input.path.as_deref() {
                 emit_progress(&app, &source_id, "parsing", "transcribing audio (Whisper)", 35);
-                let (t, w) = transcribe(Path::new(p));
+                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true);
                 if t.trim().is_empty() { (text, w.or(warning)) } else { (t, w) }
             } else {
                 (text, warning)
@@ -2041,7 +2041,7 @@ pub fn set_settings(state: State<AppState>, values: std::collections::HashMap<St
 /// Transcribe an audio file with a local Whisper CLI if one is installed
 /// (openai-whisper `whisper`, or whisper.cpp `whisper-cli`/`main`). Returns
 /// `(transcript, warning)`. A missing binary is a graceful warning, not an error.
-fn transcribe(file: &Path) -> (String, Option<String>) {
+fn transcribe(file: &Path, data_dir: &Path, allow_install: bool) -> (String, Option<String>) {
     use std::process::Command;
     let outdir = std::env::temp_dir().join(format!("cortex-asr-{}", crate::db::new_id()));
     let _ = std::fs::create_dir_all(&outdir);
@@ -2102,15 +2102,78 @@ fn transcribe(file: &Path) -> (String, Option<String>) {
             }
         }
     }
+    // No system Whisper — fall back to a self-managed faster-whisper venv that the
+    // app sets up automatically (CTranslate2, no PyTorch). The first call on a
+    // fresh machine creates the venv + pip-installs it (slow, one-off); afterwards
+    // it's quick. PyAV decodes the audio, so no system ffmpeg is needed.
+    if let Some(py) = faster_whisper_python(data_dir, allow_install) {
+        let models_dir = data_dir.join("whisper-models");
+        let _ = std::fs::create_dir_all(&models_dir);
+        // argv[1] = audio file, argv[2] = model cache dir (model auto-downloads here)
+        const RUNNER: &str = "import sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('base.en',device='cpu',compute_type='int8',download_root=sys.argv[2])\nsegs,_=m.transcribe(sys.argv[1],language='en')\nprint(' '.join(s.text.strip() for s in segs))";
+        let out = Command::new(&py).arg("-c").arg(RUNNER).arg(file).arg(&models_dir).output();
+        if let Ok(o) = out {
+            if o.status.success() {
+                let t = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                let _ = std::fs::remove_dir_all(&outdir);
+                return (t, None); // empty string = ran but recognised nothing
+            }
+            eprintln!(
+                "[whisper] faster-whisper failed: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+        }
+    }
+
     let _ = std::fs::remove_dir_all(&outdir);
     (
         String::new(),
         Some(
-            "Recording saved, but no Whisper transcriber was found. Install `openai-whisper` \
-             (pip install openai-whisper) or whisper.cpp, then re-record to get a transcript."
+            "Couldn't transcribe — automatic Whisper setup failed. Make sure Python 3 and pip are \
+             installed (the app installs faster-whisper into its own venv on first use), or install \
+             `openai-whisper` / whisper.cpp manually, then re-record."
                 .into(),
         ),
     )
+}
+
+/// A self-managed Python venv under the app data dir with `faster-whisper`
+/// installed; returns its interpreter path. When `allow_install` is false it only
+/// returns an already-prepared venv (never triggers the slow first-run install) —
+/// so the live partial transcriber stays snappy and only the full ingest path
+/// bootstraps it.
+fn faster_whisper_python(data_dir: &Path, allow_install: bool) -> Option<std::path::PathBuf> {
+    use std::process::Command;
+    let venv = data_dir.join("whisper-venv");
+    let py = venv.join("bin").join("python");
+    let ready = venv.join(".ready");
+    if py.is_file() && ready.is_file() {
+        return Some(py);
+    }
+    if !allow_install {
+        return None;
+    }
+    let py3 = ingest::which("python3").or_else(|| ingest::which("python"))?;
+    let made = Command::new(&py3)
+        .arg("-m")
+        .arg("venv")
+        .arg(&venv)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !made || !py.is_file() {
+        return None;
+    }
+    let installed = Command::new(&py)
+        .args(["-m", "pip", "install", "-U", "pip", "faster-whisper"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !installed {
+        return None;
+    }
+    let _ = std::fs::write(&ready, b"1");
+    Some(py)
 }
 
 /// Transcribe a short rolling audio buffer for the live-recording transcript
@@ -2131,7 +2194,7 @@ pub async fn transcribe_partial(app: AppHandle, audio: Vec<u8>) -> Result<String
     let file = dir.join(format!("partial-{}.webm", crate::db::new_id()));
     std::fs::write(&file, &audio)?;
 
-    let (transcript, _warning) = transcribe(&file);
+    let (transcript, _warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), false);
     let _ = std::fs::remove_file(&file);
     Ok(transcript)
     })
@@ -2172,7 +2235,7 @@ pub async fn save_recording(
     emit_progress(&app, &source_id, "parsing", "transcribing audio", 25);
 
     // 3. transcribe (local Whisper if available)
-    let (transcript, warning) = transcribe(&file);
+    let (transcript, warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true);
 
     if transcript.trim().is_empty() {
         let c = state.db.lock().unwrap();
