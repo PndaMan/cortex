@@ -63,6 +63,19 @@ fn effective_embed_provider(c: &Connection) -> String {
     }
 }
 
+/// Apply the user's per-task output-token budget (settings key `budget_<task>`,
+/// e.g. budget_cheatsheet) to a freshly built model. This is what makes the
+/// Settings → Models token-budget sliders actually do something — without it,
+/// OpenRouter sends no max_tokens and defaults to a huge cap, 402-ing when the
+/// key's credit limit can't cover it.
+fn apply_budget(model: &mut Box<dyn llm::Llm>, c: &Connection, task: &str) {
+    if let Ok(Some(b)) = repo::get_setting(c, &format!("budget_{task}")) {
+        if let Some(n) = b.trim().parse::<u32>().ok().filter(|n| *n > 0) {
+            model.set_max_tokens(n);
+        }
+    }
+}
+
 /// Read all configured provider keys from settings.
 fn read_keys(c: &Connection) -> Result<llm::Keys> {
     // Trim keys — a pasted key with a trailing newline/space produces an invalid
@@ -382,9 +395,10 @@ fn auto_rename_source(state: &State<AppState>, source_id: &str, original_name: &
             Err(_) => return,
         }
     };
-    let Some(model) = llm::from_spec_or_any(&spec, &keys) else {
+    let Some(mut model) = llm::from_spec_or_any(&spec, &keys) else {
         return;
     };
+    { let c = state.db.lock().unwrap(); apply_budget(&mut model, &c, "chat"); }
     let excerpt: String = text.chars().take(2500).collect();
     let sys = "You name a study source. Reply with ONLY a concise, specific title (Title Case, \
         max 8 words, no quotes, no file extension, no trailing punctuation). If the original \
@@ -911,7 +925,8 @@ pub async fn chat_answer(
         )
     };
     // Require a real model before doing any work.
-    let model = llm::from_spec_or_any(&chat_spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    let mut model = llm::from_spec_or_any(&chat_spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    { let c = state.db.lock().unwrap(); apply_budget(&mut model, &c, "chat"); }
 
     // Scope: source-level chats are restricted to a single source's chunks; the
     // keyword path applies this in SQL, the vector path filters its results.
@@ -1412,7 +1427,8 @@ pub async fn generate_cheatsheet(
         guard_offline_llm(&c, &spec)?;
         (bucket, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c), searxng_base(&c)?)
     };
-    let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    let mut model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    { let c = state.db.lock().unwrap(); apply_budget(&mut model, &c, "cheatsheet"); }
     if bucket.is_empty() {
         return Err(Error::Other(
             "No source text to synthesize from — add and ingest a source first.".into(),
@@ -1812,7 +1828,12 @@ pub async fn generate_material(
         let host_b = cap(repo::get_setting(&c, "voice_b")?.unwrap_or_else(|| "theo".into()));
         (ctx, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c), host_a, host_b)
     };
-    let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    let mut model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    {
+        let task = setting_key.strip_prefix("model_").unwrap_or("cheatsheet");
+        let c = state.db.lock().unwrap();
+        apply_budget(&mut model, &c, task);
+    }
     if context.trim().is_empty() {
         return Err(Error::Other(
             "No source text to generate from — add and ingest a source first.".into(),
