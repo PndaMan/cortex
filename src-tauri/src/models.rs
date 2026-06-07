@@ -134,6 +134,12 @@ pub struct CsSection {
     /// Optional illustrative image (web-sourced when "include images" is on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
+    /// A short web-image search query the synthesis model supplies ONLY for a
+    /// section whose understanding genuinely needs a diagram/figure. Drives
+    /// whether we fetch an image at all (saves needless searches). Transient —
+    /// never persisted or sent to the frontend.
+    #[serde(default, skip_serializing)]
+    pub image_query: Option<String>,
 }
 
 fn default_state() -> String {

@@ -1163,12 +1163,18 @@ fn parse_cheatsheet(raw: &str) -> Vec<CsSection> {
                                     .collect()
                             })
                             .unwrap_or_default();
+                        let image_query = s
+                            .get("image_query")
+                            .and_then(|q| q.as_str())
+                            .map(|q| q.trim().to_string())
+                            .filter(|q| !q.is_empty());
                         Some(CsSection {
                             id: slug(&title),
                             title,
                             state: "approved".into(),
                             items,
                             image: None,
+                            image_query,
                         })
                     })
                     .collect();
@@ -1382,6 +1388,7 @@ fn synthesize_bucket(
                 d: truncate(&raw, 600),
             }],
             image: None,
+            image_query: None,
         }];
     }
     Ok((sections, used))
@@ -1463,7 +1470,13 @@ pub async fn generate_cheatsheet(
         \n\
         OUTPUT CONTRACT: Respond with ONLY raw JSON — no markdown code fences, no prose before or \
         after. Use this EXACT shape (do not add or rename keys):\n\
-        {{\"sections\":[{{\"title\":string,\"items\":[{{\"t\":\"term\",\"d\":\"explanation\"}}]}}]}}\n\
+        {{\"sections\":[{{\"title\":string,\"image_query\":string|null,\"items\":[{{\"t\":\"term\",\"d\":\"explanation\"}}]}}]}}\n\
+        \"image_query\" is OPTIONAL and almost always null. Set it to a 3-6 word web image-search \
+        query ONLY when understanding the section genuinely depends on seeing a specific diagram, \
+        labelled model, structure, cycle, map, or chart that words alone can't convey (e.g. \
+        \"Burgess concentric zone model\", \"animal cell organelles diagram\", \"nitrogen cycle \
+        diagram\"). Leave it null for definitions, lists, prose, formulas, mnemonics, and anything \
+        a reader doesn't need a picture to grasp — do NOT request decorative images.\n\
         Every item has a short heading \"t\" (the term/concept/rule name) and a RICH MARKDOWN body \
         \"d\". JSON string escaping must stay valid: write newlines inside \"d\" as the two \
         characters backslash-n, escape any double quotes, and never emit a literal control \
@@ -1518,21 +1531,20 @@ pub async fn generate_cheatsheet(
     };
     let (mut sections, sources_used) = synthesize_bucket(model.as_ref(), system, &scope, &bucket)?;
 
-    // Optionally illustrate sections with a web image (diagrams/figures). Skipped
-    // for the generic framing sections; capped so generation stays quick.
+    // Illustrate only the sections the synthesis model flagged as genuinely
+    // needing a diagram (image_query set) — so we don't burn a web search on
+    // every section. Capped so generation stays quick.
     if with_images.unwrap_or(false) {
         if let Some(base) = &searxng {
-            const SKIP: &[&str] = &["overview", "mnemonics & quick recall", "common pitfalls"];
             let mut used = 0;
             for sec in sections.iter_mut() {
                 if used >= 6 {
                     break;
                 }
-                if SKIP.contains(&sec.title.to_lowercase().as_str()) {
-                    continue;
-                }
-                let q = format!("{subject_name} {} diagram", sec.title);
-                if let Some(first) = searxng_images(base, &q, 1).into_iter().next() {
+                let Some(q) = sec.image_query.as_deref().filter(|q| !q.is_empty()) else {
+                    continue; // model didn't ask for an image here
+                };
+                if let Some(first) = searxng_images(base, q, 1).into_iter().next() {
                     sec.image = Some(first.img);
                     used += 1;
                 }
@@ -1656,6 +1668,7 @@ fn compose_subject_cheatsheet(c: &Connection, subject_id: &str) -> Result<Option
                 state: "approved".into(),
                 items,
                 image: None,
+                image_query: None,
             }
         })
         .collect();

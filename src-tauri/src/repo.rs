@@ -824,6 +824,7 @@ pub fn get_cheatsheet_sections(
             state: r.get(2)?,
             items,
             image: r.get(4)?,
+            image_query: None, // transient; never stored
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
