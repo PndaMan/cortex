@@ -98,12 +98,19 @@ bun run tauri build
 ### Optional integrations (enable the features you want)
 | Feature | Needs | Notes |
 |---|---|---|
-| Lecture transcription | [`openai-whisper`](https://github.com/openai/whisper) or whisper.cpp on `PATH` | local, free |
+| Lecture transcription | local [`openai-whisper`](https://github.com/openai/whisper) / whisper.cpp / auto `faster-whisper`, **or** a homelab Whisper URL | set the Whisper URL in Settings → Integrations to skip local setup |
 | Web search / images | a self-hosted [SearXNG](https://docs.searxng.org/) with JSON output enabled | set its URL in Settings |
+| Local models | [Ollama](https://ollama.com) (local or homelab) | keyless chat + embeddings |
 | Slide previews | LibreOffice (`soffice`) | renders PPTX/DOCX to PDF |
 | PDF text | `pdftotext` (poppler) | faster & cleaner than OCR |
 | Background music | [`mpv`](https://mpv.io/) | streams study stations |
 | Encrypted backups | [`age`](https://github.com/FiloSottile/age) + [`rclone`](https://rclone.org/) | configure in Settings → Backups |
+
+> **One-command homelab backend.** Don't want to set these up by hand? The
+> [`homelab/`](homelab/) folder has a `docker compose` stack that runs SearXNG,
+> an OpenAI-compatible Whisper server, and (optionally) Ollama. Bring it up,
+> expose it over a reverse proxy or VPN (Tailscale / Netbird), and point Cortex
+> at it in **Settings → Integrations**. See [homelab/README.md](homelab/README.md).
 
 ## Configuration
 
