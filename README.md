@@ -1,14 +1,25 @@
 <div align="center">
 
+<!-- Drop the generated logo here, e.g.: <img src="src-tauri/icons/icon.png" width="120" alt="Cortex logo" /> -->
+
 # Cortex
 
 **A local-first, open-source NotebookLM alternative — a desktop study OS for serious learners.**
 
 Ingest everything a course throws at you — slides, PDFs, docs, lecture recordings, web pages, YouTube — into a clean **Subjects → Topics → Sources** hierarchy, then turn it into exam-ready study material: cheatsheets, flashcards with spaced repetition, quizzes, two-host audio overviews, infographics, mind maps, and a citation-grounded chat.
 
-Built with **Tauri 2 · Rust · SQLite + sqlite-vec · Svelte 5 · Tailwind**. Your data never leaves your machine, and you bring your own AI keys.
+Your data never leaves your machine, and you bring your own AI keys.
 
-[Features](#features) · [Quick start](#quick-start) · [Configuration](#configuration) · [How it works](#how-it-works) · [Roadmap](#roadmap)
+<p>
+  <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" />
+  <img alt="Built with Tauri" src="https://img.shields.io/badge/built%20with-Tauri%202-24C8DB.svg" />
+  <img alt="Frontend Svelte 5" src="https://img.shields.io/badge/frontend-Svelte%205-FF3E00.svg" />
+  <img alt="Backend Rust" src="https://img.shields.io/badge/backend-Rust-CE422B.svg" />
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-555.svg" />
+  <img alt="Status" src="https://img.shields.io/badge/status-v1.0-2dd5b7.svg" />
+</p>
+
+[Why Cortex?](#why-cortex) · [Features](#features) · [Quick start](#quick-start) · [Configuration](#configuration) · [How it works](#how-it-works) · [Roadmap](#roadmap) · [Contributing](#contributing)
 
 </div>
 
@@ -36,7 +47,7 @@ NotebookLM is great, but it's a web product: your sources live on someone else's
 - Each source is parsed → chunked → embedded → stored with **live progress**, then becomes searchable and citable.
 
 ### Generate study material
-- **Cheatsheets** — exhaustive, exam-focused, completeness-checked synthesis with callouts, tables, and bar charts. Optional **web-sourced diagrams** per section.
+- **Cheatsheets** — exhaustive, exam-focused, completeness-checked synthesis with callouts, tables, and bar charts. Optional **web-sourced diagrams** per section, with versioned drafts and an approve-diff review flow.
 - **Flashcards** with real **SM-2 spaced repetition** ("Study due · N", Again/Hard/Good/Easy scheduling).
 - **Quizzes** — multiple-choice with explanations.
 - **Audio overviews** — two-host, podcast-style spoken walkthroughs.
@@ -46,14 +57,15 @@ NotebookLM is great, but it's a web product: your sources live on someone else's
 - Every generator accepts an optional **custom prompt** (NotebookLM-style) to steer focus and tone.
 
 ### Chat that cites its sources
-- Ask questions scoped to a subject, topic, or specific sources; answers cite inline as `⟦source · location⟧`.
+- Ask questions scoped to a subject, topic, a tag, or specific sources; answers cite inline as `⟦source · location⟧`.
 - **Web mode** 🌐 pulls in live web results and, for visual questions, fetches **images and diagrams** alongside the answer (via your SearXNG).
 - Hybrid retrieval: vector search (sqlite-vec) **+** keyword search, merged.
 
 ### Stay organized
-- **Citation manager** — per-subject bibliography with APA/MLA formatting and one-click copy.
-- **Deadlines & calendar** — track exams and assignments with reminders.
-- **Notes**, a **lecture recorder** with an incremental live transcript, a **Pomodoro** focus timer, and background **music**.
+- **Citation manager** — per-subject bibliography with APA/MLA/Harvard formatting and one-click copy.
+- **Deadlines & calendar** — track exams and assignments, with a deadline study checklist and two-way Citations ↔ Calendar sync.
+- **Tags** on topics and deadlines for cross-cutting organization.
+- **Notes**, a **lecture recorder** with an incremental live transcript, a **Pomodoro** focus timer, and background **music** with custom stations.
 
 ### Own your data
 - **Anki `.apkg` export** for flashcard decks, **PDF export**, and a portable **SQLite dump**.
@@ -68,19 +80,19 @@ NotebookLM is great, but it's a web product: your sources live on someone else's
 
 ### Prerequisites
 - **Rust** (stable) and the [Tauri 2 system dependencies](https://v2.tauri.app/start/prerequisites/) for your OS (on Linux: WebKitGTK 4.1, GTK 3, libsoup3, etc.).
-- **Node 18+** (or **Bun**) for the frontend.
+- **Node 18+** or **[Bun](https://bun.sh)** for the frontend.
 
 ```bash
-git clone https://github.com/<your-username>/cortex.git
+git clone https://github.com/PndaMan/cortex.git
 cd cortex
-npm install          # or: bun install
-npm run tauri dev    # launches the desktop app with hot reload
+bun install          # or: npm install
+bun run tauri dev    # launches the desktop app with hot reload
 ```
 
 Build a production bundle:
 
 ```bash
-npm run tauri build
+bun run tauri build
 ```
 
 ### Optional integrations (enable the features you want)
@@ -90,6 +102,7 @@ npm run tauri build
 | Web search / images | a self-hosted [SearXNG](https://docs.searxng.org/) with JSON output enabled | set its URL in Settings |
 | Slide previews | LibreOffice (`soffice`) | renders PPTX/DOCX to PDF |
 | PDF text | `pdftotext` (poppler) | faster & cleaner than OCR |
+| Background music | [`mpv`](https://mpv.io/) | streams study stations |
 | Encrypted backups | [`age`](https://github.com/FiloSottile/age) + [`rclone`](https://rclone.org/) | configure in Settings → Backups |
 
 ## Configuration
@@ -107,21 +120,24 @@ Open **Settings** in the app:
 ## How it works
 
 ```
-src/                      Svelte 5 frontend (runes)
-  lib/api.ts              typed Tauri command client (mirrors the Rust commands)
-  lib/store.svelte.ts     central app state
-  lib/keybinds.svelte.ts  Helix-style modal keyboard engine
-  components/  views/      UI
+src/                       Svelte 5 frontend (runes)
+  lib/api.ts               typed Tauri command client (mirrors the Rust commands)
+  lib/store.svelte.ts      central app state
+  lib/keybinds.svelte.ts   Helix-style modal keyboard engine
+  components/  views/       UI
 
 src-tauri/src/
-  commands.rs             command surface (ingest, generate, chat, search, export…)
-  llm.rs                  LLM providers behind one trait (Gemini/OpenAI-compat/Claude/Ollama, BYOK)
-  embed.rs                embedding providers
-  vector.rs               f32 BLOB vectors; sqlite-vec ranks, Rust cosine is the fallback
-  repo.rs                 all SQLite access
-  ingest.rs               parse → chunk → embed → store pipeline
-  anki.rs  backup.rs       .apkg export · encrypted backups
-  migrations/             versioned SQLite schema
+  commands.rs              command surface (ingest, generate, chat, search, export…)
+  llm.rs                   LLM providers behind one trait (Gemini/OpenAI-compat/Claude/Ollama, BYOK)
+  embed.rs                 embedding providers
+  vector.rs                f32 BLOB vectors; sqlite-vec ranks, Rust cosine is the fallback
+  ingest.rs                parse → chunk → embed → store pipeline
+  repo.rs                  all SQLite access
+  anki.rs   backup.rs       .apkg export · encrypted backups
+  google.rs  notes.rs       Google API helpers · notes
+  calendar.rs  review.rs    deadlines/calendar · SM-2 scheduling
+  mpv.rs                   background music playback
+  migrations/              versioned SQLite schema
 ```
 
 - **Storage:** a single SQLite database in the OS app-data dir, with WAL mode and versioned migrations. Embeddings are stored as little-endian `f32` BLOBs — exactly sqlite-vec's compact format — so retrieval ranks in SQL via `vec_distance_cosine` (with a Rust cosine scan as a transparent fallback).
@@ -129,9 +145,13 @@ src-tauri/src/
 
 See [`CORTEX_DESIGN_BRIEF.md`](CORTEX_DESIGN_BRIEF.md) for the full product vision and the locked architecture decisions.
 
+## Tech stack
+
+**Tauri 2** · **Rust** · **SQLite + sqlite-vec** · **Svelte 5** (runes) · **TypeScript** · **Tailwind CSS** · **Vite**
+
 ## Roadmap
 
-**Shipped:** the Subjects→Topics→Sources core, the ingestion pipeline, all study-material generators (cheatsheets, flashcards, quizzes, audio, infographics, mind maps, slides), citation-grounded chat with web/image mode, SM-2 spaced repetition, Anki export, a citation manager + deadlines, sqlite-vec search, encrypted backups, live lecture transcription, and a responsive layout that scales toward mobile.
+**Shipped (v1.0):** the Subjects→Topics→Sources core, the ingestion pipeline, all study-material generators (cheatsheets, flashcards, quizzes, audio, infographics, mind maps, slides), citation-grounded chat with web/image mode, SM-2 spaced repetition, Anki export, a citation manager + deadlines with calendar sync, tags, sqlite-vec search, encrypted backups, live lecture transcription, drag-and-drop reordering, and a responsive layout that scales toward mobile.
 
 **Next:** accounts & sync (CRDT multi-device), a mobile build, and richer calendar/citation workflows.
 
@@ -140,7 +160,7 @@ See [`CORTEX_DESIGN_BRIEF.md`](CORTEX_DESIGN_BRIEF.md) for the full product visi
 Issues and PRs are welcome. The codebase favors **surgical, well-tested changes**:
 
 ```bash
-npm run check                       # svelte-check (frontend types)
+bun run check                       # svelte-check (frontend types)
 cd src-tauri && cargo test --lib    # Rust unit tests
 cargo check                         # fast type/borrow check
 ```

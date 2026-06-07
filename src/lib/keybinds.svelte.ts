@@ -67,6 +67,33 @@ export const VIM_BINDS: Record<Action, string> = {
 export const PRESETS = { helix: HELIX_BINDS, vim: VIM_BINDS } as const;
 export type Preset = keyof typeof PRESETS;
 
+// The Space-leader menu: a fixed, mnemonic action menu (distinct from the
+// rebindable single-key actions above — leader keys only fire while the menu is
+// open, so they never clash with the global engine). This is the single source
+// of truth shared by LeaderPane and the help overlay, so the two can't drift.
+export interface LeaderAction {
+  key: string;
+  label: string;
+  detail: string;
+}
+export const LEADER_ACTIONS: LeaderAction[] = [
+  { key: "s", label: "Sources",     detail: "view all sources" },
+  { key: "h", label: "Cheatsheet",  detail: "back to your sheet" },
+  { key: "c", label: "Chat",        detail: "open chat dock" },
+  { key: "r", label: "Record",      detail: "lecture recorder" },
+  { key: "f", label: "Flashcards",  detail: "decks & study" },
+  { key: "e", label: "Materials",   detail: "study materials" },
+  { key: "d", label: "Review diff", detail: "cheatsheet draft" },
+  { key: "w", label: "Web search",  detail: "search the web" },
+  { key: "o", label: "Notes",       detail: "markdown notes" },
+  { key: "a", label: "Calendar",    detail: "events & tasks" },
+  { key: "t", label: "Theme",       detail: "cycle Omarchy theme" },
+  { key: "m", label: "Music",       detail: "study sound panel" },
+  { key: "p", label: "Pomodoro",    detail: "focus timer + bonsai" },
+  { key: "b", label: "Sidebar",     detail: "minimize / show navbar" },
+  { key: "g", label: "Dashboard",   detail: "go to dashboard" },
+];
+
 const MODIFIER_KEYS = ["Control", "Shift", "Alt", "Meta", "AltGraph", "CapsLock", "ContextMenu"];
 const isModifier = (k: string) => MODIFIER_KEYS.includes(k);
 
@@ -113,12 +140,18 @@ class Keybinds {
     this.preset = savedPreset ?? (anyCustom ? "custom" : "helix");
   }
 
-  /** Rebind a single action and persist it. Modifier-only keys are rejected. */
-  set(a: Action, key: string) {
-    if (!key || isModifier(key)) return;
+  /** Rebind a single action and persist it. Returns false (no change) if the
+   *  key is a bare modifier or is already bound to a different action — a clash
+   *  would double-fire and later trip the de-dupe reset on the next load. */
+  set(a: Action, key: string): boolean {
+    if (!key || isModifier(key)) return false;
+    for (const other of ACTION_ORDER) {
+      if (other !== a && this.map[other] === key) return false;
+    }
     this.map[a] = key;
     this.preset = "custom";
     api.setSettings({ ["keybind_" + a]: key, keybind_preset: "custom" }).catch(() => {});
+    return true;
   }
 
   /** Apply a named preset wholesale and persist every bind. */

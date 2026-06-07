@@ -1,33 +1,34 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
+  import { LEADER_ACTIONS, type LeaderAction } from "../lib/keybinds.svelte";
 
-  interface LeaderAction {
-    key: string;
-    label: string;
-    detail?: string;
-    run: () => void;
-  }
+  // Run handlers keyed by leader key. The key/label/detail spec lives in
+  // lib/keybinds.svelte (shared with the help overlay); only the behavior is here.
+  const RUN: Record<string, () => void> = {
+    s: () => app.goToSources(),
+    h: () => app.goToCheatsheet(),
+    c: () => { app.chatOpen = true; },
+    r: () => app.setView("recorder"),
+    // Flashcards/quizzes live on the materials tab — land there (the bare
+    // setView("subject") used to leave you on the wrong tab, a dead-end).
+    f: () => { app.setView("subject"); app.setTab("materials"); },
+    e: () => { app.setView("subject"); app.setTab("materials"); },
+    d: () => app.reviewDiff(),
+    w: () => app.setView("websearch"),
+    o: () => app.setView("notes"),
+    a: () => app.setView("calendar"),
+    t: () => app.cycleTheme(),
+    m: () => { app.musicOpen = true; },
+    p: () => { app.pomodoroOpen = true; },
+    b: () => app.toggleSidebar(),
+    g: () => app.setView("dashboard"),
+  };
 
-  const actions: LeaderAction[] = [
-    { key: "s", label: "Add source",   detail: "ingest a file / URL",   run: () => app.setView("add-source") },
-    { key: "c", label: "Chat",         detail: "open chat dock",         run: () => { app.chatOpen = true; } },
-    { key: "r", label: "Record",       detail: "lecture recorder",       run: () => app.setView("recorder") },
-    { key: "f", label: "Flashcards",   detail: "study session",          run: () => app.setView("subject") },
-    { key: "e", label: "Materials",    detail: "study materials",        run: () => { app.setView("subject"); app.setTab("materials"); } },
-    { key: "d", label: "Review diff",  detail: "cheatsheet draft",       run: () => app.reviewDiff() },
-    { key: "w", label: "Web search",   detail: "search the web",         run: () => app.setView("websearch") },
-    { key: "o", label: "Notes",        detail: "markdown notes",         run: () => app.setView("notes") },
-    { key: "a", label: "Calendar",     detail: "events & tasks",         run: () => app.setView("calendar") },
-    { key: "t", label: "Theme",        detail: "cycle Omarchy theme",    run: () => app.cycleTheme() },
-    { key: "m", label: "Music",        detail: "study sound panel",      run: () => { app.musicOpen = true; } },
-    { key: "p", label: "Pomodoro",     detail: "focus timer + bonsai",   run: () => { app.pomodoroOpen = true; } },
-    { key: "b", label: "Sidebar",      detail: "minimize / show navbar", run: () => app.toggleSidebar() },
-    { key: "g", label: "Dashboard",    detail: "go to dashboard",        run: () => app.setView("dashboard") },
-  ];
+  const actions = LEADER_ACTIONS;
 
   function runAction(a: LeaderAction) {
-    a.run();
+    RUN[a.key]?.();
     app.leaderOpen = false;
   }
 

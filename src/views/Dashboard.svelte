@@ -1,21 +1,12 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import Icon from "../components/Icon.svelte";
-  import { moveItem, hideDragImage } from "../lib/dnd";
+  import { moveItem, reorderable } from "../lib/dnd";
 
-  // ── drag-and-drop card reordering ──
-  let dragFrom = $state(-1);
-  let dragOver = $state(-1);
-  function dragStart(e: DragEvent, i: number) { dragFrom = i; hideDragImage(e); if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; }
-  function dragOverCard(e: DragEvent, i: number) { e.preventDefault(); dragOver = i; }
-  function dropCard(e: DragEvent, i: number) {
-    e.preventDefault();
-    if (dragFrom >= 0 && dragFrom !== i) {
-      app.reorderSubjects(moveItem(app.subjects.map((s) => s.id), dragFrom, i));
-    }
-    dragFrom = -1; dragOver = -1;
+  // ── pointer-based card reordering (no native HTML5 drag — see lib/dnd.ts) ──
+  function reorderSubject(from: number, to: number) {
+    app.reorderSubjects(moveItem(app.subjects.map((s) => s.id), from, to));
   }
-  function dragEnd() { dragFrom = -1; dragOver = -1; }
 
   // Derive a simple day/week string for the eyebrow
   const now = new Date();
@@ -51,14 +42,10 @@
 
       {#each app.subjects as s, i (s.id)}
         <button
-          class="subj-card{i === app.dashFocus ? ' kb-focus' : ''}{dragOver === i && dragFrom !== i ? ' drop-over' : ''}{dragFrom === i ? ' dragging' : ''}"
+          class="subj-card{i === app.dashFocus ? ' kb-focus' : ''}"
           onclick={() => app.openSubject(s.id)}
           style:box-shadow="inset 3px 0 0 {app.subjectColor(s)}"
-          draggable="true"
-          ondragstart={(e) => dragStart(e, i)}
-          ondragover={(e) => dragOverCard(e, i)}
-          ondrop={(e) => dropCard(e, i)}
-          ondragend={dragEnd}
+          use:reorderable={{ index: i, group: "subjects", onReorder: reorderSubject }}
         >
           <div class="sc-top">
             <span class="subj-glyph" style="font-size:15px;line-height:1">{s.glyph || "◆"}</span>

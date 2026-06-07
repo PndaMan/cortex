@@ -1,15 +1,59 @@
-node_modules
-dist
-.DS_Store
-*.log
+# ── Dependencies ──────────────────────────────────────────────
+node_modules/
 
-# Rust / Tauri
-src-tauri/target
-src-tauri/gen
+# ── Build output / caches ─────────────────────────────────────
+dist/
+.vite/
+*.tsbuildinfo
 
-# bundles / artifacts
+# ── Rust / Tauri ──────────────────────────────────────────────
+src-tauri/target/
+src-tauri/gen/
+
+# ── Secrets & local config ────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.local
+
+# ── Local databases / dumps ───────────────────────────────────
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# ── Bundles / artifacts ───────────────────────────────────────
 *.zip
+*.dmg
+*.app
+*.AppImage
+*.deb
+*.rpm
+*.msi
 
-# PAI / local agent artifacts — not part of the public repo
-.claude
-MEMORY
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── OS files ──────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── Editors / IDEs ────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Local agent / planning artifacts (not part of the repo) ───
+.claude/
+MEMORY/
+Plans/
+*-handoff.zip

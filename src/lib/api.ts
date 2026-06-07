@@ -102,6 +102,12 @@ export interface CheatsheetData {
   model: string;
   sections: CsSection[];
 }
+export interface CheatsheetVersionMeta {
+  id: string;
+  created_at: number;
+  note: string;
+  section_count: number;
+}
 export interface MaterialRec {
   id: string;
   kind: string;
@@ -189,6 +195,12 @@ export const generateCheatsheet = (subjectId: string, topicId?: string, withImag
   invoke<CheatsheetData>("generate_cheatsheet", { subjectId, topicId, withImages });
 export const getCheatsheet = (subjectId: string, topicId?: string) =>
   invoke<CheatsheetData | null>("get_cheatsheet", { subjectId, topicId });
+export const updateCheatsheet = (subjectId: string, topicId: string | undefined, sections: CsSection[]) =>
+  invoke<void>("update_cheatsheet", { subjectId, topicId, sections });
+export const listCheatsheetVersions = (subjectId: string, topicId?: string) =>
+  invoke<CheatsheetVersionMeta[]>("list_cheatsheet_versions", { subjectId, topicId });
+export const getCheatsheetVersion = (versionId: string) =>
+  invoke<CsSection[]>("get_cheatsheet_version", { versionId });
 /** Render a self-contained HTML doc to a PDF at `dest` (headless Chromium). */
 export const exportPdf = (html: string, dest: string) =>
   invoke<void>("export_pdf", { html, dest });
@@ -217,8 +229,9 @@ export const generateMaterial = (
   kind: "flashcards" | "quiz" | "audio" | "infographic" | "slideshow" | "mindmap",
   topicId?: string,
   title?: string,
-  customPrompt?: string
-) => invoke<MaterialRec>("generate_material", { subjectId, kind, topicId, title, customPrompt });
+  customPrompt?: string,
+  sourceIds?: string[]
+) => invoke<MaterialRec>("generate_material", { subjectId, kind, topicId, title, customPrompt, sourceIds });
 export const listMaterials = (subjectId: string) =>
   invoke<MaterialRec[]>("list_materials", { subjectId });
 export const deleteMaterial = (id: string) => invoke<void>("delete_material", { id });
@@ -283,6 +296,35 @@ export interface Memory {
 export const listMemory = () => invoke<Memory[]>("list_memory");
 export const addMemory = (content: string) => invoke<Memory>("add_memory", { content });
 export const deleteMemory = (id: string) => invoke<void>("delete_memory", { id });
+
+// ---- custom music stations + YouTube-audio streaming (mpv sidecar) ----
+export interface CustomStation {
+  id: string;
+  name: string;
+  url: string;
+  kind: string; // "youtube" | "live"
+  position: number;
+  created_at: number;
+}
+export interface MediaTools {
+  mpv: boolean;
+  ffmpeg: boolean;
+  ytdlp: boolean;
+  ytdlp_path: string;
+}
+export const listCustomStations = () => invoke<CustomStation[]>("list_custom_stations");
+export const addCustomStation = (name: string, url: string, kind = "youtube") =>
+  invoke<CustomStation>("add_custom_station", { name, url, kind });
+export const deleteCustomStation = (id: string) =>
+  invoke<void>("delete_custom_station", { id });
+export const mediaToolsStatus = () => invoke<MediaTools>("media_tools_status");
+export const youtubePlay = (url: string, volume: number) =>
+  invoke<void>("youtube_play", { url, volume });
+export const youtubePause = () => invoke<void>("youtube_pause");
+export const youtubeResume = () => invoke<void>("youtube_resume");
+export const youtubeStop = () => invoke<void>("youtube_stop");
+export const youtubeSetVolume = (volume: number) =>
+  invoke<void>("youtube_set_volume", { volume });
 
 // ---- data & privacy / homelab utilities ----
 export interface DbStats {

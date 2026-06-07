@@ -45,9 +45,20 @@ html,body{margin:0;padding:0;background:#fff;color:var(--fg);
 .cs-section{break-inside:avoid;margin:0 0 22px;padding:0 0 4px;
   border-bottom:1px solid var(--border);}
 .cs-section:last-child{border-bottom:none;}
-.cs-sec-head{display:flex;align-items:baseline;gap:10px;margin:0 0 10px;}
-.cs-sec-title{font-size:17px;font-weight:600;color:var(--fg-bright);margin:0;}
+.cs-sec-head{display:flex;align-items:baseline;gap:10px;margin:0 0 12px;}
+/* Section titles are the dominant headings — big mono uppercase accent, matching
+   the on-screen cheatsheet identity. */
+.cs-sec-title{font-family:var(--font-mono);font-size:27px;font-weight:700;line-height:1.1;
+  letter-spacing:.05em;text-transform:uppercase;color:var(--accent);margin:0;}
 .cs-sec-count{font-family:var(--font-mono);font-size:11px;color:var(--fg-faint);}
+
+/* images (section figure + inline markdown images) — bounded so they never blow
+   past the page; print-color-adjust already set on body. */
+.cs-sec-img{display:block;margin:0 0 12px;max-width:360px;border:1px solid var(--border);
+  border-radius:7px;overflow:hidden;}
+.cs-sec-img img{display:block;width:100%;height:auto;}
+.rt-img{display:block;max-width:100%;height:auto;margin:8px 0;border:1px solid var(--border);
+  border-radius:7px;}
 .status-pill{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;
   letter-spacing:.04em;color:var(--warn);}
 

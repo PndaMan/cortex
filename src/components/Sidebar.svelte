@@ -3,43 +3,16 @@
   import { topicGlyph } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
   import { stations } from "../lib/mock";
-  import { moveItem, hideDragImage } from "../lib/dnd";
+  import { moveItem, reorderable } from "../lib/dnd";
 
-  // ── drag-and-drop reordering (subjects + a subject's topics) ──
-  let subjFrom = $state(-1);
-  let subjOver = $state(-1);
-  function subjDragStart(e: DragEvent, i: number) {
-    subjFrom = i;
-    hideDragImage(e);
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+  // ── pointer-based reordering (subjects + a subject's topics). No native
+  //    HTML5 drag — it crashes WebKitGTK; see lib/dnd.ts. ──
+  function reorderSubject(from: number, to: number) {
+    app.reorderSubjects(moveItem(app.subjects.map((s) => s.id), from, to));
   }
-  function subjDragOver(e: DragEvent, i: number) { e.preventDefault(); subjOver = i; }
-  function subjDrop(e: DragEvent, i: number) {
-    e.preventDefault();
-    if (subjFrom >= 0 && subjFrom !== i) {
-      app.reorderSubjects(moveItem(app.subjects.map((s) => s.id), subjFrom, i));
-    }
-    subjFrom = -1; subjOver = -1;
+  function reorderTopic(subjectId: string, ids: string[], from: number, to: number) {
+    app.reorderTopics(subjectId, moveItem(ids, from, to));
   }
-  function subjDragEnd() { subjFrom = -1; subjOver = -1; }
-
-  // topics drag within a subject
-  let topicFrom = $state(-1);
-  let topicOverKey = $state("");
-  function topicDragStart(e: DragEvent, i: number) {
-    topicFrom = i;
-    hideDragImage(e);
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-  }
-  function topicDragOver(e: DragEvent, key: string) { e.preventDefault(); topicOverKey = key; }
-  function topicDrop(e: DragEvent, subjectId: string, ids: string[], i: number) {
-    e.preventDefault();
-    if (topicFrom >= 0 && topicFrom !== i) {
-      app.reorderTopics(subjectId, moveItem(ids, topicFrom, i));
-    }
-    topicFrom = -1; topicOverKey = "";
-  }
-  function topicDragEnd() { topicFrom = -1; topicOverKey = ""; }
 
   const stationName = $derived(
     stations.find((s) => s.id === app.music.current)?.name ?? "Study sound"
@@ -212,16 +185,12 @@
     {#each app.subjects as s, si (s.id)}
       <div class="sb-subj">
         <div
-          class="sb-subj-row{app.activeSubjectId === s.id && app.view !== 'dashboard' ? ' on' : ''}{subjOver === si && subjFrom !== si ? ' drop-over' : ''}{subjFrom === si ? ' dragging' : ''}"
+          class="sb-subj-row{app.activeSubjectId === s.id && app.view !== 'dashboard' ? ' on' : ''}"
           onclick={() => clickSubject(s)}
           role="button"
           tabindex="0"
           onkeydown={(e) => e.key === "Enter" && clickSubject(s)}
-          draggable="true"
-          ondragstart={(e) => subjDragStart(e, si)}
-          ondragover={(e) => subjDragOver(e, si)}
-          ondrop={(e) => subjDrop(e, si)}
-          ondragend={subjDragEnd}
+          use:reorderable={{ index: si, group: "subjects", onReorder: reorderSubject }}
         >
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <span
@@ -274,16 +243,12 @@
             {#each s.topics as t, ti (t.id)}
               {@const tOpen = openTopics.has(t.id)}
               <div
-                class="sb-topic{topicOverKey === s.id + ':' + ti && topicFrom !== ti ? ' drop-over' : ''}{topicFrom === ti && topicOverKey.startsWith(s.id + ':') ? ' dragging' : ''}"
+                class="sb-topic"
                 onclick={() => clickTopic(s, t)}
                 role="button"
                 tabindex="0"
                 onkeydown={(e) => (e.key === "Enter" || e.key === " ") && clickTopic(s, t)}
-                draggable="true"
-                ondragstart={(e) => topicDragStart(e, ti)}
-                ondragover={(e) => topicDragOver(e, s.id + ':' + ti)}
-                ondrop={(e) => topicDrop(e, s.id, s.topics.map((x) => x.id), ti)}
-                ondragend={topicDragEnd}
+                use:reorderable={{ index: ti, group: "topics:" + s.id, onReorder: (from, to) => reorderTopic(s.id, s.topics.map((x) => x.id), from, to) }}
               >
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <span class="t-tw{tOpen ? ' open' : ''}" role="button" tabindex="-1" aria-label="Toggle sources" onclick={(e) => toggleTopic(t.id, e)}><Icon name="chevron" size={10} /></span>
@@ -485,10 +450,9 @@
     white-space: nowrap;
   }
 
-  /* drag-and-drop reordering feedback */
-  .sb-subj-row[draggable="true"], .sb-topic[draggable="true"] { cursor: grab; }
-  .sb-subj-row.dragging, .sb-topic.dragging { opacity: 0.4; }
-  .sb-subj-row.drop-over, .sb-topic.drop-over { box-shadow: inset 0 2px 0 0 var(--accent); }
+  /* Pointer-based reordering feedback (classes toggled by the reorderable
+     action; see src/lib/dnd.ts + global .reorder-* rules in app.css). */
+  .sb-subj-row.reorder-over, .sb-topic.reorder-over { outline: none; box-shadow: inset 0 2px 0 0 var(--accent); }
 
   /* Topic rows: chevron stays put, name flexes + truncates, like subjects */
   .sb-topic {

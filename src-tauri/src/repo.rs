@@ -614,13 +614,38 @@ pub fn context_text(
     conn: &Connection,
     subject_id: &str,
     topic_id: Option<&str>,
+    source_ids: Option<&[String]>,
     max_chars: usize,
 ) -> Result<(String, i64)> {
-    let sql = "SELECT c.text FROM chunks c
-               WHERE c.subject_id=?1 AND (?2 IS NULL OR c.topic_id=?2)
-               ORDER BY c.source_id, c.ord";
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(params![subject_id, topic_id], |r| r.get::<_, String>(0))?;
+    // Build the WHERE clause (+ positional binds) once so the text query and the
+    // source-count query stay in lock-step. `source_ids`, when present, is the
+    // user's explicit selection and takes precedence — it scopes to exactly those
+    // sources (across whatever topics), so a generation reflects what was picked.
+    let mut where_sql = String::from(" WHERE c.subject_id = ?");
+    let mut binds: Vec<String> = vec![subject_id.to_string()];
+    if let Some(tid) = topic_id {
+        where_sql.push_str(" AND c.topic_id = ?");
+        binds.push(tid.to_string());
+    }
+    if let Some(ids) = source_ids.filter(|s| !s.is_empty()) {
+        where_sql.push_str(" AND c.source_id IN (");
+        for (i, id) in ids.iter().enumerate() {
+            if i > 0 {
+                where_sql.push(',');
+            }
+            where_sql.push('?');
+            binds.push(id.clone());
+        }
+        where_sql.push(')');
+    }
+
+    let text_sql = format!(
+        "SELECT c.text FROM chunks c{where_sql} ORDER BY c.source_id, c.ord"
+    );
+    let mut stmt = conn.prepare(&text_sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(binds.iter()), |r| {
+        r.get::<_, String>(0)
+    })?;
     let mut out = String::new();
     for row in rows {
         let t = row?;
@@ -630,11 +655,10 @@ pub fn context_text(
         out.push_str(&t);
         out.push_str("\n\n");
     }
-    let src_count: i64 = conn.query_row(
-        "SELECT count(DISTINCT source_id) FROM chunks WHERE subject_id=?1 AND (?2 IS NULL OR topic_id=?2)",
-        params![subject_id, topic_id],
-        |r| r.get(0),
-    )?;
+
+    let count_sql = format!("SELECT count(DISTINCT c.source_id) FROM chunks c{where_sql}");
+    let src_count: i64 =
+        conn.query_row(&count_sql, rusqlite::params_from_iter(binds.iter()), |r| r.get(0))?;
     Ok((out, src_count))
 }
 
@@ -707,6 +731,84 @@ pub fn get_cheatsheet_sections(
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Snapshot the full section set as a version for the git-like history/diff, then
+/// prune to the most recent `KEEP` versions for that scope. Called on every save
+/// (generation and manual edit) with a short `note` ("generated" / "edited").
+pub fn snapshot_cheatsheet_version(
+    conn: &Connection,
+    subject_id: &str,
+    topic_id: Option<&str>,
+    sections: &[CsSection],
+    note: &str,
+) -> Result<()> {
+    const KEEP: i64 = 20;
+    conn.execute(
+        "INSERT INTO cheatsheet_versions (id, subject_id, topic_id, created_at, note, sections)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            new_id(),
+            subject_id,
+            topic_id,
+            now_ms(),
+            note,
+            serde_json::to_string(sections)?,
+        ],
+    )?;
+    // Keep only the newest KEEP rows for this exact scope.
+    conn.execute(
+        "DELETE FROM cheatsheet_versions
+         WHERE subject_id=?1 AND IFNULL(topic_id,'')=IFNULL(?2,'')
+           AND id NOT IN (
+             SELECT id FROM cheatsheet_versions
+             WHERE subject_id=?1 AND IFNULL(topic_id,'')=IFNULL(?2,'')
+             ORDER BY created_at DESC LIMIT ?3
+           )",
+        params![subject_id, topic_id, KEEP],
+    )?;
+    Ok(())
+}
+
+/// List the stored versions for a scope, newest first (id, created_at ms, note,
+/// section count) — without the heavy `sections` JSON.
+pub fn list_cheatsheet_versions(
+    conn: &Connection,
+    subject_id: &str,
+    topic_id: Option<&str>,
+) -> Result<Vec<CheatsheetVersionMeta>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, created_at, note, sections FROM cheatsheet_versions
+         WHERE subject_id=?1 AND IFNULL(topic_id,'')=IFNULL(?2,'')
+         ORDER BY created_at DESC",
+    )?;
+    let rows = stmt.query_map(params![subject_id, topic_id], |r| {
+        let sections: String = r.get(3)?;
+        let count = serde_json::from_str::<Vec<CsSection>>(&sections)
+            .map(|s| s.len())
+            .unwrap_or(0);
+        Ok(CheatsheetVersionMeta {
+            id: r.get(0)?,
+            created_at: r.get(1)?,
+            note: r.get(2)?,
+            section_count: count as i64,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Read the full section set for a single stored version.
+pub fn get_cheatsheet_version(conn: &Connection, version_id: &str) -> Result<Vec<CsSection>> {
+    let sections: Option<String> = conn
+        .query_row(
+            "SELECT sections FROM cheatsheet_versions WHERE id=?1",
+            params![version_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(sections
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default())
 }
 
 // ---- materials persistence --------------------------------------------
@@ -1025,6 +1127,58 @@ pub fn list_memory(conn: &Connection) -> Result<Vec<Memory>> {
 
 pub fn delete_memory(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM user_memory WHERE id=?1", params![id])?;
+    Ok(())
+}
+
+// ---- custom music stations ---------------------------------------------
+
+pub fn list_custom_stations(conn: &Connection) -> Result<Vec<CustomStation>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, url, kind, position, created_at
+           FROM custom_stations ORDER BY position, created_at",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(CustomStation {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            url: r.get(2)?,
+            kind: r.get(3)?,
+            position: r.get(4)?,
+            created_at: r.get(5)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn insert_custom_station(
+    conn: &Connection,
+    name: &str,
+    url: &str,
+    kind: &str,
+) -> Result<CustomStation> {
+    let id = new_id();
+    let ts = now_ms();
+    // Append to the end of the list.
+    let pos: i64 = conn
+        .query_row("SELECT COALESCE(MAX(position) + 1, 0) FROM custom_stations", [], |r| r.get(0))
+        .unwrap_or(0);
+    conn.execute(
+        "INSERT INTO custom_stations (id, name, url, kind, position, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![id, name, url, kind, pos, ts],
+    )?;
+    Ok(CustomStation {
+        id,
+        name: name.to_string(),
+        url: url.to_string(),
+        kind: kind.to_string(),
+        position: pos,
+        created_at: ts,
+    })
+}
+
+pub fn delete_custom_station(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM custom_stations WHERE id=?1", params![id])?;
     Ok(())
 }
 

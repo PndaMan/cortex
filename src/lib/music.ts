@@ -1,11 +1,16 @@
 // Continuous study-music controller. A single module-level instance that
 // outlives every view, so playback never stops/restarts on navigation.
 //
-// Two engines:
+// Three engines:
 //  - Streaming stations use one persistent <audio> pointed at an ad-free,
 //    continuous SomaFM stream (changing station swaps the src).
 //  - Noise/binaural stations are generated locally with the Web Audio API, so
 //    they loop seamlessly and work fully offline.
+//  - YouTube stations (user-added, by URL — video or livestream) are streamed
+//    ad-free by the Rust mpv sidecar (see src-tauri/src/mpv.rs); the controller
+//    just drives play/pause/volume over Tauri commands.
+
+import * as api from "./api";
 
 type Station =
   | { kind: "stream"; url: string }
@@ -32,6 +37,9 @@ class MusicController {
   private genNodes: AudioScheduledSourceNode[] = [];
   private volume = 0.6;
   current: string | null = null;
+  // When a YouTube/URL station is active, playback lives in the mpv sidecar, so
+  // pause/resume/volume route to Tauri commands instead of the local engines.
+  private isYoutube = false;
   // Set by the store so playback failures surface to the user instead of being
   // swallowed (SomaFM streams need internet; a dead network shows a toast).
   onError: ((msg: string) => void) | null = null;
@@ -69,8 +77,35 @@ class MusicController {
     this.gain = null;
   }
 
+  /** Start (or switch to) a user-added YouTube/URL station via the mpv sidecar. */
+  playYoutube(stationId: string, url: string) {
+    // Quiet the local engines so nothing double-plays.
+    this.audio?.pause();
+    this.stopGenerated();
+    this.isYoutube = true;
+    this.current = stationId;
+    api.youtubePlay(url, Math.round(this.volume * 100)).catch((err) => {
+      console.warn("[music] youtube play failed", err);
+      this.onError?.(String(err));
+    });
+  }
+
+  /** Resume the current station after a pause (routes by engine). */
+  resume() {
+    if (this.isYoutube) {
+      api.youtubeResume().catch(() => {});
+      return;
+    }
+    if (this.current) this.play(this.current);
+  }
+
   /** Start (or switch to) a station and play it. */
   play(stationId: string) {
+    // Leaving a YouTube station: stop the sidecar first.
+    if (this.isYoutube) {
+      api.youtubeStop().catch(() => {});
+      this.isYoutube = false;
+    }
     const st = STATIONS[stationId] ?? STATIONS.lofi;
     this.current = stationId;
 
@@ -141,6 +176,7 @@ class MusicController {
   }
 
   pause() {
+    if (this.isYoutube) { api.youtubePause().catch(() => {}); return; }
     this.audio?.pause();
     this.stopGenerated();
     this.ctx?.suspend().catch(() => {});
@@ -148,6 +184,7 @@ class MusicController {
 
   setVolume(v: number) {
     this.volume = Math.max(0, Math.min(1, v));
+    if (this.isYoutube) { api.youtubeSetVolume(Math.round(this.volume * 100)).catch(() => {}); return; }
     if (this.audio) this.audio.volume = this.volume;
     if (this.gain) this.gain.gain.value = this.volume * 0.4;
   }

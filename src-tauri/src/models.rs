@@ -149,6 +149,16 @@ pub struct CheatsheetData {
     pub sections: Vec<CsSection>,
 }
 
+/// Lightweight metadata for one stored cheatsheet version (history list); omits
+/// the heavy `sections` JSON.
+#[derive(Debug, Clone, Serialize)]
+pub struct CheatsheetVersionMeta {
+    pub id: String,
+    pub created_at: i64,
+    pub note: String,
+    pub section_count: i64,
+}
+
 // ---- generated materials ---------------------------------------------
 
 #[derive(Debug, Clone, Serialize)]
@@ -205,6 +215,30 @@ pub struct WebImage {
     pub title: String,
     /// The page the image was found on.
     pub source: String,
+}
+
+// ---- custom music stations --------------------------------------------
+
+/// A user-added station that streams from a pasted URL (YouTube video/live).
+/// Only the URL is persisted; audio is streamed on demand via the mpv sidecar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomStation {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub kind: String,
+    pub position: i64,
+    pub created_at: i64,
+}
+
+/// Availability of the external tools the YouTube-audio engine needs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaTools {
+    pub mpv: bool,
+    pub ffmpeg: bool,
+    pub ytdlp: bool,
+    /// Where the auto-downloaded yt-dlp binary lives (for display/diagnostics).
+    pub ytdlp_path: String,
 }
 
 // ---- long-term memory -------------------------------------------------

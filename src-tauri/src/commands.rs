@@ -30,6 +30,39 @@ pub fn http_client(timeout_secs: u64) -> reqwest::blocking::Client {
         .unwrap_or_default()
 }
 
+/// True when the user enabled offline mode (Settings → Data & privacy), which
+/// blocks all cloud/network calls — only local Ollama (and the offline stub) run.
+fn offline_mode(c: &Connection) -> bool {
+    matches!(repo::get_setting(c, "offline_mode"), Ok(Some(v)) if v == "true")
+}
+
+const OFFLINE_MSG: &str =
+    "Offline mode is on — only local Ollama models can run. Pick an Ollama model in Settings → Models, or turn off offline mode in Settings → Data & privacy.";
+
+/// Reject a cloud LLM call when offline mode is on. `spec` is "provider:model";
+/// only `ollama:` (local) is permitted offline.
+fn guard_offline_llm(c: &Connection, spec: &str) -> Result<()> {
+    if offline_mode(c) && !spec.trim().starts_with("ollama:") {
+        return Err(Error::Other(OFFLINE_MSG.into()));
+    }
+    Ok(())
+}
+
+/// The embedding provider to actually use. In offline mode, cloud providers
+/// (gemini/openai) are downgraded to the local "stub" embedder so ingestion and
+/// retrieval keep working with zero network calls (Ollama embeddings stay local).
+fn effective_embed_provider(c: &Connection) -> String {
+    let p = repo::get_setting(c, "embed_provider")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "stub".into());
+    if offline_mode(c) && p != "ollama" && p != "stub" {
+        "stub".into()
+    } else {
+        p
+    }
+}
+
 /// Read all configured provider keys from settings.
 fn read_keys(c: &Connection) -> Result<llm::Keys> {
     // Trim keys — a pasted key with a trailing newline/space produces an invalid
@@ -490,7 +523,7 @@ pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult>
         let (provider, gemini_key, ollama_url) = {
             let c = state.db.lock().unwrap();
             (
-                repo::get_setting(&c, "embed_provider")?.unwrap_or_else(|| "stub".into()),
+                effective_embed_provider(&c),
                 repo::get_setting(&c, "gemini_api_key")?,
                 repo::get_setting(&c, "ollama_url")?,
             )
@@ -683,7 +716,7 @@ pub async fn add_source(
     let (provider, gemini_key, ollama_url) = {
         let c = state.db.lock().unwrap();
         (
-            repo::get_setting(&c, "embed_provider")?.unwrap_or_else(|| "stub".into()),
+            effective_embed_provider(&c),
             repo::get_setting(&c, "gemini_api_key")?,
             repo::get_setting(&c, "ollama_url")?,
         )
@@ -780,7 +813,7 @@ pub fn search_chunks(
     let (provider, gemini_key, ollama_url) = {
         let c = state.db.lock().unwrap();
         (
-            repo::get_setting(&c, "embed_provider")?.unwrap_or_else(|| "stub".into()),
+            effective_embed_provider(&c),
             repo::get_setting(&c, "gemini_api_key")?,
             repo::get_setting(&c, "ollama_url")?,
         )
@@ -861,10 +894,13 @@ pub async fn chat_answer(
     let state = app.state::<AppState>();
     let (embed_provider, ollama_url, chat_spec, keys, preamble, searxng) = {
         let c = state.db.lock().unwrap();
+        let chat_spec =
+            repo::get_setting(&c, "model_chat")?.unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
+        guard_offline_llm(&c, &chat_spec)?;
         (
-            repo::get_setting(&c, "embed_provider")?.unwrap_or_else(|| "stub".into()),
+            effective_embed_provider(&c),
             repo::get_setting(&c, "ollama_url")?,
-            repo::get_setting(&c, "model_chat")?.unwrap_or_else(|| "gemini:gemini-2.5-flash".into()),
+            chat_spec,
             read_keys(&c)?,
             profile_preamble(&c)?,
             searxng_base(&c)?,
@@ -1267,16 +1303,16 @@ pub async fn generate_cheatsheet(
         let c = state.db.lock().unwrap();
         // Roomy context so the cheatsheet can be exhaustive, but bounded so a
         // single generation doesn't run so long the connection drops mid-stream.
-        let (ctx, n) = repo::context_text(&c, &subject_id, topic_id.as_deref(), 64_000)?;
+        let (ctx, n) = repo::context_text(&c, &subject_id, topic_id.as_deref(), None, 64_000)?;
         let subj = repo::get_subject(&c, &subject_id)?;
         let tname = topic_id
             .as_ref()
             .and_then(|tid| subj.topics.iter().find(|t| &t.id == tid))
-            .or_else(|| subj.topics.first())
             .map(|t| t.name.clone())
-            .unwrap_or_default();
+            .unwrap_or_else(|| subj.name.clone());
         let spec =
             repo::get_setting(&c, "model_cheatsheet")?.unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
+        guard_offline_llm(&c, &spec)?;
         (ctx, n, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c), searxng_base(&c)?)
     };
     let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
@@ -1351,7 +1387,12 @@ pub async fn generate_cheatsheet(
         below them) to give it internal structure instead of one long block.\n\
         {style}");
     let system = system.as_str();
-    let user = format!("Subject: {subject_name} › {topic_name}\n\nSOURCE MATERIAL:\n{context}\n\nProduce the cheatsheet JSON now.");
+    let scope = if topic_id.is_some() {
+        format!("{subject_name} › {topic_name}")
+    } else {
+        format!("{subject_name} (whole subject — title the sheet with the subject name)")
+    };
+    let user = format!("Subject: {scope}\n\nSOURCE MATERIAL:\n{context}\n\nProduce the cheatsheet JSON now.");
 
     let raw = model.complete(system, &user)?;
     let mut sections = parse_cheatsheet(&raw);
@@ -1394,6 +1435,7 @@ pub async fn generate_cheatsheet(
     {
         let c = state.db.lock().unwrap();
         repo::save_cheatsheet(&c, &subject_id, topic_id.as_deref(), &sections)?;
+        repo::snapshot_cheatsheet_version(&c, &subject_id, topic_id.as_deref(), &sections, "generated")?;
     }
 
     Ok(CheatsheetData {
@@ -1424,10 +1466,9 @@ pub fn get_cheatsheet(
     let tname = topic_id
         .as_ref()
         .and_then(|tid| subj.topics.iter().find(|t| &t.id == tid))
-        .or_else(|| subj.topics.first())
         .map(|t| t.name.clone())
-        .unwrap_or_default();
-    let (_, n) = repo::context_text(&c, &subject_id, topic_id.as_deref(), 1)?;
+        .unwrap_or_else(|| subj.name.clone());
+    let (_, n) = repo::context_text(&c, &subject_id, topic_id.as_deref(), None, 1)?;
     Ok(Some(CheatsheetData {
         subject: subj.name,
         topic: tname,
@@ -1435,6 +1476,39 @@ pub fn get_cheatsheet(
         model: "stored".into(),
         sections,
     }))
+}
+
+/// Persist a user-edited cheatsheet (from the editor) for a subject/topic and
+/// snapshot it as a version so the history/diff records the change.
+#[tauri::command]
+pub fn update_cheatsheet(
+    state: State<AppState>,
+    subject_id: String,
+    topic_id: Option<String>,
+    sections: Vec<CsSection>,
+) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    repo::save_cheatsheet(&c, &subject_id, topic_id.as_deref(), &sections)?;
+    repo::snapshot_cheatsheet_version(&c, &subject_id, topic_id.as_deref(), &sections, "edited")?;
+    Ok(())
+}
+
+/// List stored versions (newest first) for the git-like history panel.
+#[tauri::command]
+pub fn list_cheatsheet_versions(
+    state: State<AppState>,
+    subject_id: String,
+    topic_id: Option<String>,
+) -> Result<Vec<CheatsheetVersionMeta>> {
+    let c = state.db.lock().unwrap();
+    repo::list_cheatsheet_versions(&c, &subject_id, topic_id.as_deref())
+}
+
+/// Read the full section set of one stored version (for diffing).
+#[tauri::command]
+pub fn get_cheatsheet_version(state: State<AppState>, version_id: String) -> Result<Vec<CsSection>> {
+    let c = state.db.lock().unwrap();
+    repo::get_cheatsheet_version(&c, &version_id)
 }
 
 // ---- AI: material generation -----------------------------------------
@@ -1448,6 +1522,7 @@ pub async fn generate_material(
     kind: String,
     title: Option<String>,
     custom_prompt: Option<String>,
+    source_ids: Option<Vec<String>>,
 ) -> Result<MaterialRec> {
     tauri::async_runtime::spawn_blocking(move || -> Result<MaterialRec> {
     let state = app.state::<AppState>();
@@ -1457,9 +1532,25 @@ pub async fn generate_material(
         "flashcards" => "model_flashcard",
         _ => "model_cheatsheet",
     };
-    let (context, subject_name, topic_name, spec, keys, style) = {
+    // Title-case a stored voice id ("nova" → "Nova") for use as a host name.
+    let cap = |id: String| {
+        let mut ch = id.chars();
+        match ch.next() {
+            Some(f) => f.to_uppercase().chain(ch).collect::<String>(),
+            None => "Host".to_string(),
+        }
+    };
+    let (context, subject_name, topic_name, spec, keys, style, host_a, host_b) = {
         let c = state.db.lock().unwrap();
-        let (ctx, _) = repo::context_text(&c, &subject_id, topic_id.as_deref(), 18000)?;
+        // The user's explicit source selection is authoritative: scope context to
+        // exactly those sources (ignoring topic, since a selection can span topics).
+        // Fall back to topic/subject scope only when nothing was selected.
+        let has_sel = source_ids.as_ref().map_or(false, |v| !v.is_empty());
+        let (ctx, _) = if has_sel {
+            repo::context_text(&c, &subject_id, None, source_ids.as_deref(), 18000)?
+        } else {
+            repo::context_text(&c, &subject_id, topic_id.as_deref(), None, 18000)?
+        };
         let subj = repo::get_subject(&c, &subject_id)?;
         let tname = topic_id
             .as_ref()
@@ -1469,7 +1560,10 @@ pub async fn generate_material(
             .unwrap_or_default();
         let spec = repo::get_setting(&c, setting_key)?
             .unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
-        (ctx, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c))
+        guard_offline_llm(&c, &spec)?;
+        let host_a = cap(repo::get_setting(&c, "voice_a")?.unwrap_or_else(|| "maya".into()));
+        let host_b = cap(repo::get_setting(&c, "voice_b")?.unwrap_or_else(|| "theo".into()));
+        (ctx, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c), host_a, host_b)
     };
     let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
     if context.trim().is_empty() {
@@ -1486,9 +1580,12 @@ pub async fn generate_material(
             format!("{topic_name} quiz"),
         ),
         "audio" => (
-            "You write a two-host podcast-style audio overview script from study material. Output \
-             ONLY JSON: {\"segments\":[{\"speaker\":\"Maya\"|\"Theo\",\"text\":\"...\"}]}. 12-20 lively, \
-             accurate segments that teach the material conversationally. No prose outside JSON.".to_string(),
+            format!(
+                "You write a two-host podcast-style audio overview script from study material. \
+                 The two hosts are named {host_a} and {host_b}. Output ONLY JSON: \
+                 {{\"segments\":[{{\"speaker\":\"{host_a}\"|\"{host_b}\",\"text\":\"...\"}}]}}. 12-20 \
+                 lively, accurate segments that teach the material conversationally. No prose outside JSON."
+            ),
             format!("{topic_name} — audio overview"),
         ),
         "infographic" => (
@@ -1848,7 +1945,7 @@ pub async fn save_recording(
     let (embed_provider, gemini_key, ollama_url) = {
         let c = state.db.lock().unwrap();
         (
-            repo::get_setting(&c, "embed_provider")?.unwrap_or_else(|| "stub".into()),
+            effective_embed_provider(&c),
             repo::get_setting(&c, "gemini_api_key")?,
             repo::get_setting(&c, "ollama_url")?,
         )
@@ -1916,6 +2013,11 @@ pub async fn web_search(
     let state = app.state::<AppState>();
     let base = {
         let c = state.db.lock().unwrap();
+        if offline_mode(&c) {
+            return Err(Error::Other(
+                "Offline mode is on — web search is disabled. Turn it off in Settings → Data & privacy.".into(),
+            ));
+        }
         searxng_base(&c)?
     }
     .ok_or_else(|| Error::Other("searxng_url not configured".into()))?;
@@ -2031,6 +2133,31 @@ pub fn list_memory(state: State<AppState>) -> Result<Vec<Memory>> {
 pub fn delete_memory(state: State<AppState>, id: String) -> Result<()> {
     let c = state.db.lock().unwrap();
     repo::delete_memory(&c, &id)
+}
+
+// ---- custom music stations --------------------------------------------
+
+#[tauri::command]
+pub fn list_custom_stations(state: State<AppState>) -> Result<Vec<CustomStation>> {
+    let c = state.db.lock().unwrap();
+    repo::list_custom_stations(&c)
+}
+
+#[tauri::command]
+pub fn add_custom_station(
+    state: State<AppState>,
+    name: String,
+    url: String,
+    kind: Option<String>,
+) -> Result<CustomStation> {
+    let c = state.db.lock().unwrap();
+    repo::insert_custom_station(&c, &name, &url, kind.as_deref().unwrap_or("youtube"))
+}
+
+#[tauri::command]
+pub fn delete_custom_station(state: State<AppState>, id: String) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    repo::delete_custom_station(&c, &id)
 }
 
 // ---- data maintenance -------------------------------------------------

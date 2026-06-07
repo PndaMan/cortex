@@ -192,7 +192,14 @@
       e.stopImmediatePropagation();
       const k = e.key === "Escape" ? null : e.key;
       if (k && listening) {
-        keybinds.set(listening, k); // persists + applies live
+        const ok = keybinds.set(listening, k); // persists + applies live
+        if (!ok) {
+          app.pushToast({
+            kind: "warning",
+            title: "Key already in use",
+            body: `“${k === " " ? "Space" : k}” is bound to another action — pick a different key.`,
+          });
+        }
       }
       listening = null;
       (window as any).__cortexModalOpen = false;
@@ -348,6 +355,14 @@
   let station  = $state("lofi");
   let voiceA   = $state("maya");
   let voiceB   = $state("theo");
+
+  // Stream-tool detection for the YouTube-audio engine (mpv sidecar).
+  let mediaTools = $state<api.MediaTools | null>(null);
+  $effect(() => {
+    if (tab === "audio" && mediaTools === null) {
+      api.mediaToolsStatus().then((t) => (mediaTools = t)).catch(() => {});
+    }
+  });
 
   // persist audio on change
   $effect(() => {
@@ -1114,6 +1129,42 @@ Notes: {about}</pre>
                 <button type="button" class={"st-toggle" + (autoplay ? " on" : "")} onclick={() => (autoplay = !autoplay)} role="switch" aria-checked={autoplay} aria-label="autoplay"><span class="st-knob"></span></button>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">YouTube streaming</h3>
+            <p class="set-group-d">Paste a YouTube video or livestream URL in the music panel to stream it ad-free. Uses a headless <span class="mono">mpv</span> + <span class="mono">yt-dlp</span> (auto-downloaded on first use). Nothing is bundled — only the URL is saved.</p>
+          </div>
+          <div class="set-card">
+            <div class="set-row">
+              <div class="set-row-l"><div class="set-row-t">Tools</div></div>
+              <div class="set-row-r">
+                {#if mediaTools}
+                  <span class="mono" style="color:{mediaTools.mpv ? 'var(--ok)' : 'var(--danger,#e06c75)'}">
+                    <Icon name={mediaTools.mpv ? "check" : "x"} size={12} /> mpv
+                  </span>
+                  <span class="mono" style="margin-left:14px;color:{mediaTools.ffmpeg ? 'var(--ok)' : 'var(--danger,#e06c75)'}">
+                    <Icon name={mediaTools.ffmpeg ? "check" : "x"} size={12} /> ffmpeg
+                  </span>
+                  <span class="mono" style="margin-left:14px;color:{mediaTools.ytdlp ? 'var(--ok)' : 'var(--warn)'}">
+                    <Icon name={mediaTools.ytdlp ? "check" : "refresh"} size={12} /> yt-dlp
+                  </span>
+                {:else}
+                  <span class="mono faint">…</span>
+                {/if}
+              </div>
+            </div>
+            {#if mediaTools && !mediaTools.mpv}
+              <div class="set-row">
+                <div class="set-row-l"><div class="set-row-d">Install mpv to enable YouTube streaming: <span class="mono">sudo pacman -S mpv</span></div></div>
+              </div>
+            {:else if mediaTools && !mediaTools.ytdlp}
+              <div class="set-row">
+                <div class="set-row-l"><div class="set-row-d">yt-dlp will be downloaded automatically the first time you play a YouTube station.</div></div>
+              </div>
+            {/if}
           </div>
         </section>
 

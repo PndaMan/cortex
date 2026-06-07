@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
-  import { keybinds, ACTION_LABELS, ACTION_ORDER } from "../lib/keybinds.svelte";
+  import { keybinds, ACTION_LABELS, ACTION_ORDER, LEADER_ACTIONS } from "../lib/keybinds.svelte";
 
   function close() {
     app.helpOpen = false;
@@ -53,6 +53,14 @@
           <div class="help-row">
             <span class="help-label">{ACTION_LABELS[action]}</span>
             <span class="kbd">{keyLabel(keybinds.map[action])}</span>
+          </div>
+        {/each}
+
+        <div class="help-sub">Space leader menu</div>
+        {#each LEADER_ACTIONS as a (a.key)}
+          <div class="help-row">
+            <span class="help-label">{a.label} <span class="help-detail">· {a.detail}</span></span>
+            <span class="kbd">␣ {a.key}</span>
           </div>
         {/each}
       </div>
@@ -123,6 +131,14 @@
   }
   .help-row:hover { background: var(--surface-3); }
   .help-label { flex: 1; }
+  .help-detail { color: var(--fg-faint); font-size: var(--t-xs); }
+  .help-sub {
+    padding: 12px 10px 5px;
+    font-size: var(--t-2xs);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+  }
   .help-foot {
     display: flex;
     align-items: center;

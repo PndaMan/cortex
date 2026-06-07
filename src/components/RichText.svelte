@@ -11,6 +11,7 @@
   type CalloutKind = "note" | "tip" | "warning" | "important" | "example";
   type Block =
     | { type: "h2" | "h3" | "p"; text: string }
+    | { type: "image"; src: string; alt: string }
     | { type: "hr" }
     | { type: "code"; text: string }
     | { type: "barchart"; bars: { label: string; value: number }[] }
@@ -86,6 +87,10 @@
       }
       if (t.startsWith("```")) { flushAll(); code = []; codeLang = t.slice(3).trim().toLowerCase(); continue; }
       if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) { flushAll(); blocks.push({ type: "hr" }); continue; }
+
+      // ── standalone image: a line that is just ![alt](url) ──
+      const im = /^!\[([^\]]*)\]\(([^)\s]+)\)$/.exec(t);
+      if (im) { flushAll(); blocks.push({ type: "image", src: im[2], alt: im[1] }); continue; }
 
       // ── table: a `| … |` row immediately followed by a `|---|---|` separator ──
       if (t.startsWith("|") && idx + 1 < lines.length && isTableSep(lines[idx + 1].trim())) {
@@ -194,6 +199,8 @@
       <h2 class="rt-h2">{@render inline(b.text)}</h2>
     {:else if b.type === "h3"}
       <h3 class="rt-h3">{@render inline(b.text)}</h3>
+    {:else if b.type === "image"}
+      <img class="rt-img" src={b.src} alt={b.alt} loading="lazy" />
     {:else if b.type === "code"}
       <pre class="rt-pre"><code>{b.text}</code></pre>
     {:else if b.type === "barchart"}
@@ -261,6 +268,10 @@
   }
   .rt-h3 { margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--fg-bright); }
   .rt-h2:first-child, .rt-h3:first-child { margin-top: 0; }
+  .rt-img {
+    display: block; max-width: 100%; height: auto; margin: 10px 0;
+    border: 1px solid var(--border); border-radius: 8px;
+  }
   .rt-hr { border: none; border-top: 1px solid var(--border-strong); margin: 14px 0; }
   .rt-ul, .rt-ol { margin: 0 0 10px; padding-left: 20px; }
   .rt-ul li, .rt-ol li { margin: 3px 0; }

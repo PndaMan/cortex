@@ -12,6 +12,7 @@ mod google;
 mod ingest;
 mod llm;
 mod models;
+mod mpv;
 mod notes;
 mod repo;
 mod review;
@@ -96,6 +97,9 @@ pub fn run() {
             commands::open_chat_thread,
             commands::generate_cheatsheet,
             commands::get_cheatsheet,
+            commands::update_cheatsheet,
+            commands::list_cheatsheet_versions,
+            commands::get_cheatsheet_version,
             commands::export_pdf,
             commands::export_database,
             commands::export_anki,
@@ -118,6 +122,16 @@ pub fn run() {
             commands::add_memory,
             commands::list_memory,
             commands::delete_memory,
+            // custom music stations + YouTube-audio (mpv sidecar)
+            commands::list_custom_stations,
+            commands::add_custom_station,
+            commands::delete_custom_station,
+            mpv::media_tools_status,
+            mpv::youtube_play,
+            mpv::youtube_pause,
+            mpv::youtube_resume,
+            mpv::youtube_stop,
+            mpv::youtube_set_volume,
             commands::db_stats,
             commands::delete_all_data,
             commands::ping_url,
@@ -149,8 +163,14 @@ pub fn run() {
             google::google_disconnect,
             google::google_sync,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Cortex");
+        .build(tauri::generate_context!())
+        .expect("error while building Cortex")
+        .run(|_app, event| {
+            // Tear down the headless mpv music sidecar when the app exits.
+            if let tauri::RunEvent::Exit = event {
+                mpv::shutdown();
+            }
+        });
 }
 
 #[cfg(test)]

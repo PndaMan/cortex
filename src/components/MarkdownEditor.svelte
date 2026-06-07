@@ -68,6 +68,29 @@
     });
   }
 
+  // Insert an image from a local file as a data: URL (renders in the webview AND in
+  // the headless-Chromium PDF export). Placed on its own line so RichText renders it
+  // as a block image.
+  let imgInput = $state<HTMLInputElement | null>(null);
+  function pickImage() {
+    imgInput?.click();
+  }
+  function onImageFile(e: Event) {
+    const f = (e.target as HTMLInputElement).files?.[0];
+    if (imgInput) imgInput.value = ""; // allow re-picking the same file
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = reader.result as string;
+      applySelection((sel) => {
+        const alt = sel || "image";
+        const text = `\n![${alt}](${url})\n`;
+        return { text, selStart: 3, selEnd: 3 + alt.length };
+      });
+    };
+    reader.readAsDataURL(f);
+  }
+
   function bold()   { wrap("**", "bold"); }
   function italic() { wrap("*", "italic"); }
   function code()   { wrap("`", "code"); }
@@ -99,11 +122,19 @@
     { id: "code",      label: "Inline code (⌘E)",   glyph: "`",   run: code },
     { id: "codeblock", label: "Code block",          glyph: "{ }", run: codeBlock },
     { id: "link",      label: "Link (⌘K)",           icon: "link", run: link },
+    { id: "image",     label: "Insert image",        icon: "camera", run: pickImage },
     { id: "quote",     label: "Quote",               glyph: "❝",  run: () => prefixLines((l) => "> " + l, "Quote") },
   ];
 </script>
 
 <div class="md">
+  <input
+    bind:this={imgInput}
+    type="file"
+    accept="image/*"
+    style="display:none"
+    onchange={onImageFile}
+  />
   <div class="md-bar">
     <div class="md-tools" role="toolbar" aria-label="Formatting">
       {#each tools as t}

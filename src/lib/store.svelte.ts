@@ -288,6 +288,8 @@ class AppStore {
   pending = $state(0); // cheatsheet draft sections awaiting review (real count set by Cheatsheet view)
   // playing starts false — browsers block autoplay until a user gesture.
   music = $state<Music>({ current: "lofi", playing: false, volume: 60 });
+  // User-added YouTube/URL stations (streamed ad-free via the mpv sidecar).
+  customStations = $state<api.CustomStation[]>([]);
 
   activeSubject = $derived(
     this.subjects.find((s) => s.id === this.activeSubjectId) ?? null
@@ -337,7 +339,20 @@ class AppStore {
       // Reopen the last-viewed subject (its chat history loads with it).
       const last = all["last_subject_id"];
       if (last && this.subjects.some((s) => s.id === last)) this.activeSubjectId = last;
+      // Restore per-subject cheatsheet memory so `space h` + subject clicks return
+      // to each subject's own last topic after relaunch.
+      if (all["cs_memory"]) {
+        try {
+          const m = JSON.parse(all["cs_memory"]);
+          if (m && typeof m === "object") {
+            this.csTopicMemory = m.topics && typeof m.topics === "object" ? m.topics : {};
+            this.csLastSubject = typeof m.last === "string" ? m.last : null;
+          }
+        } catch { /* ignore corrupt value */ }
+      }
       if (all["default_station"]) this.music = { ...this.music, current: all["default_station"] };
+      // Load user-added YouTube/URL stations so they show in the music panel.
+      this.customStations = await api.listCustomStations().catch(() => []);
       if (all["autoplay"] === "true") this.toggleMusic();
       // Restore focus-timer (pomodoro) durations.
       for (const k of ["workMin", "breakMin", "longBreakMin", "sessionsBeforeLong"] as const) {
@@ -385,6 +400,9 @@ class AppStore {
     this.activeSubjectId = id;
     this.view = "subject";
     this.subjectTab = "cheatsheet"; // land on the cheatsheet (the default page)
+    // Restore THIS subject's own last-viewed topic tab (independent per subject).
+    this.cheatTopicId = this.csTopicMemory[id] ?? null;
+    this.cheatNonce++;
     api.setSetting("last_subject_id", id).catch(() => {}); // reopen on next launch
   }
   openSource(src: Source) {
@@ -416,6 +434,49 @@ class AppStore {
     this.openSubject(subjectId); // view=subject, tab=cheatsheet
     this.cheatTopicId = topicId;
     this.cheatNonce++;
+  }
+
+  // Per-subject cheatsheet memory: each subject INDEPENDENTLY remembers the topic
+  // tab last viewed (null = whole subject), plus which subject was most recent, so
+  // `space h` returns to the right sheet and opening subject B never inherits
+  // subject A's position. Persisted across launches.
+  csTopicMemory = $state<Record<string, string | null>>({});
+  csLastSubject = $state<string | null>(null);
+  // Per-sheet scroll offsets (key `subjectId:topicId`), session-scoped. Lives on the
+  // store (not the view) so it survives the Cheatsheet view unmounting when you
+  // navigate away — otherwise returning via `space h` would always land at the top.
+  // Plain object (non-reactive): scrolling must not retrigger effects.
+  cheatScroll: Record<string, number> = {};
+  rememberCheatsheet(subjectId: string, topicId: string | null) {
+    // Runs inside a reactive $effect, so it MUST converge: no-op when unchanged,
+    // and the persisted JSON is built from a local copy, never by re-reading the
+    // state we just wrote.
+    if (this.csLastSubject === subjectId && this.csTopicMemory[subjectId] === topicId) return;
+    const topics = { ...this.csTopicMemory, [subjectId]: topicId };
+    this.csTopicMemory = topics;
+    this.csLastSubject = subjectId;
+    api.setSetting("cs_memory", JSON.stringify({ last: subjectId, topics })).catch(() => {});
+  }
+  /** Jump to the cheatsheet, restoring the most-recent subject AND its own topic. */
+  goToCheatsheet() {
+    const sid =
+      this.csLastSubject && this.subjects.some((s) => s.id === this.csLastSubject)
+        ? this.csLastSubject
+        : (this.activeSubject?.id ?? null);
+    if (!sid) {
+      this.pushToast({ kind: "warning", title: "No cheatsheet yet", body: "Open a subject first." });
+      return;
+    }
+    this.openTopicSheet(sid, this.csTopicMemory[sid] ?? null);
+  }
+  /** Go to the active subject's Sources tab; with no subject open, fall back to Add source. */
+  goToSources() {
+    if (this.activeSubject) {
+      this.view = "subject";
+      this.subjectTab = "sources";
+    } else {
+      this.view = "add-source";
+    }
   }
   cheatsheetRegenNonce = $state(0);
   regenCheatsheet() {
@@ -588,16 +649,43 @@ class AppStore {
   toggleMusic() {
     const playing = !this.music.playing;
     this.music = { ...this.music, playing };
-    if (playing) music.play(this.music.current);
+    if (playing) music.resume();
     else music.pause();
   }
   pickStation(id: string) {
     this.music = { ...this.music, current: id, playing: true };
-    music.play(id);
+    const cs = this.customStations.find((s) => s.id === id);
+    if (cs) music.playYoutube(id, cs.url);
+    else music.play(id);
   }
   setVolume(v: number) {
     this.music = { ...this.music, volume: v };
     music.setVolume(v / 100);
+  }
+
+  /** Add a user station that streams from a pasted URL (YouTube video/live). */
+  async addCustomStation(name: string, url: string, kind = "youtube") {
+    try {
+      const st = await api.addCustomStation(name.trim(), url.trim(), kind);
+      this.customStations = [...this.customStations, st];
+      return st;
+    } catch (e) {
+      this.pushToast({ kind: "error", title: "Couldn't add station", body: String(e) });
+      return null;
+    }
+  }
+  async removeCustomStation(id: string) {
+    try {
+      await api.deleteCustomStation(id);
+      this.customStations = this.customStations.filter((s) => s.id !== id);
+      // If the deleted station was playing, stop and fall back to the default.
+      if (this.music.current === id) {
+        music.pause();
+        this.music = { ...this.music, current: "lofi", playing: false };
+      }
+    } catch (e) {
+      this.pushToast({ kind: "error", title: "Couldn't remove station", body: String(e) });
+    }
   }
 
   // ---- rich edit modal ----

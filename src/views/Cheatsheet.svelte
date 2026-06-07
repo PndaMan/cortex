@@ -1,11 +1,12 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
-  import type { CheatsheetData, CsSection as ApiCsSection } from "../lib/api";
+  import type { CheatsheetData, CsSection as ApiCsSection, CheatsheetVersionMeta } from "../lib/api";
   import Icon from "../components/Icon.svelte";
   import { jobs } from "../lib/jobs.svelte";
   import GeneratingCard from "../components/GeneratingCard.svelte";
   import RichText from "../components/RichText.svelte";
+  import MarkdownEditor from "../components/MarkdownEditor.svelte";
   import { savePdf } from "../lib/pdf";
 
   const esc = (s: string) =>
@@ -27,7 +28,10 @@
   }
 
   // ── topic selection ──────────────────────────────────────────
-  // null = the whole-subject cheatsheet ("All"); otherwise a topic id.
+  // null = the whole-subject cheatsheet ("All"); otherwise a topic id. The pending
+  // topic (app.cheatTopicId, set by openSubject/openTopicSheet to THIS subject's
+  // remembered topic) is applied by the cheatNonce effect below — including on a
+  // fresh mount, so arriving via `space h` from another page restores the topic.
   let selectedTopicId = $state<string | null>(null);
   // Optionally illustrate sections with web images (diagrams). Needs SearXNG.
   let withImages = $state(false);
@@ -180,13 +184,15 @@
     }
   });
 
-  // Sidebar topic/subject clicks ask the cheatsheet to show a specific topic
-  // (null = whole subject) by bumping app.cheatNonce.
-  let lastCheatNonce = app.cheatNonce;
+  // Apply the pending topic request (sidebar/dashboard/space-h set app.cheatTopicId
+  // + bump app.cheatNonce). Initialized to -1 (not the current nonce) so the FIRST
+  // run on a fresh mount also applies it — otherwise arriving from another page
+  // would miss the already-bumped nonce and fall back to whole-subject.
+  let appliedNonce = -1;
   $effect(() => {
     const n = app.cheatNonce;
-    if (n !== lastCheatNonce) {
-      lastCheatNonce = n;
+    if (n !== appliedNonce) {
+      appliedNonce = n;
       if (app.activeSubject) selectedTopicId = app.cheatTopicId;
     }
   });
@@ -194,6 +200,7 @@
   function selectTopic(id: string | null) {
     if (selectedTopicId === id) return;
     selectedTopicId = id;
+    app.cheatTopicId = id; // keep the canonical "current topic" in sync with the tab bar
   }
 
   // ── EXPORT ───────────────────────────────────────────────────
@@ -259,9 +266,212 @@
       }, 0);
     }
   }
+
+  // ── navigation memory ────────────────────────────────────────
+  // Remember the subject + selected topic so leaving for another page and pressing
+  // the cheatsheet keybind (space h) returns to this exact sheet.
+  $effect(() => {
+    const sub = app.activeSubject;
+    if (sub) app.rememberCheatsheet(sub.id, selectedTopicId);
+  });
+
+  // ── per-sheet scroll memory ──────────────────────────────────
+  // The cheatsheet shares ONE scroll container while its content swaps, so without
+  // this each sheet would inherit the previous one's scroll offset. Key the saved
+  // offset by subject+topic so every sheet remembers its OWN position independently
+  // (session-scoped). Restore after content (re)loads.
+  let scrollEl = $state<HTMLDivElement | null>(null);
+  const scrollKey = () => `${app.activeSubjectId ?? ""}:${selectedTopicId ?? "all"}`;
+  function onCsScroll() {
+    if (scrollEl) app.cheatScroll[scrollKey()] = scrollEl.scrollTop;
+  }
+  $effect(() => {
+    // Re-runs on subject/topic change AND when the sheet's content (re)loads, so the
+    // offset is restored only after the content that gives the page its height is in
+    // the DOM. Two rAFs: first lets Svelte paint the new content, second restores.
+    const key = `${app.activeSubjectId ?? ""}:${selectedTopicId ?? "all"}`;
+    void sections.length;
+    void hasCheatsheet;
+    if (!scrollEl) return;
+    const target = app.cheatScroll[key] ?? 0;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (scrollEl) scrollEl.scrollTop = target;
+      })
+    );
+  });
+
+  // Switching subject or topic leaves the current sheet — drop any in-progress edit
+  // so a stale draft can't bleed across sheets.
+  $effect(() => {
+    void app.activeSubjectId;
+    void selectedTopicId;
+    mode = "preview";
+    draft = [];
+  });
+
+  // ── EDIT MODE ────────────────────────────────────────────────
+  // Default is the read-only preview above; "Edit" clones the stored sections
+  // into a draft of editable structured fields (term + markdown body), keeping the
+  // exact preview formatting. Saving persists the draft AND snapshots a version.
+  let mode = $state<"preview" | "edit">("preview");
+  let draft = $state<ApiCsSection[]>([]);
+  let saving = $state(false);
+  let imgTarget = -1; // which draft section index a file pick should illustrate
+  let fileInput = $state<HTMLInputElement | null>(null);
+
+  function enterEdit() {
+    draft = structuredClone($state.snapshot(sections)) as ApiCsSection[];
+    mode = "edit";
+  }
+  function cancelEdit() {
+    mode = "preview";
+    draft = [];
+  }
+  function addItem(si: number) {
+    draft[si].items = [...draft[si].items, { t: "New term", d: "" }];
+  }
+  function removeItem(si: number, ii: number) {
+    draft[si].items = draft[si].items.filter((_, i) => i !== ii);
+  }
+  function addSection() {
+    draft = [
+      ...draft,
+      { id: "sec-" + Math.random().toString(36).slice(2), title: "New section", state: "approved", items: [], image: null },
+    ];
+  }
+  function removeSection(si: number) {
+    draft = draft.filter((_, i) => i !== si);
+  }
+  // Attach/replace a section image: pick a file → base64 data URL (renders in the
+  // webview AND in the headless-Chromium PDF export).
+  function pickImage(si: number) {
+    imgTarget = si;
+    fileInput?.click();
+  }
+  function onImageFile(e: Event) {
+    const f = (e.target as HTMLInputElement).files?.[0];
+    const si = imgTarget;
+    imgTarget = -1;
+    if (fileInput) fileInput.value = ""; // allow re-picking the same file
+    if (!f || si < 0 || si >= draft.length) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      draft[si].image = reader.result as string;
+    };
+    reader.readAsDataURL(f);
+  }
+  function clearImage(si: number) {
+    draft[si].image = null;
+  }
+
+  async function saveEdit() {
+    const sub = app.activeSubject;
+    if (!sub || saving) return;
+    // Drop fully-empty sections/items so the saved sheet stays clean.
+    const clean = draft
+      .map((s) => ({ ...s, title: s.title.trim(), items: s.items.filter((it) => it.t.trim() || it.d.trim()) }))
+      .filter((s) => s.title || s.items.length || s.image);
+    saving = true;
+    try {
+      await api.updateCheatsheet(sub.id, selectedTopicId ?? undefined, clean as ApiCsSection[]);
+      const data = await api.getCheatsheet(sub.id, selectedTopicId ?? undefined);
+      if (data) applyCheatsheet(data);
+      mode = "preview";
+      draft = [];
+      app.pushToast({ kind: "success", title: "Cheatsheet saved", body: "A new version was recorded." });
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Save failed", body: String(e) });
+    } finally {
+      saving = false;
+    }
+  }
+
+  // ── VERSION HISTORY / DIFF (git-like) ────────────────────────
+  let historyOpen = $state(false);
+  let versions = $state<CheatsheetVersionMeta[]>([]);
+  let compareId = $state<string | null>(null); // the older version to diff against current
+  let diffRows = $state<{ type: "ctx" | "add" | "del"; text: string }[]>([]);
+  let histLoading = $state(false);
+
+  function fmtTime(ms: number): string {
+    try {
+      return new Date(ms).toLocaleString(undefined, {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+      });
+    } catch { return String(ms); }
+  }
+
+  // Serialize a section set to comparable text lines for the diff.
+  function sheetLines(secs: ApiCsSection[]): string[] {
+    const out: string[] = [];
+    for (const s of secs) {
+      out.push("# " + s.title);
+      if (s.image) out.push("[image attached]");
+      for (const it of s.items) {
+        out.push("## " + it.t);
+        for (const ln of (it.d ?? "").split("\n")) out.push(ln);
+      }
+      out.push("");
+    }
+    return out;
+  }
+
+  // Minimal LCS line diff → unified add/del/ctx rows (git-style).
+  function lineDiff(a: string[], b: string[]) {
+    const n = a.length, m = b.length;
+    const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i--)
+      for (let j = m - 1; j >= 0; j--)
+        dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    const rows: { type: "ctx" | "add" | "del"; text: string }[] = [];
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (a[i] === b[j]) { rows.push({ type: "ctx", text: a[i] }); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { rows.push({ type: "del", text: a[i] }); i++; }
+      else { rows.push({ type: "add", text: b[j] }); j++; }
+    }
+    while (i < n) rows.push({ type: "del", text: a[i++] });
+    while (j < m) rows.push({ type: "add", text: b[j++] });
+    return rows;
+  }
+
+  async function openHistory() {
+    const sub = app.activeSubject;
+    if (!sub) return;
+    historyOpen = true;
+    histLoading = true;
+    diffRows = [];
+    compareId = null;
+    try {
+      versions = await api.listCheatsheetVersions(sub.id, selectedTopicId ?? undefined);
+      // Default: diff the previous version (index 1, since 0 is the current save).
+      if (versions.length >= 2) selectCompare(versions[1].id);
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Couldn't load history", body: String(e) });
+    } finally {
+      histLoading = false;
+    }
+  }
+
+  async function selectCompare(versionId: string) {
+    compareId = versionId;
+    try {
+      const old = await api.getCheatsheetVersion(versionId);
+      diffRows = lineDiff(sheetLines(old), sheetLines(sections));
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Couldn't load version", body: String(e) });
+    }
+  }
+  const diffAdds = $derived(diffRows.filter((r) => r.type === "add").length);
+  const diffDels = $derived(diffRows.filter((r) => r.type === "del").length);
+
+  // The jump index (TOC) tracks the live source: the editable draft while editing,
+  // the stored sheet otherwise — so it works on the edit page too.
+  const indexSections = $derived(mode === "edit" ? draft : sections);
 </script>
 
-<div class="workspace-scroll">
+<div class="workspace-scroll" bind:this={scrollEl} onscroll={onCsScroll}>
   <div class="cs-doc{exportAll.length > 0 ? ' is-exporting-all' : ''}">
     {#if !app.activeSubject}
       <!-- No subject open -->
@@ -360,59 +570,135 @@
             </div>
           </div>
           <div class="cs-doc-actions">
-            <button class="btn btn--sm" onclick={exportCurrent} title="Opens the print dialog — choose “Save as PDF”">
-              <Icon name="doc" size={13} /> Save as PDF
-            </button>
-            <button
-              class="btn btn--sm"
-              onclick={exportWholeSubject}
-              disabled={exporting}
-              title="Print the whole-subject sheet plus every topic's sheet together"
-            >
-              <Icon name="book" size={13} /> {exporting ? "Loading…" : "Export all"}
-            </button>
-            <button class="btn btn--sm" onclick={generate} disabled={csGenerating}>
-              <Icon name="refresh" size={13} /> {csGenerating ? "Synthesizing…" : "Regenerate"}
-            </button>
+            {#if mode === "edit"}
+              <button class="btn btn--sm btn--ghost" onclick={cancelEdit} disabled={saving}>
+                <Icon name="x" size={13} /> Cancel
+              </button>
+              <button class="btn btn--sm btn--primary" onclick={saveEdit} disabled={saving}>
+                <Icon name="check" size={13} /> {saving ? "Saving…" : "Save"}
+              </button>
+            {:else}
+              <button class="btn btn--sm" onclick={exportCurrent} title="Opens the print dialog — choose “Save as PDF”">
+                <Icon name="doc" size={13} /> Save as PDF
+              </button>
+              <button
+                class="btn btn--sm"
+                onclick={exportWholeSubject}
+                disabled={exporting}
+                title="Print the whole-subject sheet plus every topic's sheet together"
+              >
+                <Icon name="book" size={13} /> {exporting ? "Loading…" : "Export all"}
+              </button>
+              <button class="btn btn--sm" onclick={openHistory} title="Browse versions and diff changes">
+                <Icon name="refresh" size={13} /> History
+              </button>
+              <button class="btn btn--sm" onclick={enterEdit} title="Edit this cheatsheet">
+                <Icon name="pencil" size={13} /> Edit
+              </button>
+              <button class="btn btn--sm" onclick={generate} disabled={csGenerating}>
+                <Icon name="refresh" size={13} /> {csGenerating ? "Synthesizing…" : "Regenerate"}
+              </button>
+            {/if}
           </div>
         </div>
 
-        <!-- Sections -->
-        <div class="cs-sections">
-          {#each sections as sec (sec.id)}
-            <section
-              id={"cs-sec-" + sec.id}
-              class="cs-section{sec.state === 'draft-pending' ? ' is-pending' : ''}"
-            >
-              <header class="cs-sec-head">
-                <h2 class="cs-sec-title">{sec.title}</h2>
+        {#if mode === "edit"}
+          <!-- ── EDITOR: structured fields, markdown bodies ──────── -->
+          <div class="cs-editor">
+            <input
+              bind:this={fileInput}
+              type="file"
+              accept="image/*"
+              style="display:none"
+              onchange={onImageFile}
+            />
+            {#each draft as sec, si (sec.id)}
+              <section class="cs-edit-sec" id={"cs-sec-" + sec.id}>
+                <div class="cs-edit-sechead">
+                  <input class="cs-edit-title mono" bind:value={sec.title} placeholder="Section title" />
+                  <div class="grow"></div>
+                  {#if sec.image}
+                    <button class="btn btn--sm btn--ghost" onclick={() => pickImage(si)} title="Replace image">
+                      <Icon name="refresh" size={12} /> Image
+                    </button>
+                    <button class="btn btn--icon btn--sm btn--ghost" onclick={() => clearImage(si)} title="Remove image">
+                      <Icon name="x" size={12} />
+                    </button>
+                  {:else}
+                    <button class="btn btn--sm btn--ghost" onclick={() => pickImage(si)} title="Attach an image">
+                      <Icon name="plus" size={12} /> Image
+                    </button>
+                  {/if}
+                  <button class="btn btn--icon btn--sm btn--ghost" onclick={() => removeSection(si)} title="Remove section">
+                    <Icon name="x" size={13} />
+                  </button>
+                </div>
 
-                {#if sec.state === "draft-pending"}
-                  <span class="status-pill status-pill--draft">
-                    <span class="dot"></span>pending
-                  </span>
-                {:else}
-                  <span class="cs-sec-count mono">{sec.items.length}</span>
+                {#if sec.image}
+                  <span class="cs-sec-img"><img src={sec.image} alt={sec.title} /></span>
                 {/if}
-              </header>
 
-              {#if sec.image}
-                <a class="cs-sec-img" href={sec.image} target="_blank" rel="noreferrer" title="Open image">
-                  <img src={sec.image} alt={sec.title} loading="lazy" />
-                </a>
-              {/if}
-
-              <dl class="cs-list">
-                {#each sec.items as item, i (i)}
-                  <div class="cs-item" id={"cs-it-" + sec.id + "-" + i}>
-                    <dt>{item.t}</dt>
-                    <dd><RichText text={item.d} /></dd>
+                {#each sec.items as item, ii (ii)}
+                  <div class="cs-edit-item" id={"cs-it-" + sec.id + "-" + ii}>
+                    <div class="cs-edit-itemhead">
+                      <input class="cs-edit-term" bind:value={item.t} placeholder="Term / concept" />
+                      <button class="btn btn--icon btn--sm btn--ghost" onclick={() => removeItem(si, ii)} title="Remove item">
+                        <Icon name="x" size={12} />
+                      </button>
+                    </div>
+                    <div class="cs-edit-body">
+                      <MarkdownEditor value={item.d} onChange={(v) => (item.d = v)} />
+                    </div>
                   </div>
                 {/each}
-              </dl>
-            </section>
-          {/each}
-        </div>
+
+                <button class="btn btn--sm btn--ghost cs-edit-add" onclick={() => addItem(si)}>
+                  <Icon name="plus" size={12} /> Add item
+                </button>
+              </section>
+            {/each}
+            <button class="btn btn--sm cs-edit-addsec" onclick={addSection}>
+              <Icon name="plus" size={13} /> Add section
+            </button>
+          </div>
+        {:else}
+          <!-- Sections -->
+          <div class="cs-sections">
+            {#each sections as sec (sec.id)}
+              <section
+                id={"cs-sec-" + sec.id}
+                class="cs-section{sec.state === 'draft-pending' ? ' is-pending' : ''}"
+              >
+                <header class="cs-sec-head">
+                  <h2 class="cs-sec-title">{sec.title}</h2>
+
+                  {#if sec.state === "draft-pending"}
+                    <span class="status-pill status-pill--draft">
+                      <span class="dot"></span>pending
+                    </span>
+                  {:else}
+                    <span class="cs-sec-count mono">{sec.items.length}</span>
+                  {/if}
+                </header>
+
+                {#if sec.image}
+                  <a class="cs-sec-img" href={sec.image} target="_blank" rel="noreferrer" title="Open image">
+                    <img src={sec.image} alt={sec.title} loading="lazy" />
+                  </a>
+                {/if}
+
+                <dl class="cs-list">
+                  {#each sec.items as item, i (i)}
+                    <div class="cs-item" id={"cs-it-" + sec.id + "-" + i}>
+                      <dt>{item.t}</dt>
+                      <dd><RichText text={item.d} /></dd>
+                    </div>
+                  {/each}
+                </dl>
+              </section>
+            {/each}
+          </div>
+        {/if}
 
         <!-- Floating, hover-expand, collapsible jump index (table of contents).
              Lets you leap to any section or sub-topic. Sits just left of the chat
@@ -431,7 +717,7 @@
             <Icon name="grid" size={13} />
           </button>
           <div class="cs-index-panel">
-            {#each sections as sec (sec.id)}
+            {#each indexSections as sec (sec.id)}
               <div class="cs-idx-secrow">
                 <button
                   class="cs-idx-caret"
@@ -478,6 +764,9 @@
                   <h2 class="cs-sec-title">{sec.title}</h2>
                   <span class="cs-sec-count mono">{sec.items.length}</span>
                 </header>
+                {#if sec.image}
+                  <span class="cs-sec-img"><img src={sec.image} alt={sec.title} /></span>
+                {/if}
                 <dl class="cs-list">
                   {#each sec.items as item, i (i)}
                     <div class="cs-item">
@@ -495,7 +784,141 @@
   {/if}
 </div>
 
+<!-- ── VERSION HISTORY / DIFF (git-like) ───────────────────────── -->
+{#if historyOpen}
+  <div
+    class="overlay cs-hist-overlay"
+    onmousedown={() => (historyOpen = false)}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Cheatsheet version history"
+    tabindex="-1"
+  >
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="cs-hist" onmousedown={(e) => e.stopPropagation()}>
+      <header class="cs-hist-head">
+        <div>
+          <div class="eyebrow">Version history</div>
+          <div class="cs-hist-title mono">{cheatTopic} · diff vs current</div>
+        </div>
+        <div class="cs-hist-stats mono">
+          <span class="st-add">+{diffAdds}</span>
+          <span class="st-del">−{diffDels}</span>
+        </div>
+        <button class="btn btn--icon btn--sm btn--ghost" onclick={() => (historyOpen = false)}>
+          <Icon name="x" size={13} />
+        </button>
+      </header>
+      <div class="cs-hist-body">
+        <aside class="cs-hist-list">
+          {#if histLoading}
+            <div class="mono faint" style="padding:12px">Loading…</div>
+          {:else if versions.length === 0}
+            <div class="mono faint" style="padding:12px">No versions yet.</div>
+          {:else}
+            {#each versions as v, i (v.id)}
+              <button
+                class="cs-hist-ver{compareId === v.id ? ' on' : ''}"
+                onclick={() => selectCompare(v.id)}
+                disabled={i === 0}
+                title={i === 0 ? "Current version" : "Diff this version against current"}
+              >
+                <span class="cs-hist-when mono">{fmtTime(v.created_at)}</span>
+                <span class="cs-hist-note">{i === 0 ? "current" : v.note} · {v.section_count} sec</span>
+              </button>
+            {/each}
+          {/if}
+        </aside>
+        <div class="cs-hist-diff">
+          {#if compareId === null}
+            <div class="mono faint" style="padding:16px">
+              {versions.length < 2 ? "Only one version so far — edits and regenerations will appear here." : "Pick a version on the left to see what changed."}
+            </div>
+          {:else}
+            <div class="diff-inline">
+              {#each diffRows as r, i (i)}
+                <div class="diff-line {r.type}">
+                  <span class="gutter">{r.type === "add" ? "+" : r.type === "del" ? "−" : ""}</span>
+                  <span class="txt read">{r.text || " "}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
+  /* ── editor (edit mode) ────────────────────────────────────── */
+  .cs-editor { display: flex; flex-direction: column; gap: 20px; }
+  .cs-edit-sec {
+    border: 1px solid var(--border); border-radius: var(--rad-3);
+    padding: 14px 14px 12px; background: var(--surface);
+  }
+  .cs-edit-sechead { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .cs-edit-title {
+    flex: 1; min-width: 0; font-size: var(--r-md); font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent);
+    background: var(--bg-sunken, var(--surface-2)); border: 1px solid var(--border);
+    border-radius: var(--rad-2); padding: 6px 10px;
+  }
+  .cs-edit-item {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 10px 0; border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+  }
+  .cs-edit-itemhead { display: flex; align-items: center; gap: 8px; }
+  .cs-edit-term {
+    flex: 1; min-width: 0; font-family: var(--font-read); font-weight: 600;
+    font-size: calc(var(--read-size, var(--r-md)) + 1px); color: var(--fg-bright);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--rad-2); padding: 6px 10px;
+  }
+  /* the embedded markdown editor gets a comfortable working height */
+  .cs-edit-body { display: flex; min-height: 200px; }
+  .cs-edit-body :global(.md) { min-height: 200px; }
+  .cs-edit-add { align-self: flex-start; margin-top: 10px; }
+  .cs-edit-addsec { align-self: flex-start; }
+
+  /* ── version history / diff overlay ────────────────────────── */
+  .cs-hist-overlay {
+    position: fixed; inset: 0; z-index: 60; display: flex;
+    align-items: center; justify-content: center; padding: 32px;
+    background: color-mix(in oklab, var(--bg) 55%, transparent); backdrop-filter: blur(3px);
+  }
+  .cs-hist {
+    width: min(960px, 94vw); height: min(80vh, 720px);
+    display: flex; flex-direction: column;
+    background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--rad-4, 14px); overflow: hidden;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+  }
+  .cs-hist-head {
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+  }
+  .cs-hist-title { font-size: var(--t-md); color: var(--fg-bright); margin-top: 3px; }
+  .cs-hist-stats { margin-left: auto; display: flex; gap: 10px; font-size: var(--t-sm); }
+  .cs-hist-stats .st-add { color: var(--ok); }
+  .cs-hist-stats .st-del { color: var(--err); }
+  .cs-hist-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 240px 1fr; }
+  .cs-hist-list {
+    border-right: 1px solid var(--border); overflow-y: auto;
+    display: flex; flex-direction: column; padding: 6px;
+  }
+  .cs-hist-ver {
+    display: flex; flex-direction: column; gap: 2px; text-align: left;
+    padding: 8px 10px; border-radius: var(--rad-2); border: 1px solid transparent;
+    background: none; color: var(--fg-muted); cursor: pointer;
+  }
+  .cs-hist-ver:hover:not(:disabled) { background: var(--surface-2); color: var(--fg-bright); }
+  .cs-hist-ver.on { border-color: var(--accent); color: var(--fg-bright); background: color-mix(in oklab, var(--accent) 12%, transparent); }
+  .cs-hist-ver:disabled { opacity: 0.6; cursor: default; }
+  .cs-hist-when { font-size: var(--t-xs); }
+  .cs-hist-note { font-size: var(--t-2xs); color: var(--fg-faint); }
+  .cs-hist-diff { overflow: auto; padding: 6px 0; }
+
   /* ── floating jump index (TOC) ─────────────────────────────── */
   .cs-index {
     position: fixed;

@@ -583,7 +583,7 @@ dependencies = [
 
 [[package]]
 name = "cortex"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "regex",
  "reqwest 0.12.28",

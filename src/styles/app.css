@@ -216,8 +216,10 @@
 .cs-section { scroll-margin-top: 20px; transition: background var(--dur-slow); border-radius: var(--rad-3); }
 .cs-section.just-approved { animation: approveFlash 2.4s var(--ease); }
 @keyframes approveFlash { 0% { background: color-mix(in oklab, var(--ok) 18%, transparent); box-shadow: 0 0 0 8px color-mix(in oklab, var(--ok) 8%, transparent); } 100% { background: transparent; box-shadow: 0 0 0 8px transparent; } }
-.cs-sec-head { display: flex; align-items: center; gap: 11px; padding-bottom: 9px; margin-bottom: 13px; border-bottom: 1px solid var(--border); }
-.cs-sec-title { font-family: var(--font-mono); font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
+.cs-sec-head { display: flex; align-items: baseline; gap: 11px; padding-bottom: 9px; margin-bottom: 13px; border-bottom: 1px solid var(--border); }
+/* Section titles (OVERVIEW / DEFINITIONS …) are the dominant headings on the
+   page — same mono/uppercase/accent identity, scaled up to the largest size. */
+.cs-sec-title { font-family: var(--font-mono); font-size: var(--r-2xl); font-weight: 700; line-height: 1.1; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
 .cs-section.is-pending .cs-sec-title { color: var(--warn); }
 .cs-sec-count { margin-left: auto; font-size: var(--t-2xs); color: var(--fg-faint); }
 .cs-list { display: flex; flex-direction: column; gap: 18px; margin: 0; }
@@ -497,6 +499,21 @@
 .station .st-eq { display: inline-flex; gap: 2px; align-items: flex-end; height: 12px; }
 .station .st-eq i { width: 2.5px; background: var(--accent); border-radius: 2px; animation: eqp 0.9s ease-in-out infinite; }
 .station .st-eq i:nth-child(2){ animation-delay: .15s } .station .st-eq i:nth-child(3){ animation-delay: .3s }
+/* delete affordance on user-added stations (hidden until row hover) */
+.station .st-del { flex: none; opacity: 0; margin-left: 4px; }
+.station:hover .st-del, .station.on .st-del { opacity: 0.7; }
+.station .st-del:hover { opacity: 1; }
+/* add-your-own station form + trigger */
+.music-add { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 4px; }
+.music-add-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.music-add-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  margin: 6px 10px 2px; padding: 9px; border-radius: var(--rad-2);
+  border: 1px dashed var(--border-strong); background: transparent;
+  color: var(--fg-muted); cursor: pointer; font-size: var(--t-sm);
+  transition: color var(--dur), border-color var(--dur);
+}
+.music-add-btn:hover { color: var(--fg-bright); border-color: var(--accent); }
 
 /* ============ CHAT SOURCE SWITCHER ============ */
 .scope-srcwrap { position: relative; display: inline-flex; min-width: 0; }
@@ -941,10 +958,20 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
   .set-row-r { min-width: 0; }
 }
 
-/* ============ DRAG-AND-DROP REORDER FEEDBACK ============ */
-.subj-card[draggable="true"] { cursor: grab; }
-.subj-card.dragging { opacity: 0.45; }
-.subj-card.drop-over { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* ============ POINTER-BASED REORDER FEEDBACK ============ */
+/* Native HTML5 drag is avoided (it crashes WebKitGTK + shows a zoomed ghost);
+   see src/lib/dnd.ts. These classes are toggled by the `reorderable` action. */
+[data-reorder-group] { cursor: grab; }
+.reorder-dragging { opacity: 0.4; }
+.reorder-over { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: inherit; }
+.reorder-preview {
+  opacity: 0.9;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  border-radius: 10px;
+  cursor: grabbing;
+  transform-origin: top left;
+}
+body.reorder-active, body.reorder-active * { cursor: grabbing !important; user-select: none !important; }
 
 /* ============ RESPONSIVE SPACING SCALE ============ */
 /* Every view builds its padding from var(--sp-*), so shrinking the scale as the

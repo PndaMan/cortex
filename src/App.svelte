@@ -104,6 +104,7 @@
       if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
         e.preventDefault();
         e.stopPropagation();
+        e.stopImmediatePropagation(); // also beat any native find-in-page handler
         app.findOpen = true;
       }
     }
@@ -148,6 +149,10 @@
       if (["Control", "Shift", "Alt", "Meta", "AltGraph", "CapsLock", "ContextMenu"].includes(e.key)) return;
       if (typing) return;
       if ((window as any).__cortexModalOpen) return; // diff/flashcards/quiz own the keyboard
+      // Full-screen views (e.g. Settings) claim the keyboard so single-key
+      // shortcuts (t/c/m/n…) don't fire while you're configuring things. Esc is
+      // handled above this guard, so back-nav still works.
+      if ((window as any).__cortexViewKeys) return;
       if (app.cmdkOpen) return;
 
       if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) { e.preventDefault(); app.cmdkOpen = true; return; }

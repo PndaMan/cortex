@@ -96,6 +96,8 @@
     const subjectId = sub.id;
     const topicId = dominantTopicId;
     const matTitle = finalTitle || undefined;
+    // The selected sources — generation scopes its context to exactly these.
+    const sourceIds = [...sel];
 
     jobs.start({
       kind,
@@ -109,6 +111,7 @@
           topicId,
           matTitle,
           customPrompt.trim() || undefined,
+          sourceIds,
         ),
     });
 
