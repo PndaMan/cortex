@@ -20,17 +20,11 @@
     run: () => void;
   }
   let cheatItems = $state<CmdItem[]>([]);
-  // Open the right topic's cheatsheet, then scroll to the element once it renders.
+  // Open the right topic's cheatsheet; the Cheatsheet view scrolls to the element
+  // once that topic's sheet has actually rendered (see requestCheatJump).
   function jumpToCheat(subjectId: string, topicId: string | null, elId: string) {
-    app.openTopicSheet(subjectId, topicId); // view=subject, tab=cheatsheet, selects topic
+    app.requestCheatJump(subjectId, topicId, elId);
     app.cmdkOpen = false;
-    let tries = 0;
-    const tick = () => {
-      const el = document.getElementById(elId);
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-      else if (tries++ < 120) requestAnimationFrame(tick); // wait for the topic sheet to load
-    };
-    requestAnimationFrame(tick);
   }
   // Index every topic's cheatsheet (sections + items) so ":" can jump straight to
   // a heading or term IN that topic's sheet — the element ids match the topic view.

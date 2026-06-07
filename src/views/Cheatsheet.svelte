@@ -27,6 +27,27 @@
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // Honor a pending command-palette jump: only once the requested topic is
+  // selected AND its sheet has loaded (not mid-switch), so we scroll to the
+  // element in the CORRECT topic's content rather than an identically-id'd
+  // element in the previous topic.
+  $effect(() => {
+    const jump = app.cheatJump;
+    // Track these so the effect re-runs when the topic/sheet settles.
+    void sections;
+    if (!jump || loading || !hasCheatsheet || selectedTopicId !== jump.topicId) return;
+    let tries = 0;
+    const tick = () => {
+      const el = document.getElementById(jump.elId);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        app.cheatJump = null;
+      } else if (tries++ < 60) requestAnimationFrame(tick);
+      else app.cheatJump = null;
+    };
+    requestAnimationFrame(tick);
+  });
+
   // ── topic selection ──────────────────────────────────────────
   // null = the whole-subject cheatsheet ("All"); otherwise a topic id. The pending
   // topic (app.cheatTopicId, set by openSubject/openTopicSheet to THIS subject's

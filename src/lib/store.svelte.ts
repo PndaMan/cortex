@@ -446,6 +446,15 @@ class AppStore {
     this.cheatNonce++;
   }
 
+  // A pending command-palette jump: open the topic's cheatsheet, then the
+  // Cheatsheet view scrolls to `elId` once THAT topic's sheet has rendered (ids
+  // like cs-it-overview-0 repeat across topics, so we must wait for the right one).
+  cheatJump = $state<{ topicId: string | null; elId: string } | null>(null);
+  requestCheatJump(subjectId: string, topicId: string | null, elId: string) {
+    this.openTopicSheet(subjectId, topicId);
+    this.cheatJump = { topicId, elId };
+  }
+
   // Per-subject cheatsheet memory: each subject INDEPENDENTLY remembers the topic
   // tab last viewed (null = whole subject), plus which subject was most recent, so
   // `space h` returns to the right sheet and opening subject B never inherits
