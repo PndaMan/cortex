@@ -201,7 +201,7 @@
 /* ============ CHEATSHEET DOC ============ */
 .cs-doc { max-width: 760px; margin: 0 auto; padding: var(--sp-7) var(--sp-7) var(--sp-9); }
 .cs-doc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-5); }
-.cs-title { font-size: var(--r-2xl); color: var(--fg-bright); font-weight: 600; letter-spacing: -0.01em; margin: 5px 0 7px; }
+.cs-title { font-size: clamp(1.5rem, 1.1rem + 1.5vw, 2.2rem); line-height: 1.15; color: var(--fg-bright); font-weight: 600; letter-spacing: -0.01em; margin: 5px 0 7px; overflow-wrap: anywhere; }
 .cs-sub { font-size: var(--t-xs); color: var(--fg-faint); }
 .cs-doc-actions { display: flex; gap: 8px; flex: none; }
 
@@ -225,7 +225,7 @@
 .cs-list { display: flex; flex-direction: column; gap: 18px; margin: 0; }
 /* Stacked: the term heading sits ABOVE its explanation (not in a side column). */
 .cs-item { display: block; }
-.cs-item dt { font-family: var(--font-read); font-size: calc(var(--read-size, var(--r-md)) + 1px); font-weight: 600; color: var(--fg-bright); margin: 0 0 5px; }
+.cs-item dt { font-family: var(--font-read); font-size: calc(var(--read-size, var(--r-md)) + 3px); font-weight: 700; color: var(--fg-bright); margin: 0 0 5px; }
 .cs-item dd { font-family: var(--font-read); font-size: var(--read-size, var(--r-md)); line-height: 1.55; color: var(--fg); margin: 0; text-wrap: pretty; }
 .cs-item.item-changed { position: relative; }
 .cs-item.item-changed dt::after { content: "changed"; font-family: var(--font-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--warn); margin-left: 8px; vertical-align: middle; padding: 1px 5px; border: 1px solid color-mix(in oklab, var(--warn) 40%, transparent); border-radius: var(--rad-pill); }

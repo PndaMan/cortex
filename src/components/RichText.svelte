@@ -263,10 +263,10 @@
   .rt-p { margin: 0 0 10px; }
   .rt-p:last-child { margin-bottom: 0; }
   .rt-h2 {
-    margin: 16px 0 8px; font-size: 14.5px; font-weight: 600;
+    margin: 18px 0 8px; font-size: 17px; font-weight: 700;
     color: var(--fg-bright); letter-spacing: 0.01em;
   }
-  .rt-h3 { margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--fg-bright); }
+  .rt-h3 { margin: 15px 0 6px; font-size: 15px; font-weight: 600; color: var(--fg-bright); }
   .rt-h2:first-child, .rt-h3:first-child { margin-top: 0; }
   .rt-img {
     display: block; max-width: 100%; height: auto; margin: 10px 0;

@@ -360,9 +360,10 @@ impl Llm for ClaudeLlm {
         let client = llm_client();
         let body = serde_json::json!({
             "model": self.model,
-            // Roomy enough for a full cheatsheet without cutting off mid-section
-            // (8192 is the safe max across Claude 3.5+ models).
-            "max_tokens": 8192,
+            // Roomy enough for a full cheatsheet without cutting off mid-section.
+            // Modern Claude models support far more (Sonnet 4.x: 64K, Opus: 128K
+            // output tokens); 32K covers any cheatsheet while staying within limits.
+            "max_tokens": 32000,
             "temperature": 0.3,
             "system": system,
             "messages": [{ "role": "user", "content": user }]
