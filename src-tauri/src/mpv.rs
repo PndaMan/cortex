@@ -32,6 +32,15 @@ fn mpv_holder() -> &'static Mutex<Option<Child>> {
 pub fn shutdown() {
     if let Ok(mut guard) = mpv_holder().lock() {
         if let Some(child) = guard.as_mut() {
+            // mpv is spawned as its own process-group leader (see ensure_mpv), so
+            // for a YouTube livestream the continuously-running `yt-dlp` feeder
+            // shares mpv's group. SIGKILL the whole group so the downloader can't
+            // linger (and keep streaming) after the app closes — killing mpv alone
+            // would orphan yt-dlp.
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(-(child.id() as i32), libc::SIGKILL);
+            }
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -105,8 +114,8 @@ fn ensure_mpv(socket: &Path, ytdlp: &Path, volume: u8) -> Result<()> {
         *guard = None;
     }
     let _ = std::fs::remove_file(socket); // clear any stale socket
-    let child = Command::new("mpv")
-        .arg("--no-video")
+    let mut cmd = Command::new("mpv");
+    cmd.arg("--no-video")
         .arg("--idle=yes")
         .arg("--no-terminal")
         .arg("--really-quiet")
@@ -115,13 +124,19 @@ fn ensure_mpv(socket: &Path, ytdlp: &Path, volume: u8) -> Result<()> {
         .arg(format!(
             "--script-opts=ytdl_hook-ytdl_path={}",
             ytdlp.display()
+        ));
+    // Put mpv in its own process group so any `yt-dlp` feeder it spawns shares the
+    // group and can be torn down together on shutdown() (see there).
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let child = cmd.spawn().map_err(|e| {
+        Error::Other(format!(
+            "couldn't start mpv — install it (e.g. `sudo pacman -S mpv`): {e}"
         ))
-        .spawn()
-        .map_err(|e| {
-            Error::Other(format!(
-                "couldn't start mpv — install it (e.g. `sudo pacman -S mpv`): {e}"
-            ))
-        })?;
+    })?;
     *guard = Some(child);
     drop(guard);
     for _ in 0..60 {

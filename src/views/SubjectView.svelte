@@ -30,6 +30,15 @@
 
   const subj = $derived(app.activeSubject);
 
+  // The cheatsheet scope currently in view: the active topic's name, or
+  // "Whole subject" when no topic is selected. Tracks app.cheatTopicId, which the
+  // Cheatsheet view keeps in sync with its tab selection.
+  const scopeLabel = $derived(
+    app.cheatTopicId
+      ? (subj?.topics.find((t) => t.id === app.cheatTopicId)?.name ?? "Whole subject")
+      : "Whole subject"
+  );
+
   // Load ALL sources for the subject (including ones with no topic, which the
   // subject tree omits) and group them by topic for the Sources tab.
   let srcList = $state<Source[]>([]);
@@ -180,7 +189,7 @@
         <span class="subj-glyph sm" style="color:{app.subjectColor(subj)};font-size:13px;line-height:1">{subj.glyph || "◆"}</span>
         <div>
           <div class="st-name">{subj.name}</div>
-          <div class="st-code mono">{subj.code ?? ""}{subj.topics[0] ? " · " + subj.topics[0].name : ""}</div>
+          <div class="st-code mono">{subj.code ? subj.code + " · " : ""}{scopeLabel}</div>
         </div>
         <button
           class="btn btn--icon btn--sm btn--ghost"
