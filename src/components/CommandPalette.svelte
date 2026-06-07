@@ -20,35 +20,55 @@
     run: () => void;
   }
   let cheatItems = $state<CmdItem[]>([]);
-  function jumpToCheatItem(elId: string) {
-    app.setView("subject");
-    app.setTab("cheatsheet");
+  // Open the right topic's cheatsheet, then scroll to the element once it renders.
+  function jumpToCheat(subjectId: string, topicId: string | null, elId: string) {
+    app.openTopicSheet(subjectId, topicId); // view=subject, tab=cheatsheet, selects topic
     app.cmdkOpen = false;
     let tries = 0;
     const tick = () => {
       const el = document.getElementById(elId);
       if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-      else if (tries++ < 60) requestAnimationFrame(tick);
+      else if (tries++ < 120) requestAnimationFrame(tick); // wait for the topic sheet to load
     };
     requestAnimationFrame(tick);
   }
+  // Index every topic's cheatsheet (sections + items) so ":" can jump straight to
+  // a heading or term IN that topic's sheet — the element ids match the topic view.
   async function loadCheatItems(subjectId: string) {
     try {
-      const cs = await api.getCheatsheet(subjectId);
-      if (!cs) { cheatItems = []; return; }
+      const sub = app.subjects.find((s) => s.id === subjectId);
+      const topics = (sub?.topics ?? []).filter((t) => t.sources.length > 0);
+      const sheets = await Promise.all(
+        topics.map((t) => api.getCheatsheet(subjectId, t.id).catch(() => null))
+      );
       const items: CmdItem[] = [];
-      for (const sec of cs.sections) {
-        sec.items.forEach((it, i) => {
+      topics.forEach((t, ti) => {
+        const cs = sheets[ti];
+        if (!cs) return;
+        for (const sec of cs.sections) {
+          // jump to the section heading
           items.push({
-            id: "cs-" + sec.id + "-" + i,
+            id: `csh-${t.id}-${sec.id}`,
             group: "Cheatsheet",
-            label: it.t,
-            kind: sec.title,
+            label: sec.title,
+            kind: t.name,
             icon: "book",
-            run: () => jumpToCheatItem("cs-it-" + sec.id + "-" + i),
+            run: () => jumpToCheat(subjectId, t.id, "cs-sec-" + sec.id),
           });
-        });
-      }
+          // jump to each term/subheading within the section
+          sec.items.forEach((it, i) => {
+            if (it.t.startsWith("__topic__")) return; // composed-only divider sentinel
+            items.push({
+              id: `csi-${t.id}-${sec.id}-${i}`,
+              group: "Cheatsheet",
+              label: it.t,
+              kind: `${t.name} · ${sec.title}`,
+              icon: "book",
+              run: () => jumpToCheat(subjectId, t.id, "cs-it-" + sec.id + "-" + i),
+            });
+          });
+        }
+      });
       cheatItems = items;
     } catch {
       cheatItems = [];
@@ -74,7 +94,7 @@
       icon: "diamond",
       run: () => app.openSubject(s.id),
     })),
-    // Topics — type a topic name in ":" to jump straight to its subject.
+    // Topics — type a topic name in ":" to open that topic's cheatsheet directly.
     ...app.subjects.flatMap((s) =>
       s.topics.map((t) => ({
         id: "topic-" + t.id,
@@ -82,7 +102,7 @@
         label: t.name,
         kind: s.name,
         icon: "chevron",
-        run: () => { app.openSubject(s.id); app.setTab("cheatsheet"); },
+        run: () => app.openTopicSheet(s.id, t.id),
       }))
     ),
     { id: "a-record", group: "Actions", label: "Record lecture", kind: "command", icon: "record", hint: kh(keybinds.map.recorder), run: () => app.setView("recorder") },
