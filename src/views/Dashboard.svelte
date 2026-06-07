@@ -24,9 +24,6 @@
         <h1 class="dash-title read">Your subjects</h1>
       </div>
       <div class="row gap-2">
-        <button class="btn btn--sm" onclick={() => app.setView("websearch")}>
-          <Icon name="search" size={13} /> Search the web
-        </button>
         <button class="btn btn--sm btn--primary" onclick={() => app.setView("add-subject")}>
           <Icon name="plus" size={13} /> New subject
         </button>

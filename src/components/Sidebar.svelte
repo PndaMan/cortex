@@ -131,15 +131,6 @@
       <Icon name="record" size={13} /> Record lecture <span class="nav-k">␣ r</span>
     </div>
     <div
-      class="sb-nav-item{app.view === 'websearch' ? ' on' : ''}"
-      onclick={() => app.setView("websearch")}
-      role="button"
-      tabindex="0"
-      onkeydown={(e) => e.key === "Enter" && app.setView("websearch")}
-    >
-      <Icon name="search" size={14} /> Web search <span class="nav-k">␣ w</span>
-    </div>
-    <div
       class="sb-nav-item{app.view === 'add-source' ? ' on' : ''}"
       onclick={() => app.setView("add-source")}
       role="button"

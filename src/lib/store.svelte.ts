@@ -13,7 +13,6 @@ export type View =
   | "source"
   | "add-source"
   | "add-subject"
-  | "websearch"
   | "recorder"
   | "gen-material"
   | "notes"
@@ -293,6 +292,9 @@ class AppStore {
   // Favourited station ids (built-in or custom), pinned to a "Favourites" group
   // in the music panel. Persisted as a JSON setting.
   stationFavs = $state<string[]>([]);
+  // Pull diagrams/images from the homelab SearXNG into cheatsheets & chat. On by
+  // default once a SearXNG server is connected; toggle lives in Settings → Homelab.
+  webImagesEnabled = $state(false);
 
   activeSubject = $derived(
     this.subjects.find((s) => s.id === this.activeSubjectId) ?? null
@@ -352,6 +354,16 @@ class AppStore {
             this.csLastSubject = typeof m.last === "string" ? m.last : null;
           }
         } catch { /* ignore corrupt value */ }
+      }
+      // Web images (diagrams) default ON when a homelab SearXNG is connected; an
+      // explicit "false" from Settings → Homelab overrides that default.
+      {
+        const hasSearx = !!(all["searxng_url"] && all["searxng_url"].trim());
+        this.webImagesEnabled = all["web_images_enabled"] === "false"
+          ? false
+          : all["web_images_enabled"] === "true"
+            ? true
+            : hasSearx;
       }
       if (all["default_station"]) this.music = { ...this.music, current: all["default_station"] };
       // Load user-added YouTube/URL stations so they show in the music panel.

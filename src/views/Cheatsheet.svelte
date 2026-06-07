@@ -54,8 +54,6 @@
   // remembered topic) is applied by the cheatNonce effect below — including on a
   // fresh mount, so arriving via `space h` from another page restores the topic.
   let selectedTopicId = $state<string | null>(null);
-  // Optionally illustrate sections with web images (diagrams). Needs SearXNG.
-  let withImages = $state(false);
 
   // Topics that actually have sources — only these get their own cheatsheet tab.
   const topicTabs = $derived(
@@ -214,10 +212,12 @@
       topicId,
       // Whole subject regenerates every topic's sheet then composes; a topic
       // regenerates just its own.
+      // Diagram/image illustration is a homelab feature: on automatically when a
+      // SearXNG server is connected (toggle lives in Settings → Homelab).
       run: () =>
         topicId === null
-          ? api.generateSubjectCheatsheet(sub.id, withImages)
-          : api.generateCheatsheet(sub.id, topicId, withImages),
+          ? api.generateSubjectCheatsheet(sub.id, app.webImagesEnabled)
+          : api.generateCheatsheet(sub.id, topicId, app.webImagesEnabled),
       onDone: () => {
         // Only refresh the view if the user is still on this subject AND still
         // looking at the selection we generated for.
@@ -606,11 +606,10 @@
               {scopeSources} source{scopeSources !== 1 ? "s" : ""}.
             {/if}
           </p>
-          {#if !noSources}
-            <label class="cs-imgopt mono">
-              <input type="checkbox" bind:checked={withImages} />
-              Include diagrams/images <span class="faint">· needs SearXNG</span>
-            </label>
+          {#if !noSources && app.webImagesEnabled}
+            <p class="cs-imgopt mono faint">
+              <Icon name="globe" size={11} /> Diagrams on · via your homelab SearXNG
+            </p>
           {/if}
           <button class="btn btn--primary btn--sm" onclick={generate} disabled={csGenerating || noSources}>
             <Icon name="refresh" size={13} /> {csGenerating ? "Synthesizing…" : "Generate cheatsheet"}
@@ -1202,9 +1201,8 @@
   }
   .cs-imgopt {
     display: inline-flex; align-items: center; gap: 7px;
-    font-size: var(--t-xs); color: var(--fg-muted); cursor: pointer; margin-top: 4px;
+    font-size: var(--t-xs); color: var(--fg-muted); margin-top: 4px;
   }
-  .cs-imgopt input { accent-color: var(--accent); cursor: pointer; }
   .cs-sec-img {
     display: block; margin: 0 0 12px; max-width: 360px; border-radius: var(--rad-3);
     overflow: hidden; border: 1px solid var(--border);

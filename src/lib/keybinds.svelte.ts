@@ -12,7 +12,6 @@ export type Action =
   | "toggleSidebar"
   | "newSubject"
   | "recorder"
-  | "websearch"
   | "cycleTheme"
   | "music"
   | "insert"
@@ -27,7 +26,6 @@ export const ACTION_LABELS: Record<Action, string> = {
   toggleSidebar: "Toggle sidebar",
   newSubject: "New subject",
   recorder: "Record lecture",
-  websearch: "Web search",
   cycleTheme: "Cycle theme",
   music: "Music panel",
   insert: "Insert / focus compose",
@@ -37,7 +35,7 @@ export const ACTION_LABELS: Record<Action, string> = {
 };
 
 export const ACTION_ORDER: Action[] = [
-  "cmdk", "leader", "toggleChat", "toggleSidebar", "newSubject", "recorder", "websearch",
+  "cmdk", "leader", "toggleChat", "toggleSidebar", "newSubject", "recorder",
   "cycleTheme", "music", "insert", "dashboard", "help", "dismissToast",
 ];
 
@@ -48,7 +46,6 @@ export const HELIX_BINDS: Record<Action, string> = {
   toggleSidebar: "b",
   newSubject: "n",
   recorder: "r",
-  websearch: "w",
   cycleTheme: "t",
   music: "m",
   insert: "i",
@@ -84,7 +81,6 @@ export const LEADER_ACTIONS: LeaderAction[] = [
   { key: "f", label: "Flashcards",  detail: "decks & study" },
   { key: "e", label: "Materials",   detail: "study materials" },
   { key: "d", label: "Review diff", detail: "cheatsheet draft" },
-  { key: "w", label: "Web search",  detail: "search the web" },
   { key: "o", label: "Notes",       detail: "markdown notes" },
   { key: "a", label: "Calendar",    detail: "events & tasks" },
   { key: "t", label: "Theme",       detail: "cycle Omarchy theme" },

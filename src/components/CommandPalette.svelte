@@ -105,7 +105,6 @@
     { id: "a-regen", group: "Actions", label: "Regenerate cheatsheet", kind: "command", icon: "refresh", run: () => app.regenCheatsheet() },
     { id: "a-flash", group: "Actions", label: "Study flashcards", kind: "command", icon: "cards", run: () => { app.setView("subject"); app.setTab("materials"); } },
     { id: "a-quiz", group: "Actions", label: "Generate quiz", kind: "command", icon: "check", run: () => { app.setView("subject"); app.setTab("materials"); } },
-    { id: "a-web", group: "Actions", label: "Search the web (SearXNG)", kind: "command", icon: "search", hint: kh(keybinds.map.websearch), run: () => app.setView("websearch") },
     { id: "a-chat", group: "Actions", label: app.chatOpen ? "Hide chat panel" : "Show chat panel", kind: "command", icon: "chat", hint: kh(keybinds.map.toggleChat), run: () => app.toggleChat() },
     { id: "a-music", group: "Actions", label: "Study sound…", kind: "command", icon: "music", hint: kh(keybinds.map.music), run: () => (app.musicOpen = true) },
     { id: "a-pomo", group: "Actions", label: "Pomodoro timer", kind: "command", icon: "record", hint: "␣ p", run: () => (app.pomodoroOpen = true) },

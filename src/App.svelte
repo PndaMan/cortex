@@ -23,7 +23,6 @@
   import SourceViewer from "./views/SourceViewer.svelte";
   import AddSource from "./views/AddSource.svelte";
   import AddSubject from "./views/AddSubject.svelte";
-  import WebSearch from "./views/WebSearch.svelte";
   import Recorder from "./views/Recorder.svelte";
   import GenerateMaterial from "./views/GenerateMaterial.svelte";
   import NotesView from "./views/NotesView.svelte";
@@ -182,7 +181,6 @@
       if (e.key === k.toggleSidebar) { app.toggleSidebar(); return; }
       if (e.key === k.newSubject) { e.preventDefault(); app.setView("add-subject"); return; }
       if (e.key === k.recorder) { app.setView("recorder"); return; }
-      if (e.key === k.websearch) { app.setView("websearch"); return; }
       if (e.key === k.cycleTheme) { app.cycleTheme(); return; }
       if (e.key === k.music) { app.musicOpen = true; return; }
       if (e.key === k.insert) {
@@ -246,8 +244,6 @@
           <AddSource />
         {:else if app.view === "add-subject"}
           <AddSubject />
-        {:else if app.view === "websearch"}
-          <WebSearch />
         {:else if app.view === "recorder"}
           <Recorder />
         {:else if app.view === "gen-material"}

@@ -15,7 +15,6 @@
     f: () => { app.setView("subject"); app.setTab("materials"); },
     e: () => { app.setView("subject"); app.setTab("materials"); },
     d: () => app.reviewDiff(),
-    w: () => app.setView("websearch"),
     o: () => app.setView("notes"),
     a: () => app.setView("calendar"),
     t: () => app.cycleTheme(),
