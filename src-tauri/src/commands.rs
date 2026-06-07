@@ -1289,7 +1289,81 @@ pub async fn export_anki(app: AppHandle, material_id: String, dest: String) -> R
     .map_err(|e| Error::Other(format!("anki export task failed: {e}")))?
 }
 
-/// Synthesize a sectioned cheatsheet from a subject/topic's indexed sources.
+/// MAP step: turn ONE source into an exhaustive, compact study digest so a bucket
+/// with many sources can be reduced into a single cheatsheet without overflowing
+/// the model window — and so every source is guaranteed to be represented.
+const CHEATSHEET_MAP_SYSTEM: &str = "You are an exam-focused study-notes extractor. From the SINGLE source \
+    provided, extract an EXHAUSTIVE, well-structured Markdown digest capturing EVERY exam-relevant \
+    element it contains: every term, definition, concept, theory, model, framework, classification, \
+    process, cause/effect, formula, law, rule, named example, case study, date, person, place, and \
+    distinction. Do NOT summarise away detail or cherry-pick — when in doubt, INCLUDE it. Preserve \
+    the source's own terminology and figures exactly. Output Markdown only (use headings, bullet \
+    lists, and tables) with NO preamble, commentary, or code fences.";
+
+/// Reduce one bucket (a topic, or the ungrouped "General" set) into cheatsheet
+/// sections. `sources` is each source's (title, full_text), already read from the
+/// DB so no lock is held during the (slow) model calls. With one source we
+/// synthesize directly from its full text (max fidelity); with several we MAP each
+/// to a digest first, then REDUCE the digests — guaranteeing all-source coverage.
+/// Returns (sections, sources_used).
+fn synthesize_bucket(
+    model: &dyn llm::Llm,
+    system: &str,
+    scope_label: &str,
+    sources: &[(String, String)],
+) -> Result<(Vec<CsSection>, i64)> {
+    let mut used = 0i64;
+    let material = if sources.len() <= 1 {
+        match sources.first() {
+            Some((title, text)) => {
+                used = 1;
+                format!("SOURCE: {title}\n\n{text}")
+            }
+            None => String::new(),
+        }
+    } else {
+        let mut digests: Vec<String> = Vec::new();
+        for (title, text) in sources {
+            let prompt = format!("SOURCE: {title}\n\n{text}\n\nProduce the exhaustive study digest now.");
+            match model.complete(CHEATSHEET_MAP_SYSTEM, &prompt) {
+                Ok(d) if !d.trim().is_empty() => {
+                    digests.push(format!("### SOURCE: {title}\n\n{}", d.trim()));
+                    used += 1;
+                }
+                // A single failed source shouldn't sink the whole sheet; coverage
+                // (sources_used) will reflect the gap so the UI can flag it.
+                _ => {}
+            }
+        }
+        digests.join("\n\n---\n\n")
+    };
+    if material.trim().is_empty() {
+        return Ok((Vec::new(), 0));
+    }
+    let user =
+        format!("Subject: {scope_label}\n\nSOURCE MATERIAL:\n{material}\n\nProduce the cheatsheet JSON now.");
+    let raw = model.complete(system, &user)?;
+    let mut sections = parse_cheatsheet(&raw);
+    if sections.is_empty() {
+        // A real model returned something unparseable — surface it rather than fail silently.
+        sections = vec![CsSection {
+            id: "notes".into(),
+            title: "Notes".into(),
+            state: "draft-pending".into(),
+            items: vec![CsItem {
+                t: "Model returned unstructured output".into(),
+                d: truncate(&raw, 600),
+            }],
+            image: None,
+        }];
+    }
+    Ok((sections, used))
+}
+
+/// Synthesize a sectioned cheatsheet for ONE bucket: a specific topic
+/// (`topic_id = Some`) or the subject's ungrouped "General" sources (`topic_id =
+/// None`). The whole-subject sheet is composed from these — see
+/// `get_subject_cheatsheet` / `generate_subject_cheatsheet`.
 #[tauri::command]
 pub async fn generate_cheatsheet(
     app: AppHandle,
@@ -1299,28 +1373,48 @@ pub async fn generate_cheatsheet(
 ) -> Result<CheatsheetData> {
     tauri::async_runtime::spawn_blocking(move || -> Result<CheatsheetData> {
     let state = app.state::<AppState>();
-    let (context, sources, subject_name, topic_name, spec, keys, style, searxng) = {
+    let (bucket, subject_name, topic_name, spec, keys, style, searxng) = {
         let c = state.db.lock().unwrap();
-        // Roomy context so the cheatsheet can be exhaustive, but bounded so a
-        // single generation doesn't run so long the connection drops mid-stream.
-        let (ctx, n) = repo::context_text(&c, &subject_id, topic_id.as_deref(), None, 64_000)?;
         let subj = repo::get_subject(&c, &subject_id)?;
-        let tname = topic_id
-            .as_ref()
-            .and_then(|tid| subj.topics.iter().find(|t| &t.id == tid))
-            .map(|t| t.name.clone())
-            .unwrap_or_else(|| subj.name.clone());
+        let tname = match topic_id.as_deref() {
+            Some(tid) => subj
+                .topics
+                .iter()
+                .find(|t| t.id == tid)
+                .map(|t| t.name.clone())
+                .unwrap_or_else(|| "Topic".into()),
+            None => "General".into(),
+        };
+        // Generation drives off the explicit source list for this ONE bucket (a
+        // topic, or the ungrouped "General" set) so a topic's sheet always covers
+        // ALL of that topic's sources. The whole-subject sheet is composed from
+        // these per-topic sheets elsewhere — never re-synthesized — so the two can
+        // never drift.
+        let ids = repo::bucket_source_ids(&c, &subject_id, topic_id.as_deref())?;
+        let mut bucket: Vec<(String, String)> = Vec::new();
+        for sid in &ids {
+            let (text, _) =
+                repo::context_text(&c, &subject_id, None, Some(std::slice::from_ref(sid)), 200_000)?;
+            if text.trim().is_empty() {
+                continue;
+            }
+            let title = repo::get_source(&c, sid)
+                .map(|s| s.name)
+                .unwrap_or_else(|_| "source".into());
+            bucket.push((title, text));
+        }
         let spec =
             repo::get_setting(&c, "model_cheatsheet")?.unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
         guard_offline_llm(&c, &spec)?;
-        (ctx, n, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c), searxng_base(&c)?)
+        (bucket, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c), searxng_base(&c)?)
     };
     let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
-    if context.trim().is_empty() {
+    if bucket.is_empty() {
         return Err(Error::Other(
             "No source text to synthesize from — add and ingest a source first.".into(),
         ));
     }
+    let sources = bucket.len() as i64;
 
     let system = format!("You are a world-class, exam-focused study-notes synthesizer. Build a \
         COMPLETE, accurate, exam-ready cheatsheet from the source material.\n\
@@ -1390,25 +1484,9 @@ pub async fn generate_cheatsheet(
     let scope = if topic_id.is_some() {
         format!("{subject_name} › {topic_name}")
     } else {
-        format!("{subject_name} (whole subject — title the sheet with the subject name)")
+        format!("{subject_name} › General (ungrouped sources)")
     };
-    let user = format!("Subject: {scope}\n\nSOURCE MATERIAL:\n{context}\n\nProduce the cheatsheet JSON now.");
-
-    let raw = model.complete(system, &user)?;
-    let mut sections = parse_cheatsheet(&raw);
-    if sections.is_empty() {
-        // A real model returned something unparseable — surface it rather than fail silently.
-        sections = vec![CsSection {
-            id: "notes".into(),
-            title: "Notes".into(),
-            state: "draft-pending".into(),
-            items: vec![CsItem {
-                t: "Model returned unstructured output".into(),
-                d: truncate(&raw, 600),
-            }],
-            image: None,
-        }];
-    }
+    let (mut sections, sources_used) = synthesize_bucket(model.as_ref(), system, &scope, &bucket)?;
 
     // Optionally illustrate sections with a web image (diagrams/figures). Skipped
     // for the generic framing sections; capped so generation stays quick.
@@ -1442,6 +1520,7 @@ pub async fn generate_cheatsheet(
         subject: subject_name,
         topic: topic_name,
         sources,
+        sources_used,
         model: model.name(),
         sections,
     })
@@ -1473,9 +1552,108 @@ pub fn get_cheatsheet(
         subject: subj.name,
         topic: tname,
         sources: n,
+        sources_used: n,
         model: "stored".into(),
         sections,
     }))
+}
+
+/// Compose the whole-subject cheatsheet from the per-topic (and ungrouped
+/// "General") sheets that are ALREADY stored — never re-synthesized — so each
+/// topic's block is byte-for-byte that topic's own sheet. Topics with no sources,
+/// or no generated sheet yet, contribute nothing. A lightweight divider section
+/// (id `__topic__…`, no items) marks the start of each topic. Returns None when no
+/// bucket has a sheet yet.
+fn compose_subject_cheatsheet(c: &Connection, subject_id: &str) -> Result<Option<CheatsheetData>> {
+    let subj = repo::get_subject(c, subject_id)?;
+    let mut sections: Vec<CsSection> = Vec::new();
+    let mut total: i64 = 0;
+
+    // Buckets in display order: each topic in order, then General (ungrouped) last.
+    let mut buckets: Vec<(Option<String>, String)> = subj
+        .topics
+        .iter()
+        .map(|t| (Some(t.id.clone()), t.name.clone()))
+        .collect();
+    buckets.push((None, "General".into()));
+
+    for (tid, name) in &buckets {
+        let ids = repo::bucket_source_ids(c, subject_id, tid.as_deref())?;
+        if ids.is_empty() {
+            continue; // no sources -> no block
+        }
+        let secs = repo::get_cheatsheet_sections(c, subject_id, tid.as_deref())?;
+        if secs.is_empty() {
+            continue; // has sources but no sheet generated yet
+        }
+        total += ids.len() as i64;
+        let marker = match tid {
+            Some(id) => format!("__topic__{id}"),
+            None => "__topic__general".into(),
+        };
+        sections.push(CsSection {
+            id: marker,
+            title: name.clone(),
+            state: "approved".into(),
+            items: Vec::new(),
+            image: None,
+        });
+        sections.extend(secs);
+    }
+
+    if sections.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(CheatsheetData {
+        subject: subj.name.clone(),
+        topic: subj.name,
+        sources: total,
+        sources_used: total,
+        model: "composed".into(),
+        sections,
+    }))
+}
+
+/// Whole-subject cheatsheet = composition of the stored per-topic sheets.
+#[tauri::command]
+pub fn get_subject_cheatsheet(
+    state: State<AppState>,
+    subject_id: String,
+) -> Result<Option<CheatsheetData>> {
+    let c = state.db.lock().unwrap();
+    compose_subject_cheatsheet(&c, &subject_id)
+}
+
+/// Regenerate every bucket that has sources (each topic, plus ungrouped "General")
+/// then return the freshly-composed whole-subject sheet.
+#[tauri::command]
+pub async fn generate_subject_cheatsheet(
+    app: AppHandle,
+    subject_id: String,
+    with_images: Option<bool>,
+) -> Result<Option<CheatsheetData>> {
+    // Determine which buckets have sources (short lock, then release for the calls).
+    let buckets: Vec<Option<String>> = {
+        let state = app.state::<AppState>();
+        let c = state.db.lock().unwrap();
+        let subj = repo::get_subject(&c, &subject_id)?;
+        let mut b: Vec<Option<String>> = Vec::new();
+        for t in &subj.topics {
+            if !repo::bucket_source_ids(&c, &subject_id, Some(&t.id))?.is_empty() {
+                b.push(Some(t.id.clone()));
+            }
+        }
+        if !repo::bucket_source_ids(&c, &subject_id, None)?.is_empty() {
+            b.push(None);
+        }
+        b
+    };
+    for tid in buckets {
+        generate_cheatsheet(app.clone(), subject_id.clone(), tid, with_images).await?;
+    }
+    let state = app.state::<AppState>();
+    let c = state.db.lock().unwrap();
+    compose_subject_cheatsheet(&c, &subject_id)
 }
 
 /// Persist a user-edited cheatsheet (from the editor) for a subject/topic and

@@ -144,7 +144,12 @@ fn default_state() -> String {
 pub struct CheatsheetData {
     pub subject: String,
     pub topic: String,
+    /// Total sources in scope.
     pub sources: i64,
+    /// Sources actually synthesized into this sheet (== sources unless a per-source
+    /// step failed, or for older stored sheets where it equals `sources`).
+    #[serde(default)]
+    pub sources_used: i64,
     pub model: String,
     pub sections: Vec<CsSection>,
 }

@@ -63,6 +63,7 @@
   let sections = $state<ApiCsSection[]>([]);
   let cheatTopic = $state<string>("");
   let sourceCount = $state<number>(0);
+  let sourcesUsed = $state<number>(0); // sources actually synthesized (coverage)
   let hasCheatsheet = $state(false); // true = a real stored cheatsheet is loaded
   let loading = $state(false);
 
@@ -89,6 +90,7 @@
     sections = data.sections;
     cheatTopic = data.topic;
     sourceCount = data.sources;
+    sourcesUsed = data.sources_used ?? data.sources;
     hasCheatsheet = true;
     app.pending = data.sections.filter((s) => s.state === "draft-pending").length;
   }
@@ -115,14 +117,20 @@
     const sub = app.activeSubject;
     // Touch selectedTopicId so this effect tracks it.
     const topicId = selectedTopicId;
+    // Track the reload nonce so a background (auto-)regen refreshes this view.
+    void app.cheatsheetReloadNonce;
     if (!sub) {
       applyEmpty();
       return;
     }
     loading = true;
     let cancelled = false;
-    api
-      .getCheatsheet(sub.id, topicId ?? undefined)
+    // Whole subject = composed from the per-topic sheets; a topic = its own sheet.
+    const load =
+      topicId === null
+        ? api.getSubjectCheatsheet(sub.id)
+        : api.getCheatsheet(sub.id, topicId);
+    load
       .then((data) => {
         if (cancelled) return;
         if (data) applyCheatsheet(data);
@@ -152,16 +160,24 @@
         : (sub.topics.find((t) => t.id === topicId)?.name ?? sub.name);
     jobs.start({
       kind: "cheatsheet",
-      label: topicName,
+      label: topicId === null ? `${topicName} (all topics)` : topicName,
       subjectId: sub.id,
       topicId,
-      run: () => api.generateCheatsheet(sub.id, topicId ?? undefined, withImages),
+      // Whole subject regenerates every topic's sheet then composes; a topic
+      // regenerates just its own.
+      run: () =>
+        topicId === null
+          ? api.generateSubjectCheatsheet(sub.id, withImages)
+          : api.generateCheatsheet(sub.id, topicId, withImages),
       onDone: () => {
         // Only refresh the view if the user is still on this subject AND still
         // looking at the selection we generated for.
         if (app.activeSubjectId !== sub.id || selectedTopicId !== topicId) return;
-        api
-          .getCheatsheet(sub.id, topicId ?? undefined)
+        const reload =
+          topicId === null
+            ? api.getSubjectCheatsheet(sub.id)
+            : api.getCheatsheet(sub.id, topicId);
+        reload
           .then((data) => {
             if (data) applyCheatsheet(data);
           })
@@ -235,14 +251,10 @@
     if (!sub || exporting) return;
     exporting = true;
     try {
-      const ids: (string | undefined)[] = [
-        undefined, // whole-subject sheet first
-        ...topicTabs.map((t) => t.id),
-      ];
-      const loaded = await Promise.all(
-        ids.map((tid) => api.getCheatsheet(sub.id, tid).catch(() => null))
-      );
-      exportAll = loaded.filter((d): d is CheatsheetData => !!d);
+      // The composed whole-subject sheet already contains every topic's sections
+      // (verbatim) with topic dividers, so exporting it = the full subject.
+      const composed = await api.getSubjectCheatsheet(sub.id).catch(() => null);
+      exportAll = composed ? [composed] : [];
       if (exportAll.length === 0) {
         app.pushToast({
           kind: "warning",
@@ -565,8 +577,12 @@
             <h1 class="cs-title">{cheatTopic}</h1>
             <div class="cs-sub mono">
               {sub.name}{sub.code ? " · " + sub.code : ""} ·
-              synthesized from {sourceCount} source{sourceCount !== 1 ? "s" : ""} ·
-              {sectionCount} enforced sections
+              {#if sourcesUsed < sourceCount}
+                <span class="cs-cov-warn" title="Some sources could not be synthesized — regenerate to retry">⚠ synthesized from {sourcesUsed}/{sourceCount} sources</span>
+              {:else}
+                synthesized from {sourceCount} source{sourceCount !== 1 ? "s" : ""}
+              {/if} ·
+              {selectedTopicId === null ? "composed from topics" : `${sectionCount} enforced sections`}
             </div>
           </div>
           <div class="cs-doc-actions">
@@ -665,6 +681,12 @@
           <!-- Sections -->
           <div class="cs-sections">
             {#each sections as sec (sec.id)}
+              {#if sec.id.startsWith("__topic__")}
+                <!-- Topic divider in the composed whole-subject sheet -->
+                <div class="cs-topic-divider" id={"cs-sec-" + sec.id}>
+                  <span class="cs-topic-divider-label read">{sec.title}</span>
+                </div>
+              {:else}
               <section
                 id={"cs-sec-" + sec.id}
                 class="cs-section{sec.state === 'draft-pending' ? ' is-pending' : ''}"
@@ -696,6 +718,7 @@
                   {/each}
                 </dl>
               </section>
+              {/if}
             {/each}
           </div>
         {/if}
@@ -759,6 +782,9 @@
           </div>
           <div class="cs-sections">
             {#each sheet.sections as sec (sec.id)}
+              {#if sec.id.startsWith("__topic__")}
+                <div class="cs-topic-divider"><span class="cs-topic-divider-label read">{sec.title}</span></div>
+              {:else}
               <section class="cs-section">
                 <header class="cs-sec-head">
                   <h2 class="cs-sec-title">{sec.title}</h2>
@@ -776,6 +802,7 @@
                   {/each}
                 </dl>
               </section>
+              {/if}
             {/each}
           </div>
         </div>

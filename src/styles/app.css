@@ -992,3 +992,31 @@ body.reorder-active, body.reorder-active * { cursor: grabbing !important; user-s
   .mat-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   .gm-types { grid-template-columns: 1fr 1fr; }
 }
+
+/* Topic divider in the composed whole-subject cheatsheet: marks where one
+   topic's verbatim block begins. */
+.cs-topic-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 26px 0 6px;
+}
+.cs-topic-divider::before,
+.cs-topic-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--border-strong, var(--border));
+}
+.cs-topic-divider-label {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.cs-topic-divider:first-child { margin-top: 0; }
+
+/* Coverage warning when a sheet didn't synthesize every source. */
+.cs-cov-warn { color: var(--warn); font-weight: 600; }

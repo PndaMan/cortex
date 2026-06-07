@@ -99,6 +99,8 @@ export interface CheatsheetData {
   subject: string;
   topic: string;
   sources: number;
+  /** Sources actually synthesized into this sheet (coverage). */
+  sources_used: number;
   model: string;
   sections: CsSection[];
 }
@@ -193,8 +195,14 @@ export const chatAnswer = (
 ) => invoke<ChatAnswer>("chat_answer", { subjectId, level, query, sourceId, sourceIds, web });
 export const generateCheatsheet = (subjectId: string, topicId?: string, withImages?: boolean) =>
   invoke<CheatsheetData>("generate_cheatsheet", { subjectId, topicId, withImages });
+/** Regenerate every topic's sheet (+ ungrouped "General"), then return the composed whole-subject sheet. */
+export const generateSubjectCheatsheet = (subjectId: string, withImages?: boolean) =>
+  invoke<CheatsheetData | null>("generate_subject_cheatsheet", { subjectId, withImages });
 export const getCheatsheet = (subjectId: string, topicId?: string) =>
   invoke<CheatsheetData | null>("get_cheatsheet", { subjectId, topicId });
+/** Whole-subject sheet, composed from the stored per-topic sheets. */
+export const getSubjectCheatsheet = (subjectId: string) =>
+  invoke<CheatsheetData | null>("get_subject_cheatsheet", { subjectId });
 export const updateCheatsheet = (subjectId: string, topicId: string | undefined, sections: CsSection[]) =>
   invoke<void>("update_cheatsheet", { subjectId, topicId, sections });
 export const listCheatsheetVersions = (subjectId: string, topicId?: string) =>

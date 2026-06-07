@@ -640,26 +640,103 @@ pub fn context_text(
     }
 
     let text_sql = format!(
-        "SELECT c.text FROM chunks c{where_sql} ORDER BY c.source_id, c.ord"
+        "SELECT c.source_id, c.text FROM chunks c{where_sql} ORDER BY c.source_id, c.ord"
     );
     let mut stmt = conn.prepare(&text_sql)?;
     let rows = stmt.query_map(rusqlite::params_from_iter(binds.iter()), |r| {
-        r.get::<_, String>(0)
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
     })?;
-    let mut out = String::new();
+    // Group chunks per source (query is ordered by source_id, ord), preserving order.
+    let mut per_source: Vec<Vec<String>> = Vec::new();
+    let mut cur_id: Option<String> = None;
     for row in rows {
-        let t = row?;
-        if out.len() + t.len() > max_chars {
-            break;
+        let (sid, t) = row?;
+        if cur_id.as_deref() != Some(sid.as_str()) {
+            per_source.push(Vec::new());
+            cur_id = Some(sid);
         }
-        out.push_str(&t);
-        out.push_str("\n\n");
+        per_source.last_mut().unwrap().push(t);
+    }
+
+    // Fair allocation: give every source at least its even share of the budget so
+    // a few long sources can't crowd the rest out entirely (the old code `break`ed
+    // at the first overflow and silently dropped every later source). A second
+    // round-robin pass spends any leftover budget on sources that still have more.
+    let n_sources = per_source.len().max(1);
+    let per_source_budget = (max_chars / n_sources).max(1);
+    let mut out = String::new();
+    let mut idx: Vec<usize> = vec![0; per_source.len()]; // next-chunk cursor per source
+    for (si, chunks) in per_source.iter().enumerate() {
+        let mut used = 0usize;
+        while idx[si] < chunks.len() {
+            let t = &chunks[idx[si]];
+            if used + t.len() > per_source_budget && used > 0 {
+                break;
+            }
+            if out.len() + t.len() + 2 > max_chars {
+                break;
+            }
+            out.push_str(t);
+            out.push_str("\n\n");
+            used += t.len() + 2;
+            idx[si] += 1;
+        }
+    }
+    // Round-robin the remainder so leftover budget is used without re-starving anyone.
+    let mut progress = true;
+    while progress && out.len() < max_chars {
+        progress = false;
+        for (si, chunks) in per_source.iter().enumerate() {
+            if idx[si] >= chunks.len() {
+                continue;
+            }
+            let t = &chunks[idx[si]];
+            if out.len() + t.len() + 2 > max_chars {
+                continue;
+            }
+            out.push_str(t);
+            out.push_str("\n\n");
+            idx[si] += 1;
+            progress = true;
+        }
     }
 
     let count_sql = format!("SELECT count(DISTINCT c.source_id) FROM chunks c{where_sql}");
     let src_count: i64 =
         conn.query_row(&count_sql, rusqlite::params_from_iter(binds.iter()), |r| r.get(0))?;
     Ok((out, src_count))
+}
+
+/// Source ids in a "bucket": a specific topic (`Some(topic_id)`) or the subject's
+/// ungrouped sources (`None` → `topic_id IS NULL`, the "General" bucket). Ordered
+/// by creation so generation is deterministic. Only sources that produced chunks
+/// (i.e. have ingestable text) are returned — empty sources add nothing to cover.
+pub fn bucket_source_ids(
+    conn: &Connection,
+    subject_id: &str,
+    topic_id: Option<&str>,
+) -> Result<Vec<String>> {
+    let (sql, ids): (String, Vec<String>) = match topic_id {
+        Some(tid) => (
+            "SELECT s.id FROM sources s WHERE s.subject_id=?1 AND s.topic_id=?2 \
+             AND EXISTS (SELECT 1 FROM chunks c WHERE c.source_id=s.id) ORDER BY s.created_at"
+                .into(),
+            vec![subject_id.to_string(), tid.to_string()],
+        ),
+        None => (
+            "SELECT s.id FROM sources s WHERE s.subject_id=?1 AND s.topic_id IS NULL \
+             AND EXISTS (SELECT 1 FROM chunks c WHERE c.source_id=s.id) ORDER BY s.created_at"
+                .into(),
+            vec![subject_id.to_string()],
+        ),
+    };
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |r| r.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
 }
 
 // ---- cheatsheet persistence -------------------------------------------

@@ -430,6 +430,9 @@ class AppStore {
   // Cheatsheet view watches cheatNonce to select it.
   cheatTopicId = $state<string | null>(null);
   cheatNonce = $state(0);
+  // Bumped when a cheatsheet is regenerated in the background (e.g. auto-regen
+  // after a source is added); the Cheatsheet view watches it to reload.
+  cheatsheetReloadNonce = $state(0);
   openTopicSheet(subjectId: string, topicId: string | null) {
     this.openSubject(subjectId); // view=subject, tab=cheatsheet
     this.cheatTopicId = topicId;
