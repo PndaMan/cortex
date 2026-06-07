@@ -138,6 +138,7 @@ pub fn run() {
             commands::db_stats,
             commands::delete_all_data,
             commands::ping_url,
+            commands::omarchy_theme,
             commands::fetch_page,
             // notes
             notes::create_note,

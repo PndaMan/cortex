@@ -293,6 +293,10 @@ export interface WebResult {
 export const webSearch = (query: string, categories?: string) =>
   invoke<WebResult[]>("web_search", { query, categories });
 
+// Current Omarchy theme name (null if Omarchy isn't installed). Powers the
+// "Follow Omarchy theme" toggle in Appearance.
+export const omarchyTheme = () => invoke<string | null>("omarchy_theme");
+
 // ---- long-term memory (manual; injected into AI prompts) ----
 export interface Memory {
   id: string;

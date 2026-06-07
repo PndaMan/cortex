@@ -6,8 +6,18 @@
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
   import { stations } from "../lib/mock";
-  import { keybinds, ACTION_LABELS, ACTION_ORDER } from "../lib/keybinds.svelte";
+  import { keybinds, ACTION_LABELS, ACTION_ORDER, LEADER_ACTIONS } from "../lib/keybinds.svelte";
   import type { Action } from "../lib/keybinds.svelte";
+
+  // Fixed system bindings (not rebindable) shown for reference in the Keybinds tab
+  // so the page reflects every shortcut, not just the customizable single-key set.
+  const SYSTEM_BINDS = [
+    { keys: "Ctrl F", label: "Find on page" },
+    { keys: "Ctrl P", label: "Command palette" },
+    { keys: "Esc",    label: "Close overlay / go back" },
+    { keys: "g d",    label: "Go to dashboard" },
+    { keys: "Alt 1–9", label: "Jump to subject N" },
+  ];
 
   // ---- tab navigation ----
   const TABS = [
@@ -54,7 +64,7 @@
       "x-ai/grok-2-1212",
     ] },
     { id: "openai",     label: "OpenAI",              models: ["gpt-4o","gpt-4o-mini","o3-mini"] },
-    { id: "claude",     label: "Claude",              models: ["claude-3-7-sonnet-20250219","claude-3-5-sonnet-20241022","claude-3-5-haiku-20241022"] },
+    { id: "claude",     label: "Claude",              models: ["claude-opus-4-8","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-3-7-sonnet-20250219","claude-3-5-sonnet-20241022","claude-3-5-haiku-20241022"] },
     { id: "ollama",     label: "Ollama (local)",      models: ["llama3.3:70b","qwen2.5:32b","mistral-small"] },
     { id: "custom",     label: "Custom endpoint",     models: ["custom-model"] },
   ];
@@ -165,6 +175,7 @@
     // track both values
     const rf = readFont;
     const d  = density;
+    if (!loaded) return;
     api.setSettings({ reading_font: rf, density: d }).catch(() => {});
   });
 
@@ -211,11 +222,31 @@
     };
   });
 
-  // ---- local models (ollama) + web search ----
+  // ---- local models (ollama) + web search + remote whisper ----
   let endpoint   = $state("http://localhost:11434");
   let searxng    = $state("");
+  let whisperUrl = $state("");
+  let webImages  = $state(false);
   let testState  = $state<null | "testing" | "ok" | "fail">(null);
   let searxState = $state<null | "testing" | "ok" | "fail">(null);
+  let whisperState = $state<null | "testing" | "ok" | "fail">(null);
+
+  function saveWhisper() {
+    api.setSetting("whisper_url", whisperUrl.trim()).catch(() => {});
+  }
+  async function testWhisper() {
+    if (!whisperUrl.trim()) return;
+    whisperState = "testing";
+    whisperState = await testEndpoint(whisperUrl);
+  }
+
+  // Diagrams/images from the homelab SearXNG. Mirrors app.webImagesEnabled and
+  // persists an explicit choice so it survives the "default-on-when-connected".
+  function setWebImages(on: boolean) {
+    webImages = on;
+    app.webImagesEnabled = on;
+    api.setSetting("web_images_enabled", on ? "true" : "false").catch(() => {});
+  }
 
   // ---- encrypted backups (age + rclone) ----
   let ageRecipient = $state("");
@@ -330,6 +361,7 @@
   // persist the Ollama endpoint on change
   $effect(() => {
     const ep = endpoint;
+    if (!loaded) return;
     api.setSettings({ ollama_url: ep }).catch(() => {});
   });
 
@@ -356,6 +388,18 @@
   let voiceA   = $state("maya");
   let voiceB   = $state("theo");
 
+  // Set true only once the mount hydration below has loaded persisted values.
+  // The persist $effects fire immediately on mount with their *default* values;
+  // without this guard, opening Settings would clobber saved settings (e.g. it
+  // silently reset default_station to "lofi" on every visit).
+  let loaded = $state(false);
+
+  // Built-in + user-added stations, so the Default-station picker shows them all.
+  const allStations = $derived([
+    ...stations.map((s) => ({ id: s.id, label: s.name })),
+    ...app.customStations.map((s) => ({ id: s.id, label: s.name })),
+  ]);
+
   // Stream-tool detection for the YouTube-audio engine (mpv sidecar).
   let mediaTools = $state<api.MediaTools | null>(null);
   $effect(() => {
@@ -368,12 +412,18 @@
   $effect(() => {
     const st = station;
     const ap = autoplay;
+    if (!loaded) return;
     api.setSettings({ default_station: st, autoplay: String(ap) }).catch(() => {});
+    // Keep the live player's current station in sync with the new default.
+    app.music = { ...app.music, current: st };
   });
 
   // persist host voices on change
   $effect(() => {
-    api.setSettings({ voice_a: voiceA, voice_b: voiceB }).catch(() => {});
+    const a = voiceA;
+    const b = voiceB;
+    if (!loaded) return;
+    api.setSettings({ voice_a: a, voice_b: b }).catch(() => {});
   });
 
   // ---- data & privacy state ----
@@ -473,9 +523,10 @@
         assign = { ...assign, embedding: { ...assign.embedding, provider: s.embed_provider } };
       }
 
-      // Local models + web search
+      // Local models + web search + remote whisper
       if (s.ollama_url)                    endpoint = s.ollama_url;
       if (s.searxng_url)                   searxng  = s.searxng_url;
+      if (s.whisper_url)                   whisperUrl = s.whisper_url;
       // Encrypted backups
       if (s.backup_age_recipient) ageRecipient = s.backup_age_recipient;
       if (s.backup_rclone_remote) rcloneRemote = s.backup_rclone_remote;
@@ -485,9 +536,14 @@
       if (s.reading_font)   readFont      = s.reading_font;
       if (s.density)        density       = s.density;
 
-      // Audio voices
+      // Audio: default station, autoplay, host voices
+      if (s.default_station) station = s.default_station;
+      if (s.autoplay !== undefined) autoplay = s.autoplay === "true";
       if (s.voice_a) voiceA = s.voice_a;
       if (s.voice_b) voiceB = s.voice_b;
+
+      // Homelab: web images (diagrams) toggle mirrors the store's resolved value.
+      webImages = app.webImagesEnabled;
 
       // Data & privacy
       if (s.offline_mode !== undefined) offlineMode = s.offline_mode === "true";
@@ -500,6 +556,9 @@
       if (s.profile_about)     about    = s.profile_about;
       if (s.profile_style)     style    = s.profile_style;
       if (s.profile_explain)   explain  = s.profile_explain.split(",").filter(Boolean);
+
+      // Hydration complete — persist effects may now write without clobbering.
+      loaded = true;
     })();
   });
 
@@ -859,11 +918,40 @@ Notes: {about}</pre>
         <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Theme</h3></div>
           <div class="set-card">
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">Follow Omarchy theme</div>
+                <div class="set-row-d">Mirror your desktop's current Omarchy palette on every launch. Picking a theme below turns this off.</div>
+              </div>
+              <div class="set-row-r">
+                <button
+                  type="button"
+                  class={"st-toggle" + (app.followOmarchy ? " on" : "")}
+                  role="switch"
+                  aria-checked={app.followOmarchy}
+                  aria-label="follow omarchy theme"
+                  onclick={async () => {
+                    const matched = await app.setFollowOmarchy(!app.followOmarchy);
+                    if (app.followOmarchy && !matched) {
+                      app.pushToast({ kind: "warning", title: "Omarchy theme not found", body: "Couldn't read your Omarchy theme, or it has no Cortex match." });
+                    } else if (matched) {
+                      app.pushToast({ kind: "success", title: "Following Omarchy", body: `Matched → ${THEME_LABELS[matched]}.` });
+                    }
+                  }}
+                ><span class="st-knob"></span></button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h"><h3 class="set-group-t">Manual theme</h3></div>
+          <div class="set-card">
             <div class="set-themes">
               {#each THEME_OPTS as t}
                 <button
                   class={"set-theme" + (app.theme === t.id ? " on" : "")}
-                  onclick={() => app.setTheme(t.id)}
+                  onclick={() => { if (app.followOmarchy) app.setFollowOmarchy(false); app.setTheme(t.id); }}
                   style="background:{t.b}"
                 >
                   <div class="set-theme-sws">
@@ -975,6 +1063,38 @@ Notes: {about}</pre>
             Reset to preset
           </button>
         </div>
+
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">Leader menu (Space then…)</h3>
+            <p class="set-group-d">Press <span class="kbd">Space</span> to open the leader menu, then a key. Fixed, mnemonic — they only fire while the menu is open.</p>
+          </div>
+          <div class="set-card set-binds">
+            {#each LEADER_ACTIONS as a}
+              <div class="bind-row">
+                <span class="bind-label">{a.label} <span class="faint">· {a.detail}</span></span>
+                <span class="bind-keys"><span class="kbd">Space</span> <span class="kbd">{a.key}</span></span>
+              </div>
+            {/each}
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">System</h3>
+            <p class="set-group-d">Built-in shortcuts that follow OS conventions and can't be rebound.</p>
+          </div>
+          <div class="set-card set-binds">
+            {#each SYSTEM_BINDS as b}
+              <div class="bind-row">
+                <span class="bind-label">{b.label}</span>
+                <span class="bind-keys">
+                  {#each b.keys.split(" ") as part}<span class="kbd">{part}</span> {/each}
+                </span>
+              </div>
+            {/each}
+          </div>
+        </section>
       </div>
 
     <!-- ===== INTEGRATIONS ===== -->
@@ -1022,8 +1142,8 @@ Notes: {about}</pre>
 
         <section class="set-group">
           <div class="set-group-h">
-            <h3 class="set-group-t">Web search</h3>
-            <p class="set-group-d">Point Cortex at your self-hosted SearXNG so chat can pull in fresh web results.</p>
+            <h3 class="set-group-t">Web search (SearXNG)</h3>
+            <p class="set-group-d">Point Cortex at your self-hosted SearXNG. Used to pull diagrams/images into cheatsheets and to enrich chat answers — there is no separate web-search page.</p>
           </div>
           <div class="set-card">
             <div class="set-row stacked">
@@ -1046,10 +1166,54 @@ Notes: {about}</pre>
                   </div>
                 {:else if searxState === "fail"}
                   <div class="set-test mono" style="color:var(--danger,#e06c75)">
-                    <Icon name="x" size={12} /> Unreachable — check the URL and that SearXNG is running.
+                    <Icon name="x" size={12} /> Unreachable — check the URL and that SearXNG is running (with JSON format enabled).
                   </div>
                 {/if}
-                <div class="set-row-d" style="margin-top:6px">Self-hosted SearXNG base URL, e.g. http://192.168.1.50:8080</div>
+                <div class="set-row-d" style="margin-top:6px">Self-hosted SearXNG base URL, e.g. http://192.168.1.50:8080. Enable JSON in its settings.yml (<span class="mono">formats: [html, json]</span>).</div>
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">Illustrate with diagrams</div>
+                <div class="set-row-d">Pull a relevant diagram per cheatsheet section + images in chat. On by default once SearXNG is connected.</div>
+              </div>
+              <div class="set-row-r">
+                <button type="button" class={"st-toggle" + (webImages ? " on" : "")} onclick={() => setWebImages(!webImages)} disabled={!searxng.trim()} role="switch" aria-checked={webImages} aria-label="diagrams"><span class="st-knob"></span></button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">Remote transcription (Whisper)</h3>
+            <p class="set-group-d">Offload lecture transcription to a homelab Whisper server (e.g. the bundled <span class="mono">faster-whisper</span> service) instead of installing Python locally. Leave blank to transcribe on this machine.</p>
+          </div>
+          <div class="set-card">
+            <div class="set-row stacked">
+              <div class="set-row-l"><div class="set-row-t">Whisper endpoint</div></div>
+              <div class="set-row-r">
+                <div class="row-inline">
+                  <input class="input mono" bind:value={whisperUrl} onchange={saveWhisper} onblur={saveWhisper} placeholder="http://192.168.1.50:9009" />
+                  <button class="btn" onclick={testWhisper}>
+                    <Icon name="refresh" size={12} /> Test
+                  </button>
+                </div>
+                {#if whisperState === "testing"}
+                  <div class="set-test mono faint">
+                    <span class="is-spin" style="width:11px;height:11px;display:inline-block;vertical-align:-1px"></span>
+                    Pinging…
+                  </div>
+                {:else if whisperState === "ok"}
+                  <div class="set-test mono" style="color:var(--ok)">
+                    <Icon name="check" size={12} /> Reachable
+                  </div>
+                {:else if whisperState === "fail"}
+                  <div class="set-test mono" style="color:var(--danger,#e06c75)">
+                    <Icon name="x" size={12} /> Unreachable — check the URL and that the Whisper service is running.
+                  </div>
+                {/if}
+                <div class="set-row-d" style="margin-top:6px">OpenAI-compatible transcription endpoint, base URL only (Cortex calls <span class="mono">/v1/audio/transcriptions</span>).</div>
               </div>
             </div>
           </div>
@@ -1119,7 +1283,7 @@ Notes: {about}</pre>
                 <Picker
                   value={station}
                   onChange={(v) => (station = v)}
-                  options={stations.map((s) => ({ id: s.id, label: s.name }))}
+                  options={allStations}
                 />
               </div>
             </div>

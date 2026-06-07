@@ -259,6 +259,8 @@ class AppStore {
   // chrome / modal state
   mode = $state<Mode>("NOR");
   theme = $state<Theme>("osaka-jade");
+  // When true, Cortex mirrors the desktop's current Omarchy theme on launch.
+  followOmarchy = $state(false);
   cmdkOpen = $state(false);
   leaderOpen = $state(false);
   chatOpen = $state(false); // closed by default; user opens with `c`. Persists across views.
@@ -330,9 +332,16 @@ class AppStore {
     // Restore preferences: theme, keybinds, and audio defaults.
     try {
       const all = await api.getAllSettings();
-      const savedTheme = all["theme"] as Theme | undefined;
-      if (savedTheme && THEMES.includes(savedTheme)) this.setTheme(savedTheme);
-      else this.applyTheme(this.theme);
+      // Follow Omarchy theme takes precedence when enabled — adopt the desktop's
+      // current palette on every launch (and fall through if it can't be read).
+      this.followOmarchy = all["follow_omarchy"] === "true";
+      let themed = false;
+      if (this.followOmarchy) themed = (await this.syncOmarchyTheme()) !== null;
+      if (!themed) {
+        const savedTheme = all["theme"] as Theme | undefined;
+        if (savedTheme && THEMES.includes(savedTheme)) this.setTheme(savedTheme);
+        else this.applyTheme(this.theme);
+      }
       // Appearance: reading typeface + density must be applied at startup, not
       // only while the Settings view is mounted (otherwise they reset on launch).
       if (all["reading_font"]) document.documentElement.setAttribute("data-read", all["reading_font"]);
@@ -670,6 +679,33 @@ class AppStore {
     this.theme = t;
     this.applyTheme(t);
     api.setSetting("theme", t).catch(() => {});
+  }
+  /** Read the desktop's current Omarchy theme and adopt it if it maps to one of
+   *  Cortex's palettes. Returns the matched theme, or null if none/unavailable.
+   *  Persists the theme but NOT via setTheme's own path so the follow flag stays
+   *  the source of truth. */
+  async syncOmarchyTheme(): Promise<Theme | null> {
+    const name = (await api.omarchyTheme().catch(() => null))?.trim().toLowerCase();
+    if (!name) return null;
+    // Omarchy theme dir names line up with Cortex ids for the shared palettes;
+    // normalise a couple of known aliases.
+    const alias: Record<string, Theme> = {
+      "tokyo-night": "tokyo-night",
+      "catppuccin-mocha": "catppuccin",
+      "rose-pine": "rose-pine",
+    };
+    const match = (alias[name] ?? name) as Theme;
+    if (!THEMES.includes(match)) return null;
+    this.theme = match;
+    this.applyTheme(match);
+    api.setSetting("theme", match).catch(() => {});
+    return match;
+  }
+  /** Toggle "follow Omarchy theme" and persist it; syncs immediately when on. */
+  async setFollowOmarchy(on: boolean): Promise<Theme | null> {
+    this.followOmarchy = on;
+    api.setSetting("follow_omarchy", on ? "true" : "false").catch(() => {});
+    return on ? await this.syncOmarchyTheme() : null;
   }
   cycleTheme() {
     const next = THEMES[(THEMES.indexOf(this.theme) + 1) % THEMES.length];

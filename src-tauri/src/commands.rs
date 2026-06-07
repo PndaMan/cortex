@@ -2509,6 +2509,28 @@ pub fn delete_all_data(app: AppHandle, state: State<AppState>) -> Result<()> {
     Ok(())
 }
 
+/// The user's current Omarchy theme name (e.g. "tokyo-night"), read from
+/// `~/.config/omarchy/current/theme.name`. Returns None when Omarchy isn't
+/// installed so the "Follow Omarchy theme" toggle can degrade gracefully.
+#[tauri::command]
+pub fn omarchy_theme() -> Option<String> {
+    let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
+    let name_file = home.join(".config/omarchy/current/theme.name");
+    if let Ok(s) = std::fs::read_to_string(&name_file) {
+        let t = s.trim().to_string();
+        if !t.is_empty() {
+            return Some(t);
+        }
+    }
+    // Fall back to the basename of the `current/theme` symlink target.
+    let link = home.join(".config/omarchy/current/theme");
+    let target = std::fs::read_link(&link).ok()?;
+    target
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+}
+
 /// Reachability check for the homelab "Test connection" button.
 #[tauri::command]
 pub async fn ping_url(url: String) -> Result<bool> {
