@@ -201,7 +201,10 @@
 /* ============ CHEATSHEET DOC ============ */
 .cs-doc { max-width: 760px; margin: 0 auto; padding: var(--sp-7) var(--sp-7) var(--sp-9); }
 .cs-doc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-5); }
-.cs-title { font-size: clamp(1.5rem, 1.1rem + 1.5vw, 2.2rem); line-height: 1.15; color: var(--fg-bright); font-weight: 600; letter-spacing: -0.01em; margin: 5px 0 7px; overflow-wrap: anywhere; }
+/* Let the title/meta block grow to fill the row (minus the actions) instead of
+   collapsing into a narrow left column. min-width:0 lets it actually take the space. */
+.cs-doc-head > div:first-child { flex: 1 1 auto; min-width: 0; }
+.cs-title { font-size: clamp(1.5rem, 1.1rem + 1.5vw, 2.2rem); line-height: 1.15; color: var(--fg-bright); font-weight: 600; letter-spacing: -0.01em; margin: 5px 0 7px; overflow-wrap: break-word; }
 .cs-sub { font-size: var(--t-xs); color: var(--fg-faint); }
 .cs-doc-actions { display: flex; gap: 8px; flex: none; }
 
