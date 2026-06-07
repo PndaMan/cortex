@@ -52,6 +52,21 @@ services:
       # Preload a model so the first transcription isn't a cold download.
       - WHISPER__MODEL=Systran/faster-whisper-base.en
 
+  sync:
+    # WebDAV target for Cortex live sync (last-write-wins DB snapshot). Cortex
+    # PUTs/GETs cortex.db + cortex.stamp here. Set credentials before exposing.
+    image: bytemark/webdav:latest
+    container_name: cortex-sync
+    restart: unless-stopped
+    ports:
+      - "9010:80"
+    environment:
+      - AUTH_TYPE=Basic
+      - USERNAME=cortex
+      - PASSWORD=change-me-sync-password
+    volumes:
+      - sync-data:/var/lib/dav
+
   ollama:
     image: ollama/ollama:latest
     container_name: cortex-ollama
@@ -73,3 +88,4 @@ services:
 volumes:
   whisper-models:
   ollama-models:
+  sync-data:

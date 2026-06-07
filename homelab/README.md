@@ -8,6 +8,7 @@ or transcription without installing a Python toolchain on their laptop.
 |---------|----------------------|--------------|
 | **SearXNG** | Diagrams/images in cheatsheets + web-enriched chat | `8080` |
 | **Whisper** (Speaches) | Lecture transcription, OpenAI-compatible | `9009` |
+| **Sync** (WebDAV) | Live sync — auto-store your library, fetch it on launch | `9010` |
 | **Ollama** *(optional)* | Local LLM + embeddings, no API key | `11434` |
 
 ## Quick start
@@ -26,7 +27,12 @@ hit **Test**:
 
 - **SearXNG** → `http://<host>:8080`
 - **Remote transcription (Whisper)** → `http://<host>:9009`
+- **Live sync (WebDAV)** → `http://<host>:9010` (user `cortex`, the password you set)
 - **Local models (Ollama)** → `http://<host>:11434`
+
+> **Live sync** keeps one library across devices: each device pushes a snapshot
+> after changes and pulls a newer one on launch (last-write-wins). Change the
+> WebDAV `PASSWORD` in `docker-compose.yml` before exposing it.
 
 `<host>` is `localhost` if you run Cortex on the same machine, otherwise the
 homelab box's LAN/VPN IP or hostname.

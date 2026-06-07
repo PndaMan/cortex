@@ -256,6 +256,48 @@
     whisperState = await testEndpoint(whisperUrl);
   }
 
+  // ---- live homelab sync (last-write-wins DB snapshot) ----
+  let syncUrl   = $state("");
+  let syncUser  = $state("");
+  let syncPass  = $state("");
+  let syncOn    = $state(false);
+  let syncTestState = $state<null | "testing" | "ok" | "fail">(null);
+
+  function saveSync() {
+    api.setSettings({
+      sync_url: syncUrl.trim(),
+      sync_user: syncUser.trim(),
+      sync_pass: syncPass,
+      sync_enabled: syncOn ? "true" : "false",
+    }).then(() => app.loadSyncStatus()).catch(() => {});
+  }
+  function toggleSync() {
+    syncOn = !syncOn;
+    if (syncOn && !syncUrl.trim()) { syncOn = false; return; }
+    saveSync();
+  }
+  async function testSync() {
+    if (!syncUrl.trim()) return;
+    syncTestState = "testing";
+    try {
+      syncTestState = (await api.syncTest(syncUrl.trim(), syncUser.trim(), syncPass)) ? "ok" : "fail";
+    } catch {
+      syncTestState = "fail";
+    }
+  }
+  function fmtSyncTime(ms: number): string {
+    return ms ? new Date(ms).toLocaleString() : "never";
+  }
+  function syncPill() {
+    switch (app.syncState) {
+      case "syncing": return { cls: "draft", label: "Syncing…" };
+      case "synced":  return { cls: "ready", label: "Synced" };
+      case "error":   return { cls: "error", label: "Sync error" };
+      case "idle":    return { cls: "ready", label: "On" };
+      default:        return { cls: "pending", label: "Off" };
+    }
+  }
+
   // Diagrams/images from the homelab SearXNG. Mirrors app.webImagesEnabled and
   // persists an explicit choice so it survives the "default-on-when-connected".
   function setWebImages(on: boolean) {
@@ -555,6 +597,11 @@
       if (s.ollama_url)                    endpoint = s.ollama_url;
       if (s.searxng_url)                   searxng  = s.searxng_url;
       if (s.whisper_url)                   whisperUrl = s.whisper_url;
+      // Live sync
+      if (s.sync_url)   syncUrl  = s.sync_url;
+      if (s.sync_user)  syncUser = s.sync_user;
+      if (s.sync_pass)  syncPass = s.sync_pass;
+      syncOn = s.sync_enabled === "true";
       // Encrypted backups
       if (s.backup_age_recipient) ageRecipient = s.backup_age_recipient;
       if (s.backup_rclone_remote) rcloneRemote = s.backup_rclone_remote;
@@ -1212,6 +1259,55 @@ Notes: {about}</pre>
           failHint: "Unreachable — check the URL and that the Whisper service is running.",
           hint: "OpenAI-compatible endpoint, base URL only (Cortex calls <span class='mono'>/v1/audio/transcriptions</span>).",
         })}
+
+        <section class="set-group">
+          <div class="set-group-h svc-h">
+            <div>
+              <h3 class="set-group-t">Live sync</h3>
+              <p class="set-group-d">Auto-store your library to a homelab WebDAV target and fetch the newest copy on launch. Last-write-wins across devices (whole-database, not per-record).</p>
+            </div>
+            <span class="status-pill status-pill--{syncPill().cls}"><span class="dot"></span>{syncPill().label}</span>
+          </div>
+          <div class="set-card">
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">Enable live sync</div>
+                <div class="set-row-d">Push after changes (debounced) + pull a newer copy on launch.</div>
+              </div>
+              <div class="set-row-r">
+                <button type="button" class={"st-toggle" + (syncOn ? " on" : "")} onclick={toggleSync} disabled={!syncUrl.trim()} role="switch" aria-checked={syncOn} aria-label="live sync"><span class="st-knob"></span></button>
+              </div>
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">WebDAV URL</div>
+              <div class="row-inline">
+                <input class="input mono" bind:value={syncUrl} onchange={saveSync} onblur={saveSync} placeholder="http://192.168.1.50:9010" />
+                <button class="btn" onclick={testSync} disabled={syncTestState === "testing" || !syncUrl.trim()}>
+                  <Icon name="refresh" size={12} /> Test
+                </button>
+              </div>
+              {#if syncTestState === "fail"}
+                <div class="set-row-d" style="color:var(--err,#e5484d)">Unreachable or auth failed — check the URL and credentials.</div>
+              {:else if syncTestState === "ok"}
+                <div class="set-row-d" style="color:var(--ok)">Reachable.</div>
+              {/if}
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">Username <span class="faint">optional</span></div>
+              <input class="input mono" bind:value={syncUser} onchange={saveSync} onblur={saveSync} placeholder="cortex" />
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">Password <span class="faint">optional</span></div>
+              <div class="row-inline">
+                <input class="input mono" type="password" bind:value={syncPass} onchange={saveSync} onblur={saveSync} placeholder="••••••••" />
+                <button class="btn btn--primary" disabled={!syncOn || app.syncState === "syncing"} onclick={() => app.syncNow()}>
+                  <Icon name="upload" size={12} /> {app.syncState === "syncing" ? "Syncing…" : "Sync now"}
+                </button>
+              </div>
+              <div class="set-row-d">Last synced: <span class="mono">{fmtSyncTime(app.syncLastAt)}</span>. Bring up a WebDAV target with the <span class="mono">homelab/</span> compose.</div>
+            </div>
+          </div>
+        </section>
 
         <section class="set-group">
           <div class="set-group-h svc-h">

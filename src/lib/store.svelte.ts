@@ -391,6 +391,7 @@ class AppStore {
       this.applyTheme(this.theme);
     }
     this.startReminderPolling();
+    void this.loadSyncStatus(); // learn whether homelab sync is on (drives the pill)
     // Auto-retry sources that failed to ingest last time (offline, model not set
     // up, transient errors). Fire-and-forget so it never blocks first render.
     void this.retryFailedSources();
@@ -458,6 +459,43 @@ class AppStore {
     if (this.activeSource) {
       this.activeSource =
         (await api.getSource(this.activeSource.id).catch(() => null)) ?? this.activeSource;
+    }
+    this.scheduleSync(); // data changed → push to homelab (debounced)
+  }
+
+  // ---- live homelab sync (last-write-wins DB snapshot) ----
+  // "off" until we learn sync is enabled; then idle/syncing/synced/error.
+  syncState = $state<"off" | "idle" | "syncing" | "synced" | "error">("off");
+  syncLastAt = $state(0);
+  #syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async loadSyncStatus() {
+    try {
+      const s = await api.syncStatus();
+      this.syncState = s.enabled && s.configured ? "idle" : "off";
+      this.syncLastAt = s.last_at;
+    } catch {
+      this.syncState = "off";
+    }
+  }
+
+  /** Debounced push after a change — the "auto store" half of live sync. */
+  scheduleSync() {
+    if (this.syncState === "off") return;
+    if (this.#syncTimer) clearTimeout(this.#syncTimer);
+    this.#syncTimer = setTimeout(() => void this.syncNow(), 5000);
+  }
+
+  /** Push immediately (used by the debounce and the Settings "Sync now" button). */
+  async syncNow() {
+    if (this.syncState === "off") return;
+    if (this.#syncTimer) { clearTimeout(this.#syncTimer); this.#syncTimer = null; }
+    this.syncState = "syncing";
+    try {
+      this.syncLastAt = await api.syncPush();
+      this.syncState = "synced";
+    } catch {
+      this.syncState = "error";
     }
   }
 

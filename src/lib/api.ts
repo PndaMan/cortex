@@ -172,6 +172,18 @@ export const deleteSource = (id: string) => invoke<void>("delete_source", { id }
 export const reingestSource = (id: string) => invoke<IngestResult>("reingest_source", { id });
 /** Sources that failed to ingest (error / draft-with-error), across all subjects. */
 export const listFailedSources = () => invoke<Source[]>("list_failed_sources");
+
+// ---- live homelab sync (last-write-wins DB snapshot) ----
+export interface SyncStatus {
+  enabled: boolean;
+  configured: boolean;
+  last_at: number; // epoch-ms, 0 = never
+}
+export const syncStatus = () => invoke<SyncStatus>("sync_status");
+export const syncTest = (url: string, user: string, pass: string) =>
+  invoke<boolean>("sync_test", { url, user, pass });
+/** Push a snapshot of the local DB to the homelab; returns the push timestamp (ms). */
+export const syncPush = () => invoke<number>("sync_push");
 export const listChunks = (sourceId: string) =>
   invoke<ChunkInfo[]>("list_chunks", { sourceId });
 export const addSource = (input: AddSourceInput) =>

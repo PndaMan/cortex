@@ -16,6 +16,7 @@ mod mpv;
 mod notes;
 mod repo;
 mod review;
+mod sync;
 mod vector;
 
 use db::AppState;
@@ -34,6 +35,9 @@ pub fn run() {
                 .expect("resolve app data dir");
             std::fs::create_dir_all(&dir).expect("create app data dir");
             let db_path = dir.join("cortex.db");
+            // Live sync: if the homelab holds a newer snapshot, pull it BEFORE
+            // opening the DB (best-effort; never blocks startup on failure).
+            sync::pull_on_launch(&db_path);
             let state = AppState::new(&db_path).expect("init database");
             app.manage(state);
 
@@ -141,6 +145,9 @@ pub fn run() {
             commands::ping_url,
             commands::omarchy_theme,
             commands::fetch_page,
+            sync::sync_status,
+            sync::sync_test,
+            sync::sync_push,
             // notes
             notes::create_note,
             notes::list_notes,
