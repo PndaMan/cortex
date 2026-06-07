@@ -1566,7 +1566,6 @@ pub fn get_cheatsheet(
 /// bucket has a sheet yet.
 fn compose_subject_cheatsheet(c: &Connection, subject_id: &str) -> Result<Option<CheatsheetData>> {
     let subj = repo::get_subject(c, subject_id)?;
-    let mut sections: Vec<CsSection> = Vec::new();
     let mut total: i64 = 0;
 
     // Buckets in display order: each topic in order, then General (ungrouped) last.
@@ -1577,6 +1576,8 @@ fn compose_subject_cheatsheet(c: &Connection, subject_id: &str) -> Result<Option
         .collect();
     buckets.push((None, "General".into()));
 
+    // Load each bucket's stored sheet (only buckets with sources AND a sheet).
+    let mut loaded: Vec<(String, Vec<CsSection>)> = Vec::new(); // (topic name, sections)
     for (tid, name) in &buckets {
         let ids = repo::bucket_source_ids(c, subject_id, tid.as_deref())?;
         if ids.is_empty() {
@@ -1587,23 +1588,48 @@ fn compose_subject_cheatsheet(c: &Connection, subject_id: &str) -> Result<Option
             continue; // has sources but no sheet generated yet
         }
         total += ids.len() as i64;
-        let marker = match tid {
-            Some(id) => format!("__topic__{id}"),
-            None => "__topic__general".into(),
-        };
-        sections.push(CsSection {
-            id: marker,
-            title: name.clone(),
-            state: "approved".into(),
-            items: Vec::new(),
-            image: None,
-        });
-        sections.extend(secs);
+        loaded.push((name.clone(), secs));
     }
-
-    if sections.is_empty() {
+    if loaded.is_empty() {
         return Ok(None);
     }
+
+    // Merge by SECTION TITLE across topics (first-seen order preserved), so the
+    // whole-subject sheet has ONE "Key Concepts", ONE "Definitions", etc. — each
+    // holding every topic's items, prefixed by a per-topic divider (a sentinel
+    // item whose `t` starts with "__topic__"). Items are copied verbatim, so each
+    // topic's content stays byte-for-byte identical to its own sheet.
+    let mut order: Vec<String> = Vec::new();
+    let mut by_title: std::collections::HashMap<String, Vec<CsItem>> = std::collections::HashMap::new();
+    for (topic_name, secs) in &loaded {
+        for sec in secs {
+            let key = sec.title.trim().to_string();
+            if !by_title.contains_key(&key) {
+                order.push(key.clone());
+            }
+            let bucket = by_title.entry(key).or_default();
+            bucket.push(CsItem {
+                t: format!("__topic__{topic_name}"),
+                d: String::new(),
+            });
+            bucket.extend(sec.items.iter().cloned());
+        }
+    }
+
+    let sections: Vec<CsSection> = order
+        .into_iter()
+        .map(|title| {
+            let items = by_title.remove(&title).unwrap_or_default();
+            CsSection {
+                id: slug(&title),
+                title,
+                state: "approved".into(),
+                items,
+                image: None,
+            }
+        })
+        .collect();
+
     Ok(Some(CheatsheetData {
         subject: subj.name.clone(),
         topic: subj.name,
@@ -1648,12 +1674,49 @@ pub async fn generate_subject_cheatsheet(
         }
         b
     };
-    for tid in buckets {
-        generate_cheatsheet(app.clone(), subject_id.clone(), tid, with_images).await?;
+    // Generate buckets CONCURRENTLY — a separate generation per topic, all at
+    // once — capped so a big subject doesn't overwhelm the provider's rate
+    // limits. Each generate_cheatsheet holds the DB lock only briefly (the slow
+    // model calls run lock-free), so concurrency is safe.
+    const MAX_CONCURRENT: usize = 5;
+    let mut first_err: Option<Error> = None;
+    for chunk in buckets.chunks(MAX_CONCURRENT) {
+        let mut handles = Vec::new();
+        for tid in chunk {
+            let app2 = app.clone();
+            let sid = subject_id.clone();
+            let tid = tid.clone();
+            handles.push(tauri::async_runtime::spawn(async move {
+                generate_cheatsheet(app2, sid, tid, with_images).await
+            }));
+        }
+        for h in handles {
+            match h.await {
+                Ok(Ok(_)) => {}
+                // One topic failing (e.g. a rate limit) shouldn't sink the rest;
+                // remember the first error and keep going — coverage will show gaps.
+                Ok(Err(e)) => {
+                    first_err.get_or_insert(e);
+                }
+                Err(e) => {
+                    first_err.get_or_insert_with(|| {
+                        Error::Other(format!("subject cheatsheet task failed: {e}"))
+                    });
+                }
+            }
+        }
     }
-    let state = app.state::<AppState>();
-    let c = state.db.lock().unwrap();
-    compose_subject_cheatsheet(&c, &subject_id)
+    let composed = {
+        let state = app.state::<AppState>();
+        let c = state.db.lock().unwrap();
+        compose_subject_cheatsheet(&c, &subject_id)?
+    };
+    // Surface a failure only if nothing at all could be produced.
+    match (composed, first_err) {
+        (Some(data), _) => Ok(Some(data)),
+        (None, Some(e)) => Err(e),
+        (None, None) => Ok(None),
+    }
 }
 
 /// Persist a user-edited cheatsheet (from the editor) for a subject/topic and

@@ -41,6 +41,17 @@
     (app.activeSubject?.topics ?? []).filter((t) => t.sources.length > 0)
   );
 
+  // Sources attached directly to the subject (no topic) → the "General" bucket.
+  const ungroupedCount = $derived(
+    Math.max(
+      0,
+      (app.activeSubject?.sourceCount ?? 0) -
+        (app.activeSubject?.topics ?? []).reduce((n, t) => n + t.sources.length, 0)
+    )
+  );
+  // How many buckets a whole-subject (re)generate will fan out to.
+  const bucketCount = $derived(topicTabs.length + (ungroupedCount > 0 ? 1 : 0));
+
   // Subtle per-subject accent for the active pill.
   const accent = $derived(app.subjectColor(app.activeSubject));
 
@@ -150,7 +161,7 @@
   // ── generate / regenerate for the CURRENT selection (BACKGROUND) ──
   // Runs through the global jobs store so navigating away won't cancel it; on
   // completion we reload the persisted cheatsheet for that exact selection.
-  function generate() {
+  async function generate() {
     const sub = app.activeSubject;
     if (!sub || csGenerating) return;
     const topicId = selectedTopicId; // capture the selection at click time
@@ -158,6 +169,23 @@
       topicId === null
         ? sub.name
         : (sub.topics.find((t) => t.id === topicId)?.name ?? sub.name);
+    // Whole subject = fan out to every topic's sheet (in parallel). Confirm first
+    // since it runs a separate AI generation per topic and overwrites them all.
+    if (topicId === null) {
+      const n = bucketCount;
+      if (n === 0) return;
+      const ok = await app.confirm({
+        title: "Regenerate all topic cheatsheets?",
+        body:
+          `This generates a fresh cheatsheet for each of the ${n} ` +
+          `${n === 1 ? "topic" : "topics"} with sources` +
+          `${ungroupedCount > 0 ? " (including the ungrouped “General” sources)" : ""}, ` +
+          `running in parallel. It overwrites the existing cheatsheets and uses AI ` +
+          `tokens for every source.`,
+        okLabel: "Regenerate all",
+      });
+      if (!ok) return;
+    }
     jobs.start({
       kind: "cheatsheet",
       label: topicId === null ? `${topicName} (all topics)` : topicName,
@@ -699,7 +727,7 @@
                       <span class="dot"></span>pending
                     </span>
                   {:else}
-                    <span class="cs-sec-count mono">{sec.items.length}</span>
+                    <span class="cs-sec-count mono">{sec.items.filter((x) => !x.t.startsWith("__topic__")).length}</span>
                   {/if}
                 </header>
 
@@ -711,10 +739,17 @@
 
                 <dl class="cs-list">
                   {#each sec.items as item, i (i)}
+                    {#if item.t.startsWith("__topic__")}
+                      <!-- per-topic divider within a merged section -->
+                      <div class="cs-topic-subdiv" id={"cs-it-" + sec.id + "-" + i}>
+                        <span class="cs-topic-subdiv-label read">{item.t.slice(9)}</span>
+                      </div>
+                    {:else}
                     <div class="cs-item" id={"cs-it-" + sec.id + "-" + i}>
                       <dt>{item.t}</dt>
                       <dd><RichText text={item.d} /></dd>
                     </div>
+                    {/if}
                   {/each}
                 </dl>
               </section>
@@ -752,7 +787,11 @@
               </div>
               {#if idxExpanded[sec.id]}
                 {#each sec.items as item, i (i)}
-                  <button class="cs-idx-item" title={item.t} onclick={() => jumpTo("cs-it-" + sec.id + "-" + i)}>{item.t}</button>
+                  {#if item.t.startsWith("__topic__")}
+                    <button class="cs-idx-item cs-idx-topic" title={item.t.slice(9)} onclick={() => jumpTo("cs-it-" + sec.id + "-" + i)}>{item.t.slice(9)}</button>
+                  {:else}
+                    <button class="cs-idx-item" title={item.t} onclick={() => jumpTo("cs-it-" + sec.id + "-" + i)}>{item.t}</button>
+                  {/if}
                 {/each}
               {/if}
             {/each}
@@ -788,17 +827,21 @@
               <section class="cs-section">
                 <header class="cs-sec-head">
                   <h2 class="cs-sec-title">{sec.title}</h2>
-                  <span class="cs-sec-count mono">{sec.items.length}</span>
+                  <span class="cs-sec-count mono">{sec.items.filter((x) => !x.t.startsWith("__topic__")).length}</span>
                 </header>
                 {#if sec.image}
                   <span class="cs-sec-img"><img src={sec.image} alt={sec.title} /></span>
                 {/if}
                 <dl class="cs-list">
                   {#each sec.items as item, i (i)}
+                    {#if item.t.startsWith("__topic__")}
+                      <div class="cs-topic-subdiv"><span class="cs-topic-subdiv-label read">{item.t.slice(9)}</span></div>
+                    {:else}
                     <div class="cs-item">
                       <dt>{item.t}</dt>
                       <dd><RichText text={item.d} /></dd>
                     </div>
+                    {/if}
                   {/each}
                 </dl>
               </section>

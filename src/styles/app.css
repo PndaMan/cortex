@@ -1018,5 +1018,30 @@ body.reorder-active, body.reorder-active * { cursor: grabbing !important; user-s
 }
 .cs-topic-divider:first-child { margin-top: 0; }
 
+/* Per-topic divider INSIDE a merged section (composed whole-subject sheet): one
+   "Key Concepts" etc. holds every topic's items, grouped by these. */
+.cs-topic-subdiv {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 4px;
+}
+.cs-topic-subdiv:first-child { margin-top: 2px; }
+.cs-topic-subdiv::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--border);
+}
+.cs-topic-subdiv-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-dim, var(--accent));
+  white-space: nowrap;
+}
+.cs-idx-topic { color: var(--accent-dim, var(--accent)); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; }
+
 /* Coverage warning when a sheet didn't synthesize every source. */
 .cs-cov-warn { color: var(--warn); font-weight: 600; }
