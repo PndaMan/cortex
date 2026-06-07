@@ -408,14 +408,14 @@
     }
   });
 
-  // persist audio on change
+  // persist audio on change. NOTE: never read app.music here — reading + writing
+  // it in one effect creates a self-triggering reactive loop (crashes the view).
+  // The live-player sync happens in the Picker's onChange handler instead.
   $effect(() => {
     const st = station;
     const ap = autoplay;
     if (!loaded) return;
     api.setSettings({ default_station: st, autoplay: String(ap) }).catch(() => {});
-    // Keep the live player's current station in sync with the new default.
-    app.music = { ...app.music, current: st };
   });
 
   // persist host voices on change
@@ -1282,7 +1282,7 @@ Notes: {about}</pre>
               <div class="set-row-r">
                 <Picker
                   value={station}
-                  onChange={(v) => (station = v)}
+                  onChange={(v) => { station = v; app.music = { ...app.music, current: v }; }}
                   options={allStations}
                 />
               </div>

@@ -510,9 +510,12 @@ pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult>
         } else if src.kind == "audio" {
             if let Some(p) = input.path.as_deref() {
                 emit_progress(&app, &id, "parsing", "transcribing audio (Whisper)", 35);
-                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true);
+                let remote = whisper_remote_url(&state);
+                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref());
                 if !t.trim().is_empty() {
                     text = t;
+                    warning = w;
+                } else if w.is_some() {
                     warning = w;
                 }
             }
@@ -671,7 +674,8 @@ pub async fn add_source(
         } else if kind == "audio" {
             if let Some(p) = input.path.as_deref() {
                 emit_progress(&app, &source_id, "parsing", "transcribing audio (Whisper)", 35);
-                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true);
+                let remote = whisper_remote_url(&state);
+                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref());
                 if t.trim().is_empty() { (text, w.or(warning)) } else { (t, w) }
             } else {
                 (text, warning)
@@ -2041,10 +2045,49 @@ pub fn set_settings(state: State<AppState>, values: std::collections::HashMap<St
 /// Transcribe an audio file with a local Whisper CLI if one is installed
 /// (openai-whisper `whisper`, or whisper.cpp `whisper-cli`/`main`). Returns
 /// `(transcript, warning)`. A missing binary is a graceful warning, not an error.
-fn transcribe(file: &Path, data_dir: &Path, allow_install: bool) -> (String, Option<String>) {
+/// The configured homelab Whisper base URL, if any (empty → None).
+fn whisper_remote_url(state: &AppState) -> Option<String> {
+    let c = state.db.lock().ok()?;
+    repo::get_setting(&c, "whisper_url")
+        .ok()
+        .flatten()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn transcribe(
+    file: &Path,
+    data_dir: &Path,
+    allow_install: bool,
+    remote_url: Option<&str>,
+) -> (String, Option<String>) {
     use std::process::Command;
     let outdir = std::env::temp_dir().join(format!("cortex-asr-{}", crate::db::new_id()));
     let _ = std::fs::create_dir_all(&outdir);
+
+    // 0. Remote homelab Whisper (OpenAI-compatible /v1/audio/transcriptions).
+    //    Tried first when configured so users never need a local Python toolchain.
+    if let Some(base) = remote_url.map(str::trim).filter(|s| !s.is_empty()) {
+        match transcribe_remote(base, file) {
+            Ok(t) => {
+                let _ = std::fs::remove_dir_all(&outdir);
+                return (t, None); // empty = ran but recognised nothing
+            }
+            // Remote configured but unreachable/erroring: surface it rather than
+            // silently falling back to a (likely absent) local toolchain.
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&outdir);
+                return (
+                    String::new(),
+                    Some(format!(
+                        "Couldn't reach your homelab Whisper server at {base} — {e}. \
+                         Check Settings → Integrations → Remote transcription, or clear it to \
+                         transcribe on this machine."
+                    )),
+                );
+            }
+        }
+    }
 
     // openai-whisper. Fall back to ~/.local/bin/whisper (pip --user install dir)
     // in case the app was launched without it on PATH (desktop launchers often
@@ -2106,35 +2149,106 @@ fn transcribe(file: &Path, data_dir: &Path, allow_install: bool) -> (String, Opt
     // app sets up automatically (CTranslate2, no PyTorch). The first call on a
     // fresh machine creates the venv + pip-installs it (slow, one-off); afterwards
     // it's quick. PyAV decodes the audio, so no system ffmpeg is needed.
-    if let Some(py) = faster_whisper_python(data_dir, allow_install) {
-        let models_dir = data_dir.join("whisper-models");
-        let _ = std::fs::create_dir_all(&models_dir);
-        // argv[1] = audio file, argv[2] = model cache dir (model auto-downloads here)
-        const RUNNER: &str = "import sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('base.en',device='cpu',compute_type='int8',download_root=sys.argv[2])\nsegs,_=m.transcribe(sys.argv[1],language='en')\nprint(' '.join(s.text.strip() for s in segs))";
-        let out = Command::new(&py).arg("-c").arg(RUNNER).arg(file).arg(&models_dir).output();
-        if let Ok(o) = out {
-            if o.status.success() {
-                let t = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                let _ = std::fs::remove_dir_all(&outdir);
-                return (t, None); // empty string = ran but recognised nothing
+    // Diagnostic detail collected from the faster-whisper bootstrap so the user
+    // gets a real reason instead of a generic "setup failed".
+    let setup_detail;
+    match faster_whisper_python(data_dir, allow_install) {
+        Ok(py) => {
+            let models_dir = data_dir.join("whisper-models");
+            let _ = std::fs::create_dir_all(&models_dir);
+            // argv[1] = audio file, argv[2] = model cache dir (model auto-downloads here)
+            const RUNNER: &str = "import sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('base.en',device='cpu',compute_type='int8',download_root=sys.argv[2])\nsegs,_=m.transcribe(sys.argv[1],language='en')\nprint(' '.join(s.text.strip() for s in segs))";
+            let out = Command::new(&py).arg("-c").arg(RUNNER).arg(file).arg(&models_dir).output();
+            match out {
+                Ok(o) if o.status.success() => {
+                    let t = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    let _ = std::fs::remove_dir_all(&outdir);
+                    return (t, None); // empty string = ran but recognised nothing
+                }
+                Ok(o) => {
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    eprintln!("[whisper] faster-whisper run failed: {err}");
+                    // Most run-time failures here are the one-off model download
+                    // (no network / disk) rather than a broken install.
+                    setup_detail = format!(
+                        "transcription failed — likely the model download (needs internet on \
+                         first use) or low disk. Details: {}",
+                        last_line(&err)
+                    );
+                }
+                Err(e) => setup_detail = format!("couldn't run the Whisper venv: {e}"),
             }
-            eprintln!(
-                "[whisper] faster-whisper failed: {}",
-                String::from_utf8_lossy(&o.stderr)
-            );
         }
+        Err(e) => setup_detail = e,
     }
 
     let _ = std::fs::remove_dir_all(&outdir);
     (
         String::new(),
-        Some(
-            "Couldn't transcribe — automatic Whisper setup failed. Make sure Python 3 and pip are \
-             installed (the app installs faster-whisper into its own venv on first use), or install \
-             `openai-whisper` / whisper.cpp manually, then re-record."
-                .into(),
-        ),
+        Some(format!(
+            "Couldn't transcribe — {setup_detail}. You can instead point Cortex at a homelab \
+             Whisper server in Settings → Integrations, or install `openai-whisper` / whisper.cpp \
+             manually, then re-record."
+        )),
     )
+}
+
+/// Last non-empty line of a (possibly multi-line) stderr blob, trimmed to a sane
+/// length for a toast/message. Keeps the actionable bit (the real exception).
+fn last_line(s: &str) -> String {
+    let line = s.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    if line.len() > 240 { format!("{}…", &line[..240]) } else { line.to_string() }
+}
+
+/// Send an audio file to an OpenAI-compatible transcription endpoint
+/// (`{base}/v1/audio/transcriptions`, model `whisper-1`). Returns the text or a
+/// short error. This is how the homelab Whisper service is consumed.
+fn transcribe_remote(base: &str, file: &Path) -> std::result::Result<String, String> {
+    let base = base.trim_end_matches('/');
+    // Accept either a bare base ("http://host:9009") or a full endpoint.
+    let url = if base.ends_with("/audio/transcriptions") {
+        base.to_string()
+    } else if base.ends_with("/v1") {
+        format!("{base}/audio/transcriptions")
+    } else {
+        format!("{base}/v1/audio/transcriptions")
+    };
+    let bytes = std::fs::read(file).map_err(|e| format!("read audio: {e}"))?;
+    let fname = file
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("audio.webm")
+        .to_string();
+    let part = reqwest::blocking::multipart::Part::bytes(bytes)
+        .file_name(fname)
+        .mime_str("application/octet-stream")
+        .map_err(|e| e.to_string())?;
+    let form = reqwest::blocking::multipart::Form::new()
+        .text("model", "whisper-1")
+        .text("response_format", "text")
+        .part("file", part);
+    // Transcription is slow; allow a generous timeout.
+    let resp = http_client(600)
+        .post(&url)
+        .multipart(form)
+        .send()
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let code = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("HTTP {code}: {}", last_line(&body)));
+    }
+    let body = resp.text().map_err(|e| e.to_string())?;
+    // OpenAI returns plain text for response_format=text; some servers wrap JSON.
+    let text = if body.trim_start().starts_with('{') {
+        serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v["text"].as_str().map(|s| s.to_string()))
+            .unwrap_or(body)
+    } else {
+        body
+    };
+    Ok(text.trim().to_string())
 }
 
 /// A self-managed Python venv under the app data dir with `faster-whisper`
@@ -2142,38 +2256,79 @@ fn transcribe(file: &Path, data_dir: &Path, allow_install: bool) -> (String, Opt
 /// returns an already-prepared venv (never triggers the slow first-run install) —
 /// so the live partial transcriber stays snappy and only the full ingest path
 /// bootstraps it.
-fn faster_whisper_python(data_dir: &Path, allow_install: bool) -> Option<std::path::PathBuf> {
+fn faster_whisper_python(
+    data_dir: &Path,
+    allow_install: bool,
+) -> std::result::Result<std::path::PathBuf, String> {
     use std::process::Command;
     let venv = data_dir.join("whisper-venv");
     let py = venv.join("bin").join("python");
     let ready = venv.join(".ready");
     if py.is_file() && ready.is_file() {
-        return Some(py);
+        return Ok(py);
     }
     if !allow_install {
-        return None;
+        // The live partial transcriber never bootstraps; just report not-ready.
+        return Err("Whisper isn't set up yet".into());
     }
-    let py3 = ingest::which("python3").or_else(|| ingest::which("python"))?;
-    let made = Command::new(&py3)
-        .arg("-m")
-        .arg("venv")
-        .arg(&venv)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if !made || !py.is_file() {
-        return None;
+    let py3 = ingest::which("python3")
+        .or_else(|| ingest::which("python"))
+        .ok_or_else(|| "Python 3 isn't installed or isn't on PATH".to_string())?;
+
+    // A half-built venv from a previous failed attempt would otherwise wedge us;
+    // start clean so the bootstrap is deterministic.
+    if venv.exists() && !ready.is_file() {
+        let _ = std::fs::remove_dir_all(&venv);
     }
+
+    // 1. Create the venv. The classic Debian/Ubuntu failure is a missing
+    //    python3-venv package (ensurepip) — detect it from stderr and say so.
+    let made = Command::new(&py3).arg("-m").arg("venv").arg(&venv).output();
+    match made {
+        Ok(o) if o.status.success() && py.is_file() => {}
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            let hint = if err.contains("ensurepip") || err.contains("python3-venv") {
+                " — install the venv module (e.g. `sudo apt install python3-venv`)"
+            } else {
+                ""
+            };
+            return Err(format!("couldn't create the Python venv{hint}: {}", last_line(&err)));
+        }
+        Err(e) => return Err(format!("couldn't run python3: {e}")),
+    }
+
+    // 2. Install faster-whisper. Capture stderr so network/build failures surface.
     let installed = Command::new(&py)
         .args(["-m", "pip", "install", "-U", "pip", "faster-whisper"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if !installed {
-        return None;
+        .output();
+    match installed {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => {
+            return Err(format!(
+                "pip couldn't install faster-whisper (needs internet on first use): {}",
+                last_line(&String::from_utf8_lossy(&o.stderr))
+            ));
+        }
+        Err(e) => return Err(format!("couldn't run pip: {e}")),
     }
-    let _ = std::fs::write(&ready, b"1");
-    Some(py)
+
+    // 3. Only mark ready once the package actually imports — a half-finished
+    //    install must NOT leave a `.ready` marker that wedges every later run.
+    let imports = Command::new(&py)
+        .args(["-c", "import faster_whisper"])
+        .output();
+    match imports {
+        Ok(o) if o.status.success() => {
+            let _ = std::fs::write(&ready, b"1");
+            Ok(py)
+        }
+        Ok(o) => Err(format!(
+            "faster-whisper installed but won't import: {}",
+            last_line(&String::from_utf8_lossy(&o.stderr))
+        )),
+        Err(e) => Err(format!("couldn't verify the install: {e}")),
+    }
 }
 
 /// Transcribe a short rolling audio buffer for the live-recording transcript
@@ -2194,7 +2349,8 @@ pub async fn transcribe_partial(app: AppHandle, audio: Vec<u8>) -> Result<String
     let file = dir.join(format!("partial-{}.webm", crate::db::new_id()));
     std::fs::write(&file, &audio)?;
 
-    let (transcript, _warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), false);
+    let remote = whisper_remote_url(&app.state::<AppState>());
+    let (transcript, _warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), false, remote.as_deref());
     let _ = std::fs::remove_file(&file);
     Ok(transcript)
     })
@@ -2234,8 +2390,9 @@ pub async fn save_recording(
     };
     emit_progress(&app, &source_id, "parsing", "transcribing audio", 25);
 
-    // 3. transcribe (local Whisper if available)
-    let (transcript, warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true);
+    // 3. transcribe (homelab Whisper if configured, else local)
+    let remote = whisper_remote_url(&state);
+    let (transcript, warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref());
 
     if transcript.trim().is_empty() {
         let c = state.db.lock().unwrap();
