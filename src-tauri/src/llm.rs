@@ -87,9 +87,12 @@ impl Llm for GeminiLlm {
         // Two defenses: a roomy budget, and — for flash models, which allow it —
         // disable thinking entirely so every token goes to the actual output.
         // (gemini-2.5-pro rejects thinkingBudget:0, so only set it for flash.)
+        // Roomy output budget: a full 7-section cheatsheet (or a merged subject
+        // digest) easily exceeds a small cap, and the model would otherwise stop
+        // mid-answer — e.g. a table cut off halfway. 2.5 models support 65536.
         let mut generation_config = serde_json::json!({
             "temperature": 0.3,
-            "maxOutputTokens": 16384
+            "maxOutputTokens": 65536
         });
         if self.model.contains("flash") {
             generation_config["thinkingConfig"] = serde_json::json!({ "thinkingBudget": 0 });
@@ -357,7 +360,9 @@ impl Llm for ClaudeLlm {
         let client = llm_client();
         let body = serde_json::json!({
             "model": self.model,
-            "max_tokens": 4096,
+            // Roomy enough for a full cheatsheet without cutting off mid-section
+            // (8192 is the safe max across Claude 3.5+ models).
+            "max_tokens": 8192,
             "temperature": 0.3,
             "system": system,
             "messages": [{ "role": "user", "content": user }]
