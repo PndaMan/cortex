@@ -768,6 +768,7 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
 .picker-val.ph { color: var(--fg-faint); }
 .picker-back { position: fixed; inset: 0; z-index: 90; }
 .picker-menu { position: absolute; top: calc(100% + 5px); left: 0; right: 0; z-index: 91; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--rad-2); box-shadow: var(--shadow-pop); padding: 5px; max-height: 220px; overflow-y: auto; animation: popIn var(--dur-fast) var(--ease); }
+.picker-menu.up { top: auto; bottom: calc(100% + 5px); }
 .picker-item { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 9px; background: none; border: none; border-radius: var(--rad-2); color: var(--fg-muted); font-family: var(--font-mono); font-size: var(--t-sm); cursor: pointer; }
 .picker-item:hover { background: var(--surface-3); color: var(--fg-bright); }
 .picker-item.on { color: var(--fg-bright); }

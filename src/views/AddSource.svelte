@@ -152,153 +152,218 @@
     else if (method === "record") app.setView("recorder");
     else if (method === "photo") beginPhoto();
   }
+
+  function selectMethod(id: typeof methods[number]["id"]) {
+    method = id;
+    value = "";
+    if (id === "record") app.setView("recorder");
+  }
+
+  // Claim the keyboard while this view is open so the method mnemonics
+  // (u/p/t/r/o) work and don't collide with the global single-key shortcuts
+  // (t = cycle theme, r = recorder). Esc back-nav still works (handled before
+  // the view-keys guard in App.svelte). Typing in an input is left alone.
+  $effect(() => {
+    (window as any).__cortexViewKeys = true;
+    function onKey(e: KeyboardEvent) {
+      const el = document.activeElement as HTMLElement | null;
+      const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+      const m = methods.find((x) => x.k === e.key);
+      if (m) { e.preventDefault(); selectMethod(m.id); }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => {
+      (window as any).__cortexViewKeys = false;
+      window.removeEventListener("keydown", onKey);
+    };
+  });
 </script>
 
-<div class="workspace-scroll">
-  <div class="addpage">
-    <!-- Page header -->
-    <div class="addpage-head">
-      <button class="btn btn--icon btn--sm btn--ghost" onclick={() => app.setView("subject")} title="Back">
-        <span style:transform="rotate(180deg)" style:display="flex"><Icon name="chevron" size={14} /></span>
-      </button>
-      <div>
-        <div class="eyebrow">Add source</div>
-        <h1 class="addpage-title read">New source</h1>
+<div class="addsrc">
+  <!-- Page header -->
+  <div class="addsrc-head">
+    <button class="btn btn--icon btn--sm btn--ghost" onclick={() => app.setView("subject")} title="Back">
+      <span style:transform="rotate(180deg)" style:display="flex"><Icon name="chevron" size={14} /></span>
+    </button>
+    <div>
+      <div class="eyebrow">Add source</div>
+      <h1 class="addsrc-title read">New source</h1>
+    </div>
+    {#if selectedSubject}
+      <div class="addsrc-crumb mono faint">
+        into {selectedSubject.name}{selectedTopic ? " › " + (selectedSubject.topics.find((t) => t.id === selectedTopic)?.name ?? "") : ""}
+      </div>
+    {/if}
+  </div>
+
+  <div class="addsrc-grid">
+    <!-- LEFT: method picker + target -->
+    <div class="addsrc-left">
+      <div class="add-methods">
+        {#each methods as m (m.id)}
+          <button
+            class="add-method{method === m.id ? ' on' : ''}"
+            onclick={() => selectMethod(m.id)}
+          >
+            <span class="am-ico"><Icon name={m.ico} size={18} /></span>
+            <div class="am-text">
+              <div class="am-t">{m.t}</div>
+              <div class="am-d mono">{m.d}</div>
+            </div>
+            <span class="kbd">{m.k}</span>
+          </button>
+        {/each}
+      </div>
+
+      <div class="addsrc-target">
+        <div class="field">
+          <span class="onb-label mono">SUBJECT</span>
+          <Picker
+            value={selectedSubjectId}
+            onChange={(id) => { selectedSubjectId = id; selectedTopic = ""; }}
+            options={subjectOptions}
+            placeholder="— select subject —"
+          />
+        </div>
         {#if selectedSubject}
-          <div class="mono faint" style:font-size="var(--t-xs)">
-            into {selectedSubject.name}{selectedTopic ? " › " + (selectedSubject.topics.find((t) => t.id === selectedTopic)?.name ?? "") : ""}
+          <div class="field">
+            <span class="onb-label mono">TOPIC <span class="faint">where this lives</span></span>
+            <Picker
+              value={selectedTopic}
+              onChange={(id) => (selectedTopic = id)}
+              options={topicOptions}
+              placeholder="— no topic —"
+            />
           </div>
         {/if}
       </div>
     </div>
 
-    <!-- ===== METHOD SELECTION ===== -->
-    <div class="add-methods">
-      {#each methods as m (m.id)}
-        <button
-          class="add-method{method === m.id ? ' on' : ''}"
-          onclick={() => {
-            method = m.id;
-            if (m.id === "record") app.setView("recorder");
-          }}
-        >
-          <span class="am-ico"><Icon name={m.ico} size={20} /></span>
-          <div class="am-text">
-            <div class="am-t">{m.t}</div>
-            <div class="am-d mono">{m.d}</div>
+    <!-- RIGHT: input panel for the chosen method -->
+    <div class="addsrc-right">
+      <div class="addsrc-panel">
+        {#if method === null}
+          <div class="addsrc-empty">
+            <Icon name="plus" size={26} color="var(--fg-faint)" />
+            <p class="mono faint">Pick a source type on the left,<br />or press its key (u · p · t · r · o).</p>
           </div>
-          <span class="kbd">{m.k}</span>
-        </button>
-      {/each}
-    </div>
-
-    <!-- Target subject + topic -->
-    <div class="field" style:margin-top="14px">
-      <span class="onb-label mono">SUBJECT</span>
-      <Picker
-        value={selectedSubjectId}
-        onChange={(id) => { selectedSubjectId = id; selectedTopic = ""; }}
-        options={subjectOptions}
-        placeholder="— select subject —"
-      />
-    </div>
-    {#if selectedSubject}
-      <div class="field" style:margin-top="10px">
-        <span class="onb-label mono">TOPIC <span class="faint">where this source lives</span></span>
-        <Picker
-          value={selectedTopic}
-          onChange={(id) => (selectedTopic = id)}
-          options={topicOptions}
-          placeholder="— no topic —"
-        />
+        {:else if method === "url"}
+          <span class="onb-label mono">URL</span>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input class="input" autofocus placeholder="https://… or a YouTube link" bind:value onkeydown={(e) => e.key === "Enter" && beginUrl()} />
+          <p class="mono faint addsrc-hint">A web page or YouTube link — Cortex fetches and ingests the readable content.</p>
+        {:else if method === "text"}
+          <span class="onb-label mono">PASTE TEXT</span>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input class="input" autofocus placeholder="Title (optional)" bind:value={textTitle} />
+          <textarea class="input addsrc-textarea" placeholder="Paste your text or markdown here…" bind:value></textarea>
+        {:else if method === "upload"}
+          <span class="onb-label mono">UPLOAD FILES</span>
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="add-drop addsrc-drop" onclick={beginUpload}>
+            <Icon name="doc" size={22} color="var(--fg-faint)" />
+            <span class="mono">Click to browse — select one or many files</span>
+            <span class="mono faint">PDF · PPTX · DOCX · TXT · MD</span>
+          </div>
+        {:else if method === "photo"}
+          <span class="onb-label mono">SNAP PHOTO</span>
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="add-drop addsrc-drop" onclick={beginPhoto}>
+            <Icon name="grid" size={22} color="var(--fg-faint)" />
+            <span class="mono">Click to browse for an image</span>
+            <span class="mono faint">PNG · JPG · WebP — OCR'd to text</span>
+          </div>
+        {:else if method === "record"}
+          <div class="addsrc-empty">
+            <Icon name="record" size={26} color="var(--accent)" />
+            <p class="mono faint">Opening the lecture recorder…</p>
+          </div>
+        {/if}
       </div>
-    {/if}
 
-    <!-- URL input -->
-    {#if method === "url"}
-      <div class="add-input-row">
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          class="input"
-          autofocus
-          placeholder="https://… or a YouTube link"
-          bind:value
-        />
+      <!-- Footer actions -->
+      <div class="add-foot addsrc-foot">
+        <button class="btn btn--ghost" onclick={() => app.setView("subject")}>Cancel</button>
+        {#if method === "url" || method === "text"}
+          <button class="btn btn--primary" disabled={!value.trim() || !selectedSubject} onclick={handleBegin}>
+            Ingest source <Icon name="arrowR" size={13} />
+          </button>
+        {:else if method === "upload"}
+          <button class="btn btn--primary" disabled={!selectedSubject} onclick={beginUpload}>
+            Pick file(s) <Icon name="arrowR" size={13} />
+          </button>
+        {:else if method === "photo"}
+          <button class="btn btn--primary" disabled={!selectedSubject} onclick={beginPhoto}>
+            Pick image <Icon name="arrowR" size={13} />
+          </button>
+        {:else if method === "record"}
+          <button class="btn btn--primary" disabled={!selectedSubject} onclick={() => app.setView("recorder")}>
+            Open recorder <Icon name="arrowR" size={13} />
+          </button>
+        {:else}
+          <button class="btn btn--primary" disabled onclick={handleBegin}>
+            Ingest source <Icon name="arrowR" size={13} />
+          </button>
+        {/if}
       </div>
-    {/if}
-
-    <!-- Text paste: optional title + textarea -->
-    {#if method === "text"}
-      <div class="add-input-row" style:display="flex" style:flex-direction="column" style:gap="8px">
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          class="input"
-          autofocus
-          placeholder="Title (optional)"
-          bind:value={textTitle}
-        />
-        <textarea
-          class="input"
-          placeholder="Paste your text or markdown here…"
-          rows={8}
-          style:resize="vertical"
-          bind:value
-        ></textarea>
-      </div>
-    {/if}
-
-    <!-- Upload drop area — triggers file picker on click -->
-    {#if method === "upload"}
-      <div class="add-input-row">
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="add-drop" onclick={beginUpload}>
-          <Icon name="doc" size={20} color="var(--fg-faint)" />
-          <span class="mono">Click to browse — select one or many files</span>
-        </div>
-      </div>
-    {/if}
-
-    <!-- Photo picker drop area — triggers image picker on click -->
-    {#if method === "photo"}
-      <div class="add-input-row">
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="add-drop" onclick={beginPhoto}>
-          <Icon name="grid" size={20} color="var(--fg-faint)" />
-          <span class="mono">Click to browse for an image (PNG · JPG · WebP)</span>
-        </div>
-      </div>
-    {/if}
-
-    <!-- Footer actions -->
-    <div class="add-foot">
-      <button class="btn btn--ghost" onclick={() => app.setView("subject")}>Cancel</button>
-      {#if method === "url"}
-        <button class="btn btn--primary" disabled={!value.trim() || !selectedSubject} onclick={handleBegin}>
-          Ingest source <Icon name="arrowR" size={13} />
-        </button>
-      {:else if method === "text"}
-        <button class="btn btn--primary" disabled={!value.trim() || !selectedSubject} onclick={handleBegin}>
-          Ingest source <Icon name="arrowR" size={13} />
-        </button>
-      {:else if method === "upload"}
-        <button class="btn btn--primary" disabled={!selectedSubject} onclick={beginUpload}>
-          Pick file(s) <Icon name="arrowR" size={13} />
-        </button>
-      {:else if method === "photo"}
-        <button class="btn btn--primary" disabled={!selectedSubject} onclick={beginPhoto}>
-          Pick image <Icon name="arrowR" size={13} />
-        </button>
-      {:else if method === "record"}
-        <button class="btn btn--primary" disabled={!selectedSubject} onclick={() => app.setView("recorder")}>
-          Open recorder <Icon name="arrowR" size={13} />
-        </button>
-      {:else}
-        <button class="btn btn--primary" disabled={!method || !selectedSubject} onclick={handleBegin}>
-          Ingest source <Icon name="arrowR" size={13} />
-        </button>
-      {/if}
     </div>
   </div>
 </div>
+
+<style>
+  .addsrc {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: clamp(16px, 3vh, 32px) clamp(20px, 4vw, 56px);
+    gap: 18px;
+    overflow: hidden;
+  }
+  .addsrc-head { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+  .addsrc-title { font-size: clamp(22px, 3vw, 32px); margin: 0; line-height: 1.1; }
+  .addsrc-crumb { margin-left: auto; font-size: var(--t-xs); }
+  .addsrc-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(280px, 360px) 1fr;
+    gap: clamp(18px, 3vw, 40px);
+    align-items: stretch;
+  }
+  .addsrc-left { display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+  .add-methods { display: flex; flex-direction: column; gap: 8px; }
+  .addsrc-target { display: flex; flex-direction: column; gap: 12px; margin-top: auto; }
+  .addsrc-right { display: flex; flex-direction: column; min-height: 0; }
+  .addsrc-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--rad-3, 12px);
+    background: var(--surface);
+    padding: 18px;
+    overflow: auto;
+  }
+  .addsrc-empty {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    text-align: center;
+  }
+  .addsrc-textarea { flex: 1 1 auto; min-height: 160px; resize: none; }
+  .addsrc-drop { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+  .addsrc-hint { font-size: var(--t-xs); margin: 2px 0 0; }
+  .addsrc-foot { margin-top: 14px; display: flex; justify-content: flex-end; gap: 10px; flex: 0 0 auto; }
+  @media (max-width: 760px) {
+    .addsrc { overflow: auto; }
+    .addsrc-grid { grid-template-columns: 1fr; }
+  }
+</style>

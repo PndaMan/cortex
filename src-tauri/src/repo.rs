@@ -293,6 +293,25 @@ pub fn list_sources(conn: &Connection, subject_id: &str) -> Result<Vec<Source>> 
     Ok(out)
 }
 
+/// Sources that didn't ingest cleanly: hard failures (`error`) and audio that
+/// produced no transcript (`draft` with an error recorded). Used to auto-retry
+/// ingestion on app launch so transient failures (offline, model not yet set up)
+/// resolve themselves once conditions are right.
+pub fn list_failed_sources(conn: &Connection) -> Result<Vec<Source>> {
+    let sql = format!(
+        "SELECT {SOURCE_COLS} FROM sources \
+         WHERE status='error' OR (status='draft' AND error IS NOT NULL) \
+         ORDER BY updated_at"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], map_source)?;
+    let mut out: Vec<Source> = rows.collect::<rusqlite::Result<_>>()?;
+    for s in &mut out {
+        s.tags = source_tags(conn, &s.id)?;
+    }
+    Ok(out)
+}
+
 fn list_sources_for_topic(conn: &Connection, topic_id: &str) -> Result<Vec<Source>> {
     let sql = format!(
         "SELECT {SOURCE_COLS} FROM sources WHERE topic_id=?1 ORDER BY created_at"

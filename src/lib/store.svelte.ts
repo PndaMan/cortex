@@ -391,6 +391,44 @@ class AppStore {
       this.applyTheme(this.theme);
     }
     this.startReminderPolling();
+    // Auto-retry sources that failed to ingest last time (offline, model not set
+    // up, transient errors). Fire-and-forget so it never blocks first render.
+    void this.retryFailedSources();
+  }
+
+  /** Re-ingest sources stuck in error/draft, one at a time so we don't hammer
+   *  the embedding/LLM providers. Runs in the background on launch. */
+  #retriedFailed = false;
+  async retryFailedSources() {
+    if (this.#retriedFailed) return; // once per session
+    this.#retriedFailed = true;
+    let failed: api.Source[] = [];
+    try {
+      failed = await api.listFailedSources();
+    } catch {
+      return; // command unavailable / db locked — skip silently
+    }
+    if (!failed.length) return;
+    // Cap per launch so a pile of permanently-broken sources can't spin forever.
+    const batch = failed.slice(0, 12);
+    this.pushToast({
+      kind: "info",
+      title: "Retrying failed sources",
+      body: `${batch.length} source${batch.length === 1 ? "" : "s"} from a previous session…`,
+    });
+    let fixed = 0;
+    for (const src of batch) {
+      try {
+        const res = await api.reingestSource(src.id);
+        if (res?.source?.status === "ready") fixed++;
+      } catch {
+        /* still failing — leave it for next launch */
+      }
+    }
+    if (fixed > 0) {
+      await this.refresh();
+      this.pushToast({ kind: "success", title: "Sources recovered", body: `${fixed} re-ingested successfully.` });
+    }
   }
 
   // ---- calendar reminders (in-app notifications) ----

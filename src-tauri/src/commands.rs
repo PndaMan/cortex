@@ -296,6 +296,14 @@ pub fn list_sources(state: State<AppState>, subject_id: String) -> Result<Vec<So
     repo::list_sources(&c, &subject_id)
 }
 
+/// All sources that failed to ingest (across every subject/topic). The frontend
+/// auto-retries these on launch so transient failures heal themselves.
+#[tauri::command]
+pub fn list_failed_sources(state: State<AppState>) -> Result<Vec<Source>> {
+    let c = state.db.lock().unwrap();
+    repo::list_failed_sources(&c)
+}
+
 #[tauri::command]
 pub fn get_source(state: State<AppState>, id: String) -> Result<Source> {
     let c = state.db.lock().unwrap();

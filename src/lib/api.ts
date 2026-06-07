@@ -170,6 +170,8 @@ export const updateSource = (
 export const deleteSource = (id: string) => invoke<void>("delete_source", { id });
 /** Re-run ingestion (re-OCR/re-chunk/re-embed) for an existing source in place. */
 export const reingestSource = (id: string) => invoke<IngestResult>("reingest_source", { id });
+/** Sources that failed to ingest (error / draft-with-error), across all subjects. */
+export const listFailedSources = () => invoke<Source[]>("list_failed_sources");
 export const listChunks = (sourceId: string) =>
   invoke<ChunkInfo[]>("list_chunks", { sourceId });
 export const addSource = (input: AddSourceInput) =>
