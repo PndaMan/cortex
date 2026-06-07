@@ -1139,18 +1139,16 @@ Notes: {about}</pre>
           </div>
           <div class="set-card">
             <div class="set-row stacked">
-              <div class="set-row-r">
-                <div class="row-inline">
-                  <input class="input mono" value={o.value} oninput={(e) => o.oninput(e.currentTarget.value)} onchange={o.onsave} onblur={o.onsave} placeholder={o.placeholder} />
-                  <button class="btn" onclick={o.onTest} disabled={o.state === "testing" || !o.value.trim()}>
-                    <Icon name="refresh" size={12} /> Test
-                  </button>
-                </div>
-                {#if o.state === "fail" && o.failHint}
-                  <div class="set-row-d" style="margin-top:6px;color:var(--err,#e5484d)">{o.failHint}</div>
-                {/if}
-                {#if o.hint}<div class="set-row-d" style="margin-top:6px">{@html o.hint}</div>{/if}
+              <div class="row-inline">
+                <input class="input mono" value={o.value} oninput={(e) => o.oninput(e.currentTarget.value)} onchange={o.onsave} onblur={o.onsave} placeholder={o.placeholder} />
+                <button class="btn" onclick={o.onTest} disabled={o.state === "testing" || !o.value.trim()}>
+                  <Icon name="refresh" size={12} /> Test
+                </button>
               </div>
+              {#if o.state === "fail" && o.failHint}
+                <div class="set-row-d" style="color:var(--err,#e5484d)">{o.failHint}</div>
+              {/if}
+              {#if o.hint}<div class="set-row-d">{@html o.hint}</div>{/if}
             </div>
             {#if o.extra}{@render o.extra()}{/if}
           </div>
@@ -1230,25 +1228,21 @@ Notes: {about}</pre>
           </div>
           <div class="set-card">
             <div class="set-row stacked">
-              <div class="set-row-l"><div class="set-row-t">age recipient (public key)</div></div>
-              <div class="set-row-r">
-                <input class="input mono" bind:value={ageRecipient} onchange={saveBackupConfig} onblur={saveBackupConfig} placeholder="age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p" />
-                <div class="set-row-d" style="margin-top:6px">From <span class="mono">age-keygen</span>. Only this key's holder can decrypt the backups.</div>
-              </div>
+              <div class="set-row-t">age recipient (public key)</div>
+              <input class="input mono" bind:value={ageRecipient} onchange={saveBackupConfig} onblur={saveBackupConfig} placeholder="age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p" />
+              <div class="set-row-d">From <span class="mono">age-keygen</span>. Only this key's holder can decrypt the backups.</div>
             </div>
             <div class="set-row stacked">
-              <div class="set-row-l"><div class="set-row-t">rclone remote</div></div>
-              <div class="set-row-r">
-                <div class="row-inline">
-                  <input class="input mono" bind:value={rcloneRemote} onchange={saveBackupConfig} onblur={saveBackupConfig} placeholder="homelab:cortex-backups" />
-                  <button class="btn btn--primary" disabled={backingUp} onclick={runBackup}>
-                    <Icon name={backingUp ? "refresh" : "upload"} size={12} /> {backingUp ? "Backing up…" : "Back up now"}
-                  </button>
-                </div>
-                <div class="set-row-d" style="margin-top:6px">
-                  An rclone remote + path, e.g. <span class="mono">homelab:cortex-backups</span> (configure with <span class="mono">rclone config</span>).
-                  Last backup: <span class="mono">{fmtBackupTime(backupInfo?.last_at ?? null)}</span>{#if backupInfo?.last_dest} → <span class="mono">{backupInfo.last_dest}</span>{/if}
-                </div>
+              <div class="set-row-t">rclone remote</div>
+              <div class="row-inline">
+                <input class="input mono" bind:value={rcloneRemote} onchange={saveBackupConfig} onblur={saveBackupConfig} placeholder="homelab:cortex-backups" />
+                <button class="btn btn--primary" disabled={backingUp} onclick={runBackup}>
+                  <Icon name={backingUp ? "refresh" : "upload"} size={12} /> {backingUp ? "Backing up…" : "Back up now"}
+                </button>
+              </div>
+              <div class="set-row-d">
+                An rclone remote + path, e.g. <span class="mono">homelab:cortex-backups</span> (configure with <span class="mono">rclone config</span>).
+                Last backup: <span class="mono">{fmtBackupTime(backupInfo?.last_at ?? null)}</span>{#if backupInfo?.last_dest} → <span class="mono">{backupInfo.last_dest}</span>{/if}
               </div>
             </div>
           </div>
