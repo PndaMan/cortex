@@ -1473,12 +1473,14 @@ pub async fn generate_cheatsheet(
         6. \"Common Pitfalls\" — mistakes and misconceptions, each as a `> [!WARNING]` callout.\n\
         7. \"Mnemonics & Quick Recall\" — memory aids and a tight recap for last-minute review.\n\
         \n\
-        You may — and SHOULD — ADD extra, specifically-titled topical sections between Key Concepts \
-        and Mnemonics whenever the material has major themes that deserve their own section (e.g. \
-        \"Political Geography\", \"Population & Migration\", \"Climate Systems\"). Vary section \
-        titles to match the actual content rather than reusing only the generic seven — better to \
-        over-cover than to omit. Within any longer item, use Markdown `## subheadings` (and `###` \
-        below them) to give it internal structure instead of one long block.\n\
+        Use EXACTLY these seven sections and NO others — do NOT invent any extra top-level \
+        sections. \"Key Concepts\" is where the BULK of the content lives: when the material has \
+        major themes (eras, sub-fields, case domains, e.g. \"Political Geography\", \"The \
+        Mechanical Era\"), put EACH as its OWN ITEM under \"Key Concepts\" — the item's \"t\" is the \
+        theme name and its \"d\" uses Markdown `## subheadings` (and `###` below) for internal \
+        structure — NEVER as a new section. Keeping every topic to the same seven sections is \
+        REQUIRED so multiple topics merge cleanly. Omit ONLY \"Formulas & Rules\" or \"Worked \
+        Examples\" when the sources genuinely contain none; never drop or rename the others.\n\
         {style}");
     let system = system.as_str();
     let scope = if topic_id.is_some() {

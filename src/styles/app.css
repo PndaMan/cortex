@@ -1021,25 +1021,23 @@ body.reorder-active, body.reorder-active * { cursor: grabbing !important; user-s
 /* Per-topic divider INSIDE a merged section (composed whole-subject sheet): one
    "Key Concepts" etc. holds every topic's items, grouped by these. */
 .cs-topic-subdiv {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 16px 0 4px;
+  margin: 28px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--accent-dim, var(--accent));
 }
-.cs-topic-subdiv:first-child { margin-top: 2px; }
-.cs-topic-subdiv::after {
-  content: "";
-  height: 1px;
-  flex: 1;
-  background: var(--border);
-}
+.cs-topic-subdiv:first-child { margin-top: 6px; }
+/* Topic titles are the BIGGEST text in the body — they head each topic's block
+   inside a merged section. Wrap (don't clip) long names. */
 .cs-topic-subdiv-label {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--accent-dim, var(--accent));
-  white-space: nowrap;
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 1.65rem;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+  color: var(--accent);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .cs-idx-topic { color: var(--accent-dim, var(--accent)); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; }
 
