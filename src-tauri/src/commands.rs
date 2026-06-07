@@ -2401,6 +2401,12 @@ pub fn delete_custom_station(state: State<AppState>, id: String) -> Result<()> {
     repo::delete_custom_station(&c, &id)
 }
 
+#[tauri::command]
+pub fn reorder_custom_stations(state: State<AppState>, ids: Vec<String>) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    repo::reorder_custom_stations(&c, &ids)
+}
+
 // ---- data maintenance -------------------------------------------------
 
 #[tauri::command]

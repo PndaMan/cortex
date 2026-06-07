@@ -128,6 +128,7 @@ pub fn run() {
             commands::list_custom_stations,
             commands::add_custom_station,
             commands::delete_custom_station,
+            commands::reorder_custom_stations,
             mpv::media_tools_status,
             mpv::youtube_play,
             mpv::youtube_pause,

@@ -1259,6 +1259,20 @@ pub fn delete_custom_station(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Persist a new ordering for custom stations: each id's `position` becomes its
+/// index in `ids` (so list_custom_stations returns them in this order).
+pub fn reorder_custom_stations(conn: &Connection, ids: &[String]) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    for (i, id) in ids.iter().enumerate() {
+        tx.execute(
+            "UPDATE custom_stations SET position=?2 WHERE id=?1",
+            params![id, i as i64],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 // ---- database stats / maintenance -------------------------------------
 
 /// Count rows in a table, returning 0 if the table does not exist.

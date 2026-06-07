@@ -325,6 +325,8 @@ export const addCustomStation = (name: string, url: string, kind = "youtube") =>
   invoke<CustomStation>("add_custom_station", { name, url, kind });
 export const deleteCustomStation = (id: string) =>
   invoke<void>("delete_custom_station", { id });
+export const reorderCustomStations = (ids: string[]) =>
+  invoke<void>("reorder_custom_stations", { ids });
 export const mediaToolsStatus = () => invoke<MediaTools>("media_tools_status");
 export const youtubePlay = (url: string, volume: number) =>
   invoke<void>("youtube_play", { url, volume });

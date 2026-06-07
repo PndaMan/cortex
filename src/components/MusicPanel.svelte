@@ -2,6 +2,7 @@
   import { app } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
   import { stations } from "../lib/mock";
+  import { moveItem, reorderable } from "../lib/dnd";
 
   // Group stations by category
   const cats = $derived.by(() => {
@@ -11,6 +12,17 @@
     }
     return map;
   });
+
+  // Resolve a station id (built-in or custom) to uniform display fields.
+  type Row = { id: string; name: string; kind: string; ico: string };
+  function resolve(id: string): Row | null {
+    const b = stations.find((s) => s.id === id);
+    if (b) return { id: b.id, name: b.name, kind: b.kind, ico: b.ico };
+    const c = app.customStations.find((s) => s.id === id);
+    if (c) return { id: c.id, name: c.name, kind: c.kind === "live" ? "live" : "youtube", ico: "music" };
+    return null; // a favourited id whose station was removed
+  }
+  const favStations = $derived(app.stationFavs.map(resolve).filter(Boolean) as Row[]);
 
   const cur = $derived(
     stations.find(s => s.id === app.music.current)
@@ -95,8 +107,44 @@
         </span>
       </div>
 
+      <!-- Star toggle, reused on every row -->
+      {#snippet favBtn(id: string)}
+        <button
+          class={"st-fav btn btn--icon btn--sm btn--ghost" + (app.stationFavs.includes(id) ? " on" : "")}
+          title={app.stationFavs.includes(id) ? "Unfavourite" : "Favourite"}
+          onclick={(e) => { e.stopPropagation(); app.toggleStationFav(id); }}
+        >
+          <Icon name="star" size={12} color={app.stationFavs.includes(id) ? "var(--accent)" : "var(--fg-faint)"} />
+        </button>
+      {/snippet}
+
       <!-- Station list -->
       <div class="music-list">
+        <!-- Favourites (built-in or custom), pinned to the top -->
+        {#if favStations.length}
+          <div class="music-cat">★ Favourites</div>
+          {#each favStations as s (s.id)}
+            <div
+              class={"station" + (s.id === app.music.current ? " on" : "")}
+              role="button"
+              tabindex="0"
+              onclick={() => app.pickStation(s.id)}
+              onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); app.pickStation(s.id); } }}
+            >
+              <span class="st-art">
+                <Icon name={s.ico} size={14} color={s.id === app.music.current ? "var(--accent)" : "var(--fg-muted)"} />
+              </span>
+              <span class="st-name">{s.name}</span>
+              {#if s.id === app.music.current && app.music.playing}
+                <span class="st-eq"><i></i><i></i><i></i></span>
+              {:else}
+                <span class="st-kind mono">{s.kind}</span>
+              {/if}
+              {@render favBtn(s.id)}
+            </div>
+          {/each}
+        {/if}
+
         {#each Object.entries(cats) as [cat, items]}
           <div class="music-cat">{cat}</div>
           {#each items as s}
@@ -120,19 +168,21 @@
               {:else}
                 <span class="st-kind mono">{s.kind}</span>
               {/if}
+              {@render favBtn(s.id)}
             </div>
           {/each}
         {/each}
 
-        <!-- User-added YouTube / URL stations -->
+        <!-- User-added YouTube / URL stations — drag to reorder -->
         <div class="music-cat">My stations</div>
-        {#each app.customStations as s (s.id)}
+        {#each app.customStations as s, i (s.id)}
           <div
             class={"station" + (s.id === app.music.current ? " on" : "")}
             role="button"
             tabindex="0"
             onclick={() => app.pickStation(s.id)}
             onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); app.pickStation(s.id); } }}
+            use:reorderable={{ index: i, group: "stations", onReorder: (from, to) => app.reorderCustomStations(moveItem(app.customStations.map((x) => x.id), from, to)) }}
           >
             <span class="st-art">
               <Icon name="music" size={14} color={s.id === app.music.current ? "var(--accent)" : "var(--fg-muted)"} />
@@ -143,6 +193,7 @@
             {:else}
               <span class="st-kind mono">{s.kind === "live" ? "live" : "youtube"}</span>
             {/if}
+            {@render favBtn(s.id)}
             <button
               class="st-del btn btn--icon btn--sm btn--ghost"
               title="Remove station"

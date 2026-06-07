@@ -1045,3 +1045,7 @@ body.reorder-active, body.reorder-active * { cursor: grabbing !important; user-s
 
 /* Coverage warning when a sheet didn't synthesize every source. */
 .cs-cov-warn { color: var(--warn); font-weight: 600; }
+
+/* Music station favourite star: subtle until hovered or favourited. */
+.station .st-fav { opacity: 0.3; flex: none; }
+.station:hover .st-fav, .station .st-fav.on { opacity: 1; }

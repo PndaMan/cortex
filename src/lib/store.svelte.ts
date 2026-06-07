@@ -290,6 +290,9 @@ class AppStore {
   music = $state<Music>({ current: "lofi", playing: false, volume: 60 });
   // User-added YouTube/URL stations (streamed ad-free via the mpv sidecar).
   customStations = $state<api.CustomStation[]>([]);
+  // Favourited station ids (built-in or custom), pinned to a "Favourites" group
+  // in the music panel. Persisted as a JSON setting.
+  stationFavs = $state<string[]>([]);
 
   activeSubject = $derived(
     this.subjects.find((s) => s.id === this.activeSubjectId) ?? null
@@ -353,6 +356,10 @@ class AppStore {
       if (all["default_station"]) this.music = { ...this.music, current: all["default_station"] };
       // Load user-added YouTube/URL stations so they show in the music panel.
       this.customStations = await api.listCustomStations().catch(() => []);
+      try {
+        const favs = JSON.parse(all["station_favs"] ?? "[]");
+        this.stationFavs = Array.isArray(favs) ? favs.filter((x) => typeof x === "string") : [];
+      } catch { this.stationFavs = []; }
       if (all["autoplay"] === "true") this.toggleMusic();
       // Restore focus-timer (pomodoro) durations.
       for (const k of ["workMin", "breakMin", "longBreakMin", "sessionsBeforeLong"] as const) {
@@ -686,6 +693,8 @@ class AppStore {
     try {
       await api.deleteCustomStation(id);
       this.customStations = this.customStations.filter((s) => s.id !== id);
+      // Drop it from favourites too so we don't keep a dangling id.
+      if (this.stationFavs.includes(id)) this.toggleStationFav(id);
       // If the deleted station was playing, stop and fall back to the default.
       if (this.music.current === id) {
         music.pause();
@@ -693,6 +702,28 @@ class AppStore {
       }
     } catch (e) {
       this.pushToast({ kind: "error", title: "Couldn't remove station", body: String(e) });
+    }
+  }
+
+  /** Toggle a station (built-in or custom) in/out of Favourites; persists. */
+  toggleStationFav(id: string) {
+    this.stationFavs = this.stationFavs.includes(id)
+      ? this.stationFavs.filter((x) => x !== id)
+      : [...this.stationFavs, id];
+    api.setSetting("station_favs", JSON.stringify(this.stationFavs)).catch(() => {});
+  }
+
+  /** Persist a drag-reordering of the user's custom stations. */
+  async reorderCustomStations(ids: string[]) {
+    const byId = new Map(this.customStations.map((s) => [s.id, s]));
+    this.customStations = ids
+      .map((id) => byId.get(id))
+      .filter(Boolean) as api.CustomStation[];
+    try {
+      await api.reorderCustomStations(ids);
+    } catch (e) {
+      this.pushToast({ kind: "error", title: "Reorder failed", body: String(e) });
+      this.customStations = await api.listCustomStations().catch(() => this.customStations);
     }
   }
 
