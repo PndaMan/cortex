@@ -8,6 +8,22 @@
   import { stations } from "../lib/mock";
   import { keybinds, ACTION_LABELS, ACTION_ORDER, LEADER_ACTIONS } from "../lib/keybinds.svelte";
   import type { Action } from "../lib/keybinds.svelte";
+  import type { Snippet } from "svelte";
+
+  // Shape for the reusable homelab endpoint-service snippet (Integrations tab).
+  type EndpointOpts = {
+    title: string;
+    desc: string;
+    value: string;
+    oninput: (v: string) => void;
+    onsave: () => void;
+    onTest: () => void;
+    state: null | "testing" | "ok" | "fail";
+    placeholder: string;
+    failHint?: string;
+    hint?: string;
+    extra?: Snippet;
+  };
 
   // Fixed system bindings (not rebindable) shown for reference in the Keybinds tab
   // so the page reflects every shortcut, not just the customizable single-key set.
@@ -356,6 +372,18 @@
     if (!searxng.trim()) return;
     searxState = "testing";
     searxState = await testEndpoint(searxng);
+  }
+
+  // Map a connection test state + whether the endpoint is set to a design-system
+  // status pill (class modifier + label), so every integration shows state the
+  // same way the rest of the app shows source/cheatsheet state.
+  function connPill(state: null | "testing" | "ok" | "fail", configured: boolean) {
+    if (state === "testing") return { cls: "draft", label: "Checking…" };
+    if (state === "ok") return { cls: "ready", label: "Connected" };
+    if (state === "fail") return { cls: "error", label: "Unreachable" };
+    return configured
+      ? { cls: "pending", label: "Untested" }
+      : { cls: "pending", label: "Not set" };
   }
 
   // persist the Ollama endpoint on change
@@ -1099,145 +1127,108 @@ Notes: {about}</pre>
 
     <!-- ===== INTEGRATIONS ===== -->
     {:else if tab === "homelab"}
+      {#snippet endpointService(o: EndpointOpts)}
+        {@const p = connPill(o.state, !!o.value.trim())}
+        <section class="set-group">
+          <div class="set-group-h svc-h">
+            <div>
+              <h3 class="set-group-t">{o.title}</h3>
+              <p class="set-group-d">{@html o.desc}</p>
+            </div>
+            <span class="status-pill status-pill--{p.cls}"><span class="dot"></span>{p.label}</span>
+          </div>
+          <div class="set-card">
+            <div class="set-row stacked">
+              <div class="set-row-r">
+                <div class="row-inline">
+                  <input class="input mono" value={o.value} oninput={(e) => o.oninput(e.currentTarget.value)} onchange={o.onsave} onblur={o.onsave} placeholder={o.placeholder} />
+                  <button class="btn" onclick={o.onTest} disabled={o.state === "testing" || !o.value.trim()}>
+                    <Icon name="refresh" size={12} /> Test
+                  </button>
+                </div>
+                {#if o.state === "fail" && o.failHint}
+                  <div class="set-row-d" style="margin-top:6px;color:var(--err,#e5484d)">{o.failHint}</div>
+                {/if}
+                {#if o.hint}<div class="set-row-d" style="margin-top:6px">{@html o.hint}</div>{/if}
+              </div>
+            </div>
+            {#if o.extra}{@render o.extra()}{/if}
+          </div>
+        </section>
+      {/snippet}
+
+      {#snippet diagramsToggle()}
+        <div class="set-row">
+          <div class="set-row-l">
+            <div class="set-row-t">Illustrate with diagrams</div>
+            <div class="set-row-d">A relevant diagram per cheatsheet section + images in chat. On by default once SearXNG is connected.</div>
+          </div>
+          <div class="set-row-r">
+            <button type="button" class={"st-toggle" + (webImages ? " on" : "")} onclick={() => setWebImages(!webImages)} disabled={!searxng.trim()} role="switch" aria-checked={webImages} aria-label="diagrams"><span class="st-knob"></span></button>
+          </div>
+        </div>
+      {/snippet}
+
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Integrations</div>
           <h1 class="read set-title">Local models, web search & backups</h1>
-          <p class="set-sub">Optional, self-hosted services. Cortex stays fully local without any of them.</p>
+          <p class="set-sub">Optional, self-hosted services. Cortex stays fully local without any of them — or run them all with the <span class="mono">homelab/</span> docker compose.</p>
         </header>
 
-        <section class="set-group">
-          <div class="set-group-h">
-            <h3 class="set-group-t">Local models (Ollama)</h3>
-            <p class="set-group-d">Optional: run chat/embeddings on a local or self-hosted <span class="mono">ollama</span> server — keyless and fully private. Select <span class="mono">ollama:&lt;model&gt;</span> per task in Providers.</p>
-          </div>
-          <div class="set-card">
-            <div class="set-row stacked">
-              <div class="set-row-l"><div class="set-row-t">Ollama endpoint</div></div>
-              <div class="set-row-r">
-                <div class="row-inline">
-                  <input class="input mono" bind:value={endpoint} placeholder="http://localhost:11434" />
-                  <button class="btn" onclick={testConnection}>
-                    <Icon name="refresh" size={12} /> Test
-                  </button>
-                </div>
-                {#if testState === "testing"}
-                  <div class="set-test mono faint">
-                    <span class="is-spin" style="width:11px;height:11px;display:inline-block;vertical-align:-1px"></span>
-                    Pinging…
-                  </div>
-                {:else if testState === "ok"}
-                  <div class="set-test mono" style="color:var(--ok)">
-                    <Icon name="check" size={12} /> Reachable
-                  </div>
-                {:else if testState === "fail"}
-                  <div class="set-test mono" style="color:var(--danger,#e06c75)">
-                    <Icon name="x" size={12} /> Unreachable — check the URL and that ollama is running.
-                  </div>
-                {/if}
-              </div>
-            </div>
-          </div>
-        </section>
+        {@render endpointService({
+          title: "Local models (Ollama)",
+          desc: "Run chat/embeddings on a local or self-hosted <span class='mono'>ollama</span> server — keyless and private. Select <span class='mono'>ollama:&lt;model&gt;</span> per task in Models.",
+          value: endpoint,
+          oninput: (v: string) => (endpoint = v),
+          onsave: () => {},
+          onTest: testConnection,
+          state: testState,
+          placeholder: "http://localhost:11434",
+          failHint: "Unreachable — check the URL and that ollama is running.",
+        })}
+
+        {@render endpointService({
+          title: "Web search (SearXNG)",
+          desc: "Pulls diagrams/images into cheatsheets and enriches chat answers. There is no separate web-search page.",
+          value: searxng,
+          oninput: (v: string) => (searxng = v),
+          onsave: saveSearxng,
+          onTest: testSearxng,
+          state: searxState,
+          placeholder: "http://192.168.1.50:8080",
+          failHint: "Unreachable — check the URL and that SearXNG is running with JSON enabled.",
+          hint: "Base URL only. Enable JSON in settings.yml (<span class='mono'>formats: [html, json]</span>).",
+          extra: diagramsToggle,
+        })}
+
+        {@render endpointService({
+          title: "Remote transcription (Whisper)",
+          desc: "Offload lecture transcription to a homelab Whisper server instead of installing Python locally. Leave blank to transcribe on this machine.",
+          value: whisperUrl,
+          oninput: (v: string) => (whisperUrl = v),
+          onsave: saveWhisper,
+          onTest: testWhisper,
+          state: whisperState,
+          placeholder: "http://192.168.1.50:9009",
+          failHint: "Unreachable — check the URL and that the Whisper service is running.",
+          hint: "OpenAI-compatible endpoint, base URL only (Cortex calls <span class='mono'>/v1/audio/transcriptions</span>).",
+        })}
 
         <section class="set-group">
-          <div class="set-group-h">
-            <h3 class="set-group-t">Web search (SearXNG)</h3>
-            <p class="set-group-d">Point Cortex at your self-hosted SearXNG. Used to pull diagrams/images into cheatsheets and to enrich chat answers — there is no separate web-search page.</p>
-          </div>
-          <div class="set-card">
-            <div class="set-row stacked">
-              <div class="set-row-l"><div class="set-row-t">SearXNG endpoint</div></div>
-              <div class="set-row-r">
-                <div class="row-inline">
-                  <input class="input mono" bind:value={searxng} onchange={saveSearxng} onblur={saveSearxng} placeholder="http://192.168.1.50:8080" />
-                  <button class="btn" onclick={testSearxng}>
-                    <Icon name="refresh" size={12} /> Test
-                  </button>
-                </div>
-                {#if searxState === "testing"}
-                  <div class="set-test mono faint">
-                    <span class="is-spin" style="width:11px;height:11px;display:inline-block;vertical-align:-1px"></span>
-                    Pinging…
-                  </div>
-                {:else if searxState === "ok"}
-                  <div class="set-test mono" style="color:var(--ok)">
-                    <Icon name="check" size={12} /> Reachable
-                  </div>
-                {:else if searxState === "fail"}
-                  <div class="set-test mono" style="color:var(--danger,#e06c75)">
-                    <Icon name="x" size={12} /> Unreachable — check the URL and that SearXNG is running (with JSON format enabled).
-                  </div>
-                {/if}
-                <div class="set-row-d" style="margin-top:6px">Self-hosted SearXNG base URL, e.g. http://192.168.1.50:8080. Enable JSON in its settings.yml (<span class="mono">formats: [html, json]</span>).</div>
-              </div>
+          <div class="set-group-h svc-h">
+            <div>
+              <h3 class="set-group-t">Encrypted backups</h3>
+              <p class="set-group-d">Snapshot the database, encrypt it with <span class="mono">age</span>, and upload with <span class="mono">rclone</span>. Nothing leaves the machine unencrypted.</p>
             </div>
-            <div class="set-row">
-              <div class="set-row-l">
-                <div class="set-row-t">Illustrate with diagrams</div>
-                <div class="set-row-d">Pull a relevant diagram per cheatsheet section + images in chat. On by default once SearXNG is connected.</div>
-              </div>
-              <div class="set-row-r">
-                <button type="button" class={"st-toggle" + (webImages ? " on" : "")} onclick={() => setWebImages(!webImages)} disabled={!searxng.trim()} role="switch" aria-checked={webImages} aria-label="diagrams"><span class="st-knob"></span></button>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="set-group">
-          <div class="set-group-h">
-            <h3 class="set-group-t">Remote transcription (Whisper)</h3>
-            <p class="set-group-d">Offload lecture transcription to a homelab Whisper server (e.g. the bundled <span class="mono">faster-whisper</span> service) instead of installing Python locally. Leave blank to transcribe on this machine.</p>
-          </div>
-          <div class="set-card">
-            <div class="set-row stacked">
-              <div class="set-row-l"><div class="set-row-t">Whisper endpoint</div></div>
-              <div class="set-row-r">
-                <div class="row-inline">
-                  <input class="input mono" bind:value={whisperUrl} onchange={saveWhisper} onblur={saveWhisper} placeholder="http://192.168.1.50:9009" />
-                  <button class="btn" onclick={testWhisper}>
-                    <Icon name="refresh" size={12} /> Test
-                  </button>
-                </div>
-                {#if whisperState === "testing"}
-                  <div class="set-test mono faint">
-                    <span class="is-spin" style="width:11px;height:11px;display:inline-block;vertical-align:-1px"></span>
-                    Pinging…
-                  </div>
-                {:else if whisperState === "ok"}
-                  <div class="set-test mono" style="color:var(--ok)">
-                    <Icon name="check" size={12} /> Reachable
-                  </div>
-                {:else if whisperState === "fail"}
-                  <div class="set-test mono" style="color:var(--danger,#e06c75)">
-                    <Icon name="x" size={12} /> Unreachable — check the URL and that the Whisper service is running.
-                  </div>
-                {/if}
-                <div class="set-row-d" style="margin-top:6px">OpenAI-compatible transcription endpoint, base URL only (Cortex calls <span class="mono">/v1/audio/transcriptions</span>).</div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="set-group">
-          <div class="set-group-h">
-            <h3 class="set-group-t">Encrypted backups</h3>
-            <p class="set-group-d">Snapshot the database, encrypt it with <span class="mono">age</span>, and upload to your homelab with <span class="mono">rclone</span>. Nothing leaves the machine unencrypted.</p>
-          </div>
-          <div class="set-card">
             {#if backupInfo}
-              <div class="set-row">
-                <div class="set-row-l"><div class="set-row-t">Tools</div></div>
-                <div class="set-row-r">
-                  <span class="mono" style="color:{backupInfo.age_found ? 'var(--ok)' : 'var(--danger,#e06c75)'}">
-                    <Icon name={backupInfo.age_found ? "check" : "x"} size={12} /> age
-                  </span>
-                  <span class="mono" style="margin-left:14px;color:{backupInfo.rclone_found ? 'var(--ok)' : 'var(--danger,#e06c75)'}">
-                    <Icon name={backupInfo.rclone_found ? "check" : "x"} size={12} /> rclone
-                  </span>
-                </div>
+              <div class="svc-tools">
+                <span class="badge {backupInfo.age_found ? 'badge--ok' : 'badge--err'}"><span class="dot"></span>age</span>
+                <span class="badge {backupInfo.rclone_found ? 'badge--ok' : 'badge--err'}"><span class="dot"></span>rclone</span>
               </div>
             {/if}
+          </div>
+          <div class="set-card">
             <div class="set-row stacked">
               <div class="set-row-l"><div class="set-row-t">age recipient (public key)</div></div>
               <div class="set-row-r">

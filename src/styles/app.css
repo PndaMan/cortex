@@ -880,6 +880,10 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
 .set-group-h { margin-bottom: 12px; }
 .set-group-t { font-family: var(--font-mono); font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
 .set-group-d { font-size: var(--t-sm); color: var(--fg-muted); margin-top: 5px; }
+.set-group-h.svc-h { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.set-group-h.svc-h > div:first-child { min-width: 0; }
+.set-group-h.svc-h .status-pill { flex: none; margin-top: 2px; }
+.svc-tools { display: flex; gap: 8px; flex: none; margin-top: 2px; }
 .set-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--rad-3); overflow: hidden; }
 
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-5); padding: 13px 16px; border-top: 1px solid var(--border); }
