@@ -326,6 +326,8 @@ export const generateExam = (
 export const startExam = (id: string) => invoke<ExamRec>("start_exam", { id });
 export const submitExam = (id: string, answers: ExamAnswerInput[]) =>
   invoke<any>("submit_exam", { id, answers });
+/** Re-grade a finished exam's stored answers (same pipeline/rubric as submit). */
+export const remarkExam = (id: string) => invoke<any>("remark_exam", { id });
 export const listExams = (subjectId: string) =>
   invoke<ExamRec[]>("list_exams", { subjectId });
 export const getExam = (id: string) => invoke<ExamRec>("get_exam", { id });

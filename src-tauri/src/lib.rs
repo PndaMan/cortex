@@ -273,6 +273,7 @@ pub fn run() {
             exam::generate_exam,
             exam::start_exam,
             exam::submit_exam,
+            exam::remark_exam,
             exam::list_exams,
             exam::get_exam,
             exam::delete_exam,

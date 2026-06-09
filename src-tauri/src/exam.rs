@@ -252,13 +252,44 @@ pub async fn submit_exam(
     id: String,
     answers: Vec<ExamAnswer>,
 ) -> Result<Value> {
+    tauri::async_runtime::spawn_blocking(move || grade_exam_inner(&app, &id, &answers))
+        .await
+        .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+}
+
+/// Remark: re-grade a finished exam's STORED answers through the identical
+/// pipeline and prompt as the original submission. Exists to recover from a
+/// failed or misread grading run — and because nothing about the rubric,
+/// prompt, or model selection differs from submit, a remark cannot be
+/// systematically more lenient than the original marking.
+#[tauri::command]
+pub async fn remark_exam(app: AppHandle, id: String) -> Result<Value> {
     tauri::async_runtime::spawn_blocking(move || -> Result<Value> {
+        let answers: Vec<ExamAnswer> = {
+            let state = app.state::<AppState>();
+            let c = state.db.lock().unwrap();
+            let exam = repo::get_exam(&c, &id)?;
+            serde_json::from_value(exam.answers.clone())
+                .map_err(|_| Error::Other("this exam has no stored answers to remark".into()))?
+        };
+        if answers.is_empty() {
+            return Err(Error::Other("this exam has no stored answers to remark".into()));
+        }
+        grade_exam_inner(&app, &id, &answers)
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+}
+
+/// Shared grading core for submit + remark: MCQs grade locally, written answers
+/// go to the model in one verified-then-scored call.
+fn grade_exam_inner(app: &AppHandle, id: &str, answers: &[ExamAnswer]) -> Result<Value> {
         let state = app.state::<AppState>();
 
         // Load the exam + model config under the lock.
         let (exam, context, spec, keys) = {
             let c = state.db.lock().unwrap();
-            let exam = repo::get_exam(&c, &id)?;
+            let exam = repo::get_exam(&c, id)?;
             let topics: Vec<String> = exam.topic_ids.clone();
             let context = exam_context(&c, &exam.subject_id, &topics)?;
             let spec = repo::get_setting(&c, "model_quiz")?
@@ -444,12 +475,9 @@ pub async fn submit_exam(
 
         {
             let c = state.db.lock().unwrap();
-            repo::finalize_exam(&c, &id, &answers_json, &results, percent)?;
+            repo::finalize_exam(&c, id, &answers_json, &results, percent)?;
         }
         Ok(results)
-    })
-    .await
-    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
 /// The exam's scoped topic names (empty scope → all subject topics). Best-effort:

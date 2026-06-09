@@ -148,6 +148,22 @@
     }
   }
 
+  // ── remark: re-grade the stored answers (same rubric as submit) ──────────
+  let remarking = $state(false);
+  async function doRemark() {
+    if (!exam || remarking) return;
+    remarking = true;
+    try {
+      results = await api.remarkExam(exam.id);
+      void loadPast();
+      app.pushToast({ kind: "success", title: "Remarked", body: "Same rubric, fresh grading run." });
+    } catch (err) {
+      app.pushToast({ kind: "error", title: "Remark failed", body: err instanceof Error ? err.message : String(err) });
+    } finally {
+      remarking = false;
+    }
+  }
+
   // ── open a past exam ─────────────────────────────────────────
   async function openPast(e: api.ExamRec) {
     if (e.status === "graded") {
@@ -443,6 +459,10 @@
       <div class="exam-cta">
         <button class="btn btn--primary" onclick={startNew}><Icon name="bolt" size={13} /> Retake</button>
         <button class="btn" onclick={backToSetup}><Icon name="book" size={13} /> New exam</button>
+        <button class="btn" onclick={doRemark} disabled={remarking} title="Re-grade these answers with the same rubric — useful when grading failed or misread an answer">
+          {#if remarking}<span class="is-spin" style:width="12px" style:height="12px"></span>{:else}<Icon name="refresh" size={13} />{/if}
+          Remark
+        </button>
       </div>
 
       {#if weakTopics.length > 0}
