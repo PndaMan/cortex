@@ -59,6 +59,15 @@ pub struct IngestResult {
     pub warning: Option<String>,
 }
 
+/// Summary returned by `import_anki` — how many decks/cards landed and how many
+/// cards were skipped (empty fronts or duplicates of existing/within-import cards).
+#[derive(Debug, Clone, Serialize)]
+pub struct AnkiImportResult {
+    pub deck_count: usize,
+    pub card_count: usize,
+    pub skipped: usize,
+}
+
 /// A stored chunk's info, returned by `list_chunks` — lets the UI prove a
 /// source was actually parsed + embedded (text + vector dimension).
 #[derive(Debug, Clone, Serialize)]

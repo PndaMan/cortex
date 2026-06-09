@@ -245,6 +245,16 @@ export const exportDatabase = (dest: string) =>
 /** Export a flashcard material to an Anki `.apkg` deck at `dest`; returns card count. */
 export const exportAnki = (materialId: string, dest: string) =>
   invoke<number>("export_anki", { materialId, dest });
+/** Summary of an Anki `.apkg` import: decks created, cards stored, cards skipped. */
+export interface AnkiImportResult {
+  deck_count: number;
+  card_count: number;
+  skipped: number;
+}
+/** Import an Anki `.apkg` at `path` into a subject as flashcard materials (one
+ *  per deck). HTML-stripped, deduped vs existing decks in the subject. */
+export const importAnki = (subjectId: string, path: string, topicId?: string) =>
+  invoke<AnkiImportResult>("import_anki", { subjectId, topicId, path });
 // ---- encrypted homelab backups (age + rclone) ----
 export interface BackupStatus {
   age_found: boolean;
