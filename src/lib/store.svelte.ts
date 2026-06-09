@@ -18,6 +18,7 @@ export type View =
   | "notes"
   | "calendar"
   | "analytics"
+  | "exam"
   | "settings";
 export type Mode = "NOR" | "INS" | "SEL";
 export type Toast = {

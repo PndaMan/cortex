@@ -1170,6 +1170,133 @@ pub fn get_material(conn: &Connection, id: &str) -> Result<MaterialRec> {
     .ok_or_else(|| Error::NotFound(format!("material {id}")))
 }
 
+// ---- exams (timed, locally-graded practice exams) ---------------------
+
+/// Map one `exams` row (the canonical 13-column SELECT order) to an `ExamRec`.
+/// JSON columns are parsed leniently — a corrupt/empty value yields `Null` (or an
+/// empty topic list) rather than failing the whole query.
+fn row_to_exam(r: &rusqlite::Row) -> rusqlite::Result<ExamRec> {
+    let topic_ids: Option<String> = r.get(2)?;
+    let answers: Option<String> = r.get(6)?;
+    let results: Option<String> = r.get(7)?;
+    Ok(ExamRec {
+        id: r.get(0)?,
+        subject_id: r.get(1)?,
+        topic_ids: topic_ids
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default(),
+        title: r.get(3)?,
+        duration_min: r.get(4)?,
+        questions: serde_json::from_str(&r.get::<_, String>(5)?)
+            .unwrap_or(serde_json::Value::Null),
+        answers: answers
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::Value::Null),
+        results: results
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::Value::Null),
+        status: r.get(8)?,
+        started_ms: r.get(9)?,
+        score: r.get(10)?,
+        created_at: r.get(11)?,
+        updated_at: r.get(12)?,
+    })
+}
+
+const EXAM_COLS: &str = "id, subject_id, topic_ids, title, duration_min, questions, \
+    answers, results, status, started_ms, score, created_at, updated_at";
+
+/// Persist a freshly-generated exam (status 'ready') and return its id.
+pub fn insert_exam(
+    conn: &Connection,
+    subject_id: &str,
+    topic_ids: &[String],
+    title: &str,
+    duration_min: i64,
+    questions: &serde_json::Value,
+) -> Result<String> {
+    let id = new_id();
+    let ts = now_ms();
+    let topics_json = serde_json::to_string(topic_ids).unwrap_or_else(|_| "[]".into());
+    conn.execute(
+        "INSERT INTO exams (id, subject_id, topic_ids, title, duration_min, questions, \
+         status, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'ready', ?7, ?7)",
+        params![id, subject_id, topics_json, title, duration_min, questions.to_string(), ts],
+    )?;
+    Ok(id)
+}
+
+/// Fetch a single exam by id. Errors if not found.
+pub fn get_exam(conn: &Connection, id: &str) -> Result<ExamRec> {
+    conn.query_row(
+        &format!("SELECT {EXAM_COLS} FROM exams WHERE id=?1"),
+        params![id],
+        row_to_exam,
+    )
+    .optional()?
+    .ok_or_else(|| Error::NotFound(format!("exam {id}")))
+}
+
+/// A subject's exams, newest first (drives the setup screen's past-exam list).
+pub fn list_exams(conn: &Connection, subject_id: &str) -> Result<Vec<ExamRec>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {EXAM_COLS} FROM exams WHERE subject_id=?1 ORDER BY created_at DESC"
+    ))?;
+    let rows = stmt.query_map(params![subject_id], row_to_exam)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Mark an exam started: status 'in_progress' + the start timestamp (idempotent —
+/// re-starting keeps the original start time so the countdown stays honest).
+pub fn start_exam(conn: &Connection, id: &str) -> Result<()> {
+    let ts = now_ms();
+    let n = conn.execute(
+        "UPDATE exams SET status='in_progress', \
+         started_ms=COALESCE(started_ms, ?2), updated_at=?2 \
+         WHERE id=?1 AND status<>'graded'",
+        params![id, ts],
+    )?;
+    if n == 0 {
+        // Either no such exam, or it's already graded — surface a clear error only
+        // when the row is genuinely missing.
+        let exists: bool = conn
+            .query_row("SELECT 1 FROM exams WHERE id=?1", params![id], |_| Ok(true))
+            .optional()?
+            .unwrap_or(false);
+        if !exists {
+            return Err(Error::NotFound(format!("exam {id}")));
+        }
+    }
+    Ok(())
+}
+
+/// Persist a graded submission: the student's answers, the grading results, the
+/// final score %, and status 'graded'.
+pub fn finalize_exam(
+    conn: &Connection,
+    id: &str,
+    answers: &serde_json::Value,
+    results: &serde_json::Value,
+    score: f64,
+) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE exams SET answers=?2, results=?3, score=?4, status='graded', updated_at=?5 \
+         WHERE id=?1",
+        params![id, answers.to_string(), results.to_string(), score, now_ms()],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound(format!("exam {id}")));
+    }
+    Ok(())
+}
+
+/// Delete an exam.
+pub fn delete_exam(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM exams WHERE id=?1", params![id])?;
+    Ok(())
+}
+
 // ---- chat history (multiple conversation threads per subject) ----------
 
 /// Settings key holding the active thread id for a subject.

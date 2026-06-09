@@ -198,6 +198,30 @@ pub struct MaterialRec {
     pub payload: serde_json::Value,
 }
 
+// ---- exams (timed, locally-graded practice exams) --------------------
+
+/// A practice exam row. `questions`/`answers`/`results` are JSON values mirrored
+/// 1:1 in the frontend (`src/lib/api.ts` ExamRec). `answers`/`results` are
+/// `Null` until the exam is submitted/graded; `started_ms`/`score` until then.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExamRec {
+    pub id: String,
+    pub subject_id: String,
+    /// Topic ids the exam is scoped to (empty = whole subject).
+    #[serde(default)]
+    pub topic_ids: Vec<String>,
+    pub title: String,
+    pub duration_min: i64,
+    pub questions: serde_json::Value,
+    pub answers: serde_json::Value,
+    pub results: serde_json::Value,
+    pub status: String,
+    pub started_ms: Option<i64>,
+    pub score: Option<f64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 /// Payload the frontend sends to ingest a new source.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AddSourceInput {

@@ -198,6 +198,13 @@
         <span class="label">{materials.length} materials · generated from this subject</span>
         <div class="grow"></div>
         <button
+          class="btn btn--sm"
+          onclick={() => app.setView("exam")}
+          title="Take a timed, graded practice exam"
+        >
+          <Icon name="check" size={12} /> Exam mode
+        </button>
+        <button
           class="btn btn--sm btn--primary"
           onclick={() => app.setView("gen-material")}
         >

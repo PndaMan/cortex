@@ -282,6 +282,45 @@ export const deleteMaterial = (id: string) => invoke<void>("delete_material", { 
 export const renameMaterial = (id: string, title: string) =>
   invoke<void>("rename_material", { id, title });
 
+// ---- exam mode (timed, locally-graded practice exams) ----
+// `questions`/`answers`/`results` are loosely-typed JSON (mirrors the backend's
+// serde_json::Value); ExamView narrows them at the point of use.
+export interface ExamRec {
+  id: string;
+  subject_id: string;
+  topic_ids: string[];
+  title: string;
+  duration_min: number;
+  questions: any;
+  answers: any;
+  results: any;
+  status: string; // ready | in_progress | graded
+  started_ms: number | null;
+  score: number | null;
+  created_at: number;
+  updated_at: number;
+}
+export interface ExamAnswerInput {
+  id: string;
+  choice?: number | null;
+  text?: string | null;
+}
+export const generateExam = (
+  subjectId: string,
+  topicIds: string[] | undefined,
+  durationMin: number,
+  mcqCount: number,
+  writtenCount: number
+) =>
+  invoke<ExamRec>("generate_exam", { subjectId, topicIds, durationMin, mcqCount, writtenCount });
+export const startExam = (id: string) => invoke<ExamRec>("start_exam", { id });
+export const submitExam = (id: string, answers: ExamAnswerInput[]) =>
+  invoke<any>("submit_exam", { id, answers });
+export const listExams = (subjectId: string) =>
+  invoke<ExamRec[]>("list_exams", { subjectId });
+export const getExam = (id: string) => invoke<ExamRec>("get_exam", { id });
+export const deleteExam = (id: string) => invoke<void>("delete_exam", { id });
+
 // ---- lecture recording (Whisper) ----
 export const saveRecording = (
   subjectId: string,

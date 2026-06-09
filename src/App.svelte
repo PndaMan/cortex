@@ -37,6 +37,7 @@
   let RecorderView = $state<any>(null);
   let CalendarViewC = $state<any>(null);
   let AnalyticsViewC = $state<any>(null);
+  let ExamViewC = $state<any>(null);
   const loadSettings = () =>
     SettingsView ?? import("./views/Settings.svelte").then((m) => (SettingsView = m.default));
   const loadRecorder = () =>
@@ -45,11 +46,14 @@
     CalendarViewC ?? import("./views/CalendarView.svelte").then((m) => (CalendarViewC = m.default));
   const loadAnalytics = () =>
     AnalyticsViewC ?? import("./views/AnalyticsView.svelte").then((m) => (AnalyticsViewC = m.default));
+  const loadExam = () =>
+    ExamViewC ?? import("./views/ExamView.svelte").then((m) => (ExamViewC = m.default));
   $effect(() => {
     if (app.view === "settings") void loadSettings();
     else if (app.view === "recorder") void loadRecorder();
     else if (app.view === "calendar") void loadCalendar();
     else if (app.view === "analytics") void loadAnalytics();
+    else if (app.view === "exam") void loadExam();
   });
 
   // Initialize app state on mount (loads subjects, seeds demo if empty, restores theme)
@@ -60,6 +64,7 @@
       void loadRecorder();
       void loadCalendar();
       void loadAnalytics();
+      void loadExam();
     }, 1500);
     return () => clearTimeout(prefetch);
   });
@@ -319,6 +324,8 @@
           {#if CalendarViewC}{@const CalendarView = CalendarViewC}<CalendarView />{/if}
         {:else if app.view === "analytics"}
           {#if AnalyticsViewC}{@const AnalyticsView = AnalyticsViewC}<AnalyticsView />{/if}
+        {:else if app.view === "exam"}
+          {#if ExamViewC}{@const ExamView = ExamViewC}<ExamView />{/if}
         {:else if app.view === "settings"}
           {#if SettingsView}{@const Settings = SettingsView}<Settings />{/if}
         {/if}

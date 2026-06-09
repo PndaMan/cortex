@@ -41,7 +41,7 @@ const OFFLINE_MSG: &str =
 
 /// Reject a cloud LLM call when offline mode is on. `spec` is "provider:model";
 /// only `ollama:` (local) is permitted offline.
-fn guard_offline_llm(c: &Connection, spec: &str) -> Result<()> {
+pub(crate) fn guard_offline_llm(c: &Connection, spec: &str) -> Result<()> {
     if offline_mode(c) && !spec.trim().starts_with("ollama:") {
         return Err(Error::Other(OFFLINE_MSG.into()));
     }
@@ -68,7 +68,7 @@ fn effective_embed_provider(c: &Connection) -> String {
 /// Settings → Models token-budget sliders actually do something — without it,
 /// OpenRouter sends no max_tokens and defaults to a huge cap, 402-ing when the
 /// key's credit limit can't cover it.
-fn apply_budget(model: &mut Box<dyn llm::Llm>, c: &Connection, task: &str) {
+pub(crate) fn apply_budget(model: &mut Box<dyn llm::Llm>, c: &Connection, task: &str) {
     if let Ok(Some(b)) = repo::get_setting(c, &format!("budget_{task}")) {
         if let Some(n) = b.trim().parse::<u32>().ok().filter(|n| *n > 0) {
             model.set_max_tokens(n);
@@ -77,7 +77,7 @@ fn apply_budget(model: &mut Box<dyn llm::Llm>, c: &Connection, task: &str) {
 }
 
 /// Read all configured provider keys from settings.
-fn read_keys(c: &Connection) -> Result<llm::Keys> {
+pub(crate) fn read_keys(c: &Connection) -> Result<llm::Keys> {
     // Trim keys — a pasted key with a trailing newline/space produces an invalid
     // HTTP header value (reqwest drops it → "Missing Authentication header" 401).
     let key = |k: &str| -> Result<Option<String>> {

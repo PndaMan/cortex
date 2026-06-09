@@ -9,6 +9,7 @@ mod commands;
 mod db;
 mod embed;
 mod error;
+mod exam;
 mod google;
 mod ingest;
 mod llm;
@@ -267,6 +268,13 @@ pub fn run() {
             // study analytics
             analytics::log_pomodoro_session,
             analytics::analytics_summary,
+            // exam mode
+            exam::generate_exam,
+            exam::start_exam,
+            exam::submit_exam,
+            exam::list_exams,
+            exam::get_exam,
+            exam::delete_exam,
             // google calendar
             google::google_status,
             google::google_connect,
