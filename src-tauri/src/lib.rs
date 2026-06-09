@@ -237,6 +237,7 @@ pub fn run() {
             mpv::youtube_resume,
             mpv::youtube_stop,
             mpv::youtube_set_volume,
+            mpv::youtube_prewarm,
             commands::db_stats,
             commands::delete_all_data,
             commands::ping_url,

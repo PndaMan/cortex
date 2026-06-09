@@ -427,6 +427,10 @@ export const youtubeResume = () => invoke<void>("youtube_resume");
 export const youtubeStop = () => invoke<void>("youtube_stop");
 export const youtubeSetVolume = (volume: number) =>
   invoke<void>("youtube_set_volume", { volume });
+// Fire-and-forget: pre-resolve station URLs in the background so their first
+// play is near-instant (the mpv sidecar caches the resolved direct stream).
+export const youtubePrewarm = (urls: string[]) =>
+  invoke<void>("youtube_prewarm", { urls });
 
 // ---- data & privacy / homelab utilities ----
 export interface DbStats {
