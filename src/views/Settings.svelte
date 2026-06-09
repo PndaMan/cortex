@@ -496,6 +496,15 @@
     api.setSettings({ voice_a: a, voice_b: b }).catch(() => {});
   });
 
+  // ---- window behaviour ----
+  // Default ON: closing the window hides to the tray so ingest/generation/music
+  // keep running; the backend treats anything but "false" as enabled.
+  let closeToTray = $state(true);
+  function toggleCloseToTray() {
+    closeToTray = !closeToTray;
+    api.setSetting("close_to_tray", closeToTray ? "true" : "false").catch(() => {});
+  }
+
   // ---- data & privacy state ----
   let offlineMode = $state(false);
   let stats       = $state<api.DbStats | null>(null);
@@ -610,6 +619,8 @@
       // Appearance
       if (s.reading_font)   readFont      = s.reading_font;
       if (s.density)        density       = s.density;
+      // Window behaviour (default ON: closing hides to the tray)
+      if (s.close_to_tray !== undefined) closeToTray = s.close_to_tray !== "false";
 
       // Audio: default station, autoplay, host voices
       if (s.default_station) station = s.default_station;
@@ -1072,6 +1083,21 @@ Notes: {about}</pre>
                     <button type="button" class={"seg-opt" + (density === opt.id ? " on" : "")} onclick={() => (density = opt.id)}>{opt.label}</button>
                   {/each}
                 </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h"><h3 class="set-group-t">Window</h3></div>
+          <div class="set-card">
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">Close to tray</div>
+                <div class="set-row-d">Closing the window keeps Cortex running in the tray — ingest, generation and music continue. Quit from the tray menu.</div>
+              </div>
+              <div class="set-row-r">
+                <button type="button" class={"st-toggle" + (closeToTray ? " on" : "")} onclick={toggleCloseToTray} role="switch" aria-checked={closeToTray} aria-label="close to tray"><span class="st-knob"></span></button>
               </div>
             </div>
           </div>
