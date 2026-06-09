@@ -9,7 +9,10 @@
   let recording = $state(false);
   let paused = $state(false);
   let secs = $state(0);
-  let bars = $state<number[]>(Array.from({ length: 72 }, () => 0.06));
+  // Waveform draws to ONE canvas inside rAF — the previous 72 DOM bars with
+  // per-frame style updates forced layout 60×/s, which crawled (~2fps) on
+  // WebKitGTK's software renderer.
+  let waveCanvas: HTMLCanvasElement | null = $state(null);
   // "review" sits between stopping and committing: the user names the recording,
   // picks a topic, and confirms before we transcribe + save.
   let status = $state<"ready" | "recording" | "review" | "transcribing" | "done">("ready");
@@ -19,7 +22,11 @@
 
   // ---- review & save step ----
   // Captured between stop and save so the user can review before committing.
-  let reviewBytes = $state<number[]>([]);     // the assembled audio (number[] for the IPC contract)
+  // NOT $state: this is megabytes of audio — wrapping it in a deep reactive
+  // proxy makes every later read (incl. IPC serialization) crawl, and no UI
+  // ever renders the raw bytes.
+  let reviewBytes: number[] = [];             // the assembled audio (number[] for the IPC contract)
+  let reviewExt = "webm";                     // container of reviewBytes ("webm" | "wav")
   let reviewName = $state("");                // editable file/source name
   let reviewTopicId = $state("");             // chosen topic ("" → no topic)
   let reviewDuration = $state("00:00");       // captured length, mm:ss
@@ -56,6 +63,86 @@
   let stream: MediaStream | null = null;
   let audioCtx: AudioContext | null = null;
   let analyser: AnalyserNode | null = null;
+  let srcNode: MediaStreamAudioSourceNode | null = null;
+
+  // ---- WAV capture fallback ----
+  // WebKitGTK's MediaRecorder can run without error yet deliver ZERO data (its
+  // GStreamer recorder is missing/broken on some systems) — every saved lecture
+  // came out as an empty file. getUserMedia + Web Audio provably work here (the
+  // live waveform uses them), so when a watchdog sees no data arrive we swap to
+  // capturing raw PCM off the same graph and encode 16 kHz mono WAV ourselves.
+  let captureMode: "media" | "wav" = "media";
+  let wavProc: ScriptProcessorNode | null = null;
+  let wavChunks: Int16Array[] = []; // 16 kHz mono PCM
+  let wavSegStart = 0; // wavChunks index where the current live segment begins
+  let watchdog: ReturnType<typeof setTimeout> | null = null;
+
+  /** Linear-interpolation downsample of one Float32 block to 16 kHz Int16. */
+  function downsampleTo16k(input: Float32Array, fromRate: number): Int16Array {
+    const ratio = fromRate / 16000;
+    const outLen = Math.max(1, Math.floor(input.length / ratio));
+    const out = new Int16Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const pos = i * ratio;
+      const i0 = Math.floor(pos);
+      const i1 = Math.min(i0 + 1, input.length - 1);
+      const s = input[i0] + (input[i1] - input[i0]) * (pos - i0);
+      out[i] = Math.max(-32768, Math.min(32767, Math.round(s * 32767)));
+    }
+    return out;
+  }
+
+  /** Assemble PCM chunks into a complete 16 kHz mono 16-bit WAV file. */
+  function encodeWav(pcm: Int16Array[]): Uint8Array {
+    const total = pcm.reduce((n, c) => n + c.length, 0);
+    const buf = new ArrayBuffer(44 + total * 2);
+    const dv = new DataView(buf);
+    const str = (off: number, s: string) => {
+      for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i));
+    };
+    str(0, "RIFF"); dv.setUint32(4, 36 + total * 2, true); str(8, "WAVE");
+    str(12, "fmt "); dv.setUint32(16, 16, true);
+    dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); // PCM, mono
+    dv.setUint32(24, 16000, true); dv.setUint32(28, 16000 * 2, true);
+    dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+    str(36, "data"); dv.setUint32(40, total * 2, true);
+    let off = 44;
+    for (const c of pcm) for (let i = 0; i < c.length; i++) { dv.setInt16(off, c[i], true); off += 2; }
+    return new Uint8Array(buf);
+  }
+
+  /** Swap a silent MediaRecorder for the PCM/WAV engine mid-recording. */
+  function switchToWavCapture() {
+    if (captureMode === "wav" || !audioCtx || !srcNode || !recording) return;
+    console.warn("[recorder] MediaRecorder produced no data — switching to WAV capture");
+    try {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.onstop = null;
+        mediaRecorder.ondataavailable = null;
+        mediaRecorder.stop();
+      }
+    } catch { /* noop */ }
+    mediaRecorder = null;
+    captureMode = "wav";
+    wavChunks = [];
+    wavSegStart = 0;
+    wavProc = audioCtx.createScriptProcessor(4096, 1, 1);
+    srcNode.connect(wavProc);
+    // The processor only runs while routed to the destination — mute it.
+    const mute = audioCtx.createGain();
+    mute.gain.value = 0;
+    wavProc.connect(mute).connect(audioCtx.destination);
+    const rate = audioCtx.sampleRate;
+    wavProc.onaudioprocess = (e) => {
+      if (!recording || paused) return;
+      wavChunks.push(downsampleTo16k(e.inputBuffer.getChannelData(0), rate));
+    };
+    // Restart the live-transcript segment loop on the new engine.
+    if (liveTranscriptOn && !SR) {
+      stopBackendPoll();
+      startBackendPoll();
+    }
+  }
   let recognition: any = null; // SpeechRecognition instance (if supported)
   let recognitionWantsRun = false; // keep-alive flag so onend can restart it
   let chunks: Blob[] = [];
@@ -77,23 +164,52 @@
   const hasLiveTranscript = $derived(liveTranscriptSupported && (liveFinal.trim().length > 0 || liveInterim.trim().length > 0));
 
   // ---- subtle animated waveform from the mic (Web Audio analyser, rAF-driven) ----
-  // Renders a small mirrored row of frequency bars. Secondary to the compact clock.
+  // Draws a small mirrored row of frequency bars onto the canvas. All work stays
+  // inside the rAF — no Svelte state, no DOM diffing, no layout.
+  const WAVE_N = 72;
+  function drawWave(levels: Float32Array | null) {
+    const cv = waveCanvas;
+    if (!cv) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = cv.clientWidth * dpr;
+    const h = cv.clientHeight * dpr;
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const ctx2d = cv.getContext("2d");
+    if (!ctx2d || w === 0) return;
+    ctx2d.clearRect(0, 0, w, h);
+    ctx2d.fillStyle = getComputedStyle(cv).color || "#7aa2f7";
+    const slot = w / WAVE_N;
+    const barW = Math.max(1, slot * 0.55);
+    for (let i = 0; i < WAVE_N; i++) {
+      const v = levels ? Math.max(0.06, levels[i]) : 0.06;
+      ctx2d.globalAlpha = levels ? 0.5 + v * 0.5 : 0.22;
+      const bh = Math.max(1, v * h);
+      ctx2d.fillRect(i * slot + (slot - barW) / 2, (h - bh) / 2, barW, bh);
+    }
+    ctx2d.globalAlpha = 1;
+  }
   $effect(() => {
-    if (!live || !analyser) return;
+    if (!live || !analyser) {
+      drawWave(null); // idle baseline
+      return;
+    }
     const freq = new Uint8Array(analyser.frequencyBinCount);
+    const levels = new Float32Array(WAVE_N);
+    const band = Math.max(1, Math.floor(freq.length / WAVE_N));
     let rafId = 0;
-    const N = 72;
-    const band = Math.max(1, Math.floor(freq.length / N));
+    let skip = false;
     function tick() {
+      rafId = requestAnimationFrame(tick);
+      skip = !skip; // ~30fps is plenty for ambience and halves render cost
+      if (skip) return;
       analyser!.getByteFrequencyData(freq);
-      bars = Array.from({ length: N }, (_, i) => {
+      for (let i = 0; i < WAVE_N; i++) {
         let s = 0;
         for (let j = 0; j < band; j++) s += freq[i * band + j] ?? 0;
-        const v = s / band / 255;
         // gentle curve so quiet rooms still show a soft baseline, loud peaks don't clip
-        return Math.min(1, v * 1.7 + 0.04);
-      });
-      rafId = requestAnimationFrame(tick);
+        levels[i] = Math.min(1, (s / band / 255) * 1.7 + 0.04);
+      }
+      drawWave(levels);
     }
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
@@ -109,11 +225,14 @@
   function cleanupStream() {
     stopRecognition();
     stopBackendPoll();
+    if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+    if (wavProc) { try { wavProc.disconnect(); } catch { /* noop */ } wavProc = null; }
     stream?.getTracks().forEach((t) => t.stop());
     audioCtx?.close().catch(() => {});
     stream = null;
     audioCtx = null;
     analyser = null;
+    srcNode = null;
   }
 
   // ---- live transcription (feature-detected) ----
@@ -173,6 +292,13 @@
   // Record one ~20s segment on the shared stream; onstop transcribes + appends it.
   function startSegment() {
     if (SR || !stream || !recording || paused || !liveTranscriptOn) return;
+    if (captureMode === "wav") {
+      // PCM engine: a segment is just a slice of wavChunks; snapshot the start
+      // index now and cut at the timer.
+      wavSegStart = wavChunks.length;
+      segTimer = setTimeout(() => void transcribeWavSegment(), SEG_MS);
+      return;
+    }
     try {
       segChunks = [];
       segRecorder = new MediaRecorder(stream);
@@ -182,6 +308,27 @@
       segTimer = setTimeout(() => { try { segRecorder?.stop(); } catch { /* noop */ } }, SEG_MS);
     } catch {
       segRecorder = null;
+    }
+  }
+
+  async function transcribeWavSegment() {
+    const seg = wavChunks.slice(wavSegStart);
+    startSegment(); // keep capturing the next slice while this one transcribes
+    if (seg.length === 0) return;
+    liveUpdating = true;
+    try {
+      const text = await api.transcribePartial(Array.from(encodeWav(seg)), "wav");
+      if (text && text.trim()) {
+        liveBackendText = (liveBackendText ? liveBackendText + " " : "") + text.trim();
+        whisperMissing = false;
+      } else if (!liveBackendText) {
+        whisperMissing = true;
+        stopBackendPoll();
+      }
+    } catch {
+      // Backend hiccup — keep what we have; the next segment will continue.
+    } finally {
+      liveUpdating = false;
     }
   }
 
@@ -234,16 +381,27 @@
     }
     // analyser for the live waveform
     audioCtx = new AudioContext();
-    const src = audioCtx.createMediaStreamSource(stream);
+    srcNode = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 256;
-    src.connect(analyser);
+    srcNode.connect(analyser);
 
     chunks = [];
-    mediaRecorder = new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-    mediaRecorder.onstop = () => void finalize();
-    mediaRecorder.start(1000);
+    wavChunks = [];
+    captureMode = "media";
+    // Ask for a container WebKitGTK claims to support; an unsupported default
+    // is one way recordings end up empty.
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
+      .find((m) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported?.(m));
+    try {
+      mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+      mediaRecorder.onstop = () => void finalize();
+      mediaRecorder.start(1000);
+    } catch (err) {
+      console.warn("[recorder] MediaRecorder unavailable", err);
+      mediaRecorder = null;
+    }
     recording = true;
     paused = false;
     status = "recording";
@@ -253,6 +411,15 @@
     liveInterim = "";
     liveBackendText = "";
     whisperMissing = false;
+    // Watchdog: if MediaRecorder is silently broken (WebKitGTK), no chunk will
+    // have arrived a few seconds in — swap engines without losing the session.
+    if (mediaRecorder) {
+      watchdog = setTimeout(() => {
+        if (recording && chunks.length === 0) switchToWavCapture();
+      }, 3500);
+    } else {
+      switchToWavCapture();
+    }
     // Live transcript alongside the recording when the toggle is on:
     // SpeechRecognition where available, otherwise backend chunked Whisper.
     if (liveTranscriptOn) {
@@ -262,16 +429,17 @@
   }
 
   function togglePause() {
-    if (!mediaRecorder) return;
+    if (!mediaRecorder && captureMode !== "wav") return;
     if (paused) {
-      mediaRecorder.resume();
+      // WAV engine gates on `paused` inside onaudioprocess — nothing to resume.
+      if (captureMode === "media") mediaRecorder!.resume();
       paused = false;
       if (liveTranscriptOn) {
         if (SR) startRecognition();
         else startSegment();
       }
     } else {
-      mediaRecorder.pause();
+      if (captureMode === "media") mediaRecorder!.pause();
       paused = true;
       // keep accumulated final text, just halt the live engine(s) while paused
       recognitionWantsRun = false;
@@ -299,6 +467,7 @@
   }
 
   function stop() {
+    if (captureMode === "wav") { void finalize(); return; }
     if (!mediaRecorder) return;
     mediaRecorder.stop(); // triggers onstop → finalize()
   }
@@ -310,8 +479,20 @@
     const subj = app.activeSubject;
     if (!subj) { status = "ready"; return; }
 
-    const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
-    const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+    let bytes: number[];
+    if (captureMode === "wav") {
+      bytes = Array.from(encodeWav(wavChunks));
+      reviewExt = "wav";
+    } else {
+      const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
+      bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+      reviewExt = "webm";
+    }
+    if (bytes.length === 0) {
+      errorMsg = "Nothing was captured — the microphone produced no audio. Check the input device in your system sound settings, then try again.";
+      status = "ready";
+      return;
+    }
     // A friendly default name, e.g. "Lecture Jun 3, 2:07 PM".
     const stamp = new Date().toLocaleString(undefined, {
       month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
@@ -356,7 +537,6 @@
     secs = 0;
     tags = [];
     liveFinal = ""; liveInterim = ""; liveBackendText = ""; whisperMissing = false;
-    bars = Array.from({ length: 72 }, () => 0.06);
     status = "ready";
   }
 
@@ -369,7 +549,7 @@
     errorMsg = null;
     unlisten = await api.onIngestProgress((p) => { note = p.detail; });
     try {
-      const res = await api.saveRecording(subj.id, name, bytes, topicId);
+      const res = await api.saveRecording(subj.id, name, bytes, topicId, reviewExt);
       await app.refresh();
       status = "done";
       if (res.warning) {
@@ -403,6 +583,8 @@
     }
     try {
       const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+      // Keep the real container so the backend stores a matching extension.
+      reviewExt = file.name.split(".").pop()?.toLowerCase() || "webm";
       // Route uploads through the same review step so they can be named/topic-tagged too.
       enterReview(bytes, file.name, "—:—", "uploaded");
     } catch (err) {
@@ -416,7 +598,6 @@
     cleanupStream();
     recording = false; paused = false; secs = 0; tags = []; status = "ready";
     liveFinal = ""; liveInterim = ""; liveBackendText = ""; whisperMissing = false;
-    bars = Array.from({ length: 72 }, () => 0.06);
     app.setView("subject");
   }
 
@@ -516,16 +697,11 @@
       <span class="rec-clock">{mm}:{ss}</span>
     </div>
 
-    <!-- Subtle, secondary live waveform (mirrored frequency bars, rAF-driven).
+    <!-- Subtle, secondary live waveform (mirrored frequency bars, rAF-driven,
+         single canvas — no per-frame DOM work).
          Kept small — the compact mm:ss readout in .rec-status is the primary timer. -->
     <div class="waveform waveform--compact" class:is-live={live} aria-hidden="true">
-      {#each bars as bar, i (i)}
-        <span
-          class="wbar"
-          style:height="{(live ? Math.max(0.06, bar) : 0.06) * 100}%"
-          style:opacity={live ? 0.5 + bar * 0.5 : 0.22}
-        ></span>
-      {/each}
+      <canvas bind:this={waveCanvas} class="wave-canvas"></canvas>
       <div class="wf-center"></div>
     </div>
 

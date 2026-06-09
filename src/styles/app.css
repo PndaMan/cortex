@@ -334,7 +334,10 @@
 .rec-led.live { background: var(--err); animation: recpulse 1.4s steps(1) infinite; }
 .rec-clock { font-size: var(--t-lg); color: var(--fg-bright); font-variant-numeric: tabular-nums; }
 .waveform { width: 100%; max-width: 560px; height: 160px; display: flex; align-items: center; justify-content: center; gap: 2px; position: relative; padding: 0 4px; }
-.wbar { flex: 1; max-width: 5px; background: var(--accent); border-radius: var(--rad-pill); transition: height 90ms linear, opacity 90ms linear; min-height: 3px; align-self: center; }
+/* Canvas waveform: drawn in rAF, colored via `color` (read by drawWave). The
+   old per-bar DOM spans with CSS transitions forced 72 animated layouts per
+   frame — unusably slow on WebKitGTK software rendering. */
+.wave-canvas { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--accent); }
 .wf-center { position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--border); }
 .rec-controls { display: flex; align-items: center; gap: 18px; }
 .rec-btn { width: 76px; height: 76px; border-radius: 50%; border: 2px solid var(--border-strong); background: var(--surface-2); cursor: pointer; display: grid; place-items: center; transition: transform var(--dur-fast), border-color var(--dur); }

@@ -274,13 +274,14 @@ export const saveRecording = (
   subjectId: string,
   name: string,
   audio: number[],
-  topicId?: string
-) => invoke<IngestResult>("save_recording", { subjectId, name, audio, topicId });
+  topicId?: string,
+  ext?: string
+) => invoke<IngestResult>("save_recording", { subjectId, name, audio, topicId, ext });
 
 // Near-live transcription: transcribe an audio slice and return its text (or ""
 // if no Whisper transcriber is installed). Used by the recorder's live panel.
-export const transcribePartial = (audio: number[]) =>
-  invoke<string>("transcribe_partial", { audio });
+export const transcribePartial = (audio: number[], ext?: string) =>
+  invoke<string>("transcribe_partial", { audio, ext });
 
 // ---- settings (bulk) ----
 export const getAllSettings = () => invoke<Record<string, string>>("get_all_settings");

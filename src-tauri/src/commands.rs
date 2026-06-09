@@ -2214,6 +2214,21 @@ fn whisper_remote_url(state: &AppState) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Restrict a client-supplied audio extension to known containers so it can't
+/// smuggle path separators or oddities into the recordings filename.
+fn sanitize_ext(ext: Option<&str>) -> &'static str {
+    match ext.map(|e| e.trim().to_ascii_lowercase()).as_deref() {
+        Some("wav") => "wav",
+        Some("ogg") => "ogg",
+        Some("mp3") => "mp3",
+        Some("m4a") => "m4a",
+        Some("mp4") => "mp4",
+        Some("flac") => "flac",
+        Some("opus") => "opus",
+        _ => "webm",
+    }
+}
+
 fn transcribe(
     file: &Path,
     data_dir: &Path,
@@ -2546,8 +2561,11 @@ fn faster_whisper_python(
 /// transcriber is installed this returns an empty string (the frontend shows an
 /// install note) rather than hard-erroring.
 #[tauri::command]
-pub async fn transcribe_partial(app: AppHandle, audio: Vec<u8>) -> Result<String> {
+pub async fn transcribe_partial(app: AppHandle, audio: Vec<u8>, ext: Option<String>) -> Result<String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String> {
+    if audio.is_empty() {
+        return Ok(String::new()); // nothing captured yet — not an error mid-recording
+    }
     // Prefer the app data dir's recordings folder; fall back to the OS temp dir.
     let dir = app
         .path()
@@ -2555,7 +2573,8 @@ pub async fn transcribe_partial(app: AppHandle, audio: Vec<u8>) -> Result<String
         .map(|d| d.join("recordings"))
         .unwrap_or_else(|_| std::env::temp_dir());
     std::fs::create_dir_all(&dir)?;
-    let file = dir.join(format!("partial-{}.webm", crate::db::new_id()));
+    let ext = sanitize_ext(ext.as_deref());
+    let file = dir.join(format!("partial-{}.{ext}", crate::db::new_id()));
     std::fs::write(&file, &audio)?;
 
     let remote = whisper_remote_url(&app.state::<AppState>());
@@ -2576,13 +2595,22 @@ pub async fn save_recording(
     topic_id: Option<String>,
     name: String,
     audio: Vec<u8>,
+    ext: Option<String>,
 ) -> Result<IngestResult> {
     tauri::async_runtime::spawn_blocking(move || -> Result<IngestResult> {
+    if audio.is_empty() {
+        return Err(Error::Other(
+            "the recording is empty — the microphone produced no audio (check the \
+             input device in your system sound settings), so there is nothing to save"
+                .into(),
+        ));
+    }
     let state = app.state::<AppState>();
-    // 1. persist the audio file
+    // 1. persist the audio file (keep the real container as the extension)
     let dir = app.path().app_data_dir().map_err(|e| Error::Other(e.to_string()))?.join("recordings");
     std::fs::create_dir_all(&dir)?;
-    let file = dir.join(format!("{}.webm", crate::db::new_id()));
+    let ext = sanitize_ext(ext.as_deref());
+    let file = dir.join(format!("{}.{ext}", crate::db::new_id()));
     std::fs::write(&file, &audio)?;
 
     // 2. create the source row
