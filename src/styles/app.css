@@ -195,7 +195,7 @@
 .src-bulkbar { display: flex; align-items: center; gap: 9px; margin-bottom: var(--sp-4); padding: 8px 11px; border: 1px solid var(--accent); border-radius: var(--rad-3); background: color-mix(in oklab, var(--accent) 8%, var(--surface)); }
 .stl-name { font-size: var(--t-sm); color: var(--fg-bright); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stl-meta { font-size: var(--t-2xs); color: var(--fg-faint); }
-.chats-tab { flex: 1; display: flex; min-height: 0; max-width: 820px; margin: 0 auto; width: 100%; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
+.chats-tab { flex: 1; display: flex; min-height: 0; max-width: min(1040px, 100%); margin: 0 auto; width: 100%; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
 .chats-tab .chatdock-inner { width: 100%; }
 
 /* ============ CHEATSHEET DOC ============ */
@@ -636,9 +636,16 @@
 html[data-read="sans"] .read, html[data-read="sans"] .cs-item dt, html[data-read="sans"] .cs-item dd,
 html[data-read="sans"] .bubble, html[data-read="sans"] .quiz-q, html[data-read="sans"] .mat-title,
 html[data-read="sans"] .fc-face p, html[data-read="sans"] .txt.read {
-  font-family: var(--font-mono) !important;
+  font-family: var(--font-sans) !important;
 }
 .cs-item dd, .bubble.assistant, .bubble.user { font-size: var(--read-size, 16.5px); }
+/* Compact density: tighten the spacing scale + reading size app-wide so the
+   whole UI gets denser, not just the cheatsheet gaps. */
+html[data-density="compact"] {
+  --sp-1: 3px;  --sp-2: 6px;  --sp-3: 9px;  --sp-4: 12px;
+  --sp-5: 15px; --sp-6: 18px; --sp-7: 24px; --sp-8: 30px;
+  --read-size: 15px;
+}
 html[data-density="compact"] .cs-list { gap: 10px; }
 html[data-density="compact"] .cs-sections { gap: var(--sp-6); }
 html[data-density="compact"] .mat-grid { gap: 7px; }

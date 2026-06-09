@@ -41,6 +41,7 @@
       : undefined;
   const liveTranscriptSupported = !!SR;
   let liveTranscriptOn = $state(true); // user-facing toggle for the live transcript panel (default on)
+  let transcriptCollapsed = $state(false); // collapse the whole panel to reclaim width
   let liveFinal = $state(""); // accumulated final results
   let liveInterim = $state(""); // current in-flight (unstable) chunk
 
@@ -505,7 +506,7 @@
     </div>
   </div>
 {:else}
-<div class="recorder">
+<div class="recorder" class:transcript-collapsed={transcriptCollapsed}>
   <!-- Left: stage -->
   <div class="rec-stage">
     <div class="rec-status mono">
@@ -603,6 +604,10 @@
       >
         <span class="rt-toggle-track"><span class="rt-toggle-knob"></span></span>
       </button>
+      <!-- Collapse the whole panel to give the recorder full width. -->
+      <button class="btn btn--icon btn--sm btn--ghost rt-collapse" title="Collapse transcript" onclick={() => (transcriptCollapsed = true)}>
+        <Icon name="chevron" size={13} />
+      </button>
     </div>
     <div class="rt-body">
       {#if status === "transcribing"}
@@ -647,6 +652,13 @@
     </div>
     <button class="btn btn--ghost btn--sm rt-close" onclick={cancel}>Cancel</button>
   </aside>
+
+  {#if transcriptCollapsed}
+    <button class="rt-reopen mono" title="Show live transcript" onclick={() => (transcriptCollapsed = false)}>
+      <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={13} /></span>
+      <span class="rt-reopen-label">LIVE TRANSCRIPT</span>
+    </button>
+  {/if}
 </div>
 {/if}
 
@@ -692,7 +704,21 @@
   }
 
   /* ---- Live transcript is now the primary feature: give the panel more real estate ---- */
-  .recorder { grid-template-columns: 1fr clamp(420px, 42vw, 560px); }
+  .recorder { grid-template-columns: 1fr clamp(420px, 42vw, 560px); position: relative; }
+  /* Collapsed: hand the whole width to the recorder; show a reopen tab on the edge. */
+  .recorder.transcript-collapsed { grid-template-columns: 1fr; }
+  .recorder.transcript-collapsed .rec-transcript { display: none; }
+  .rt-collapse { flex: none; margin-left: 6px; }
+  .rt-reopen {
+    position: absolute; top: 14px; right: 0;
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px;
+    background: var(--surface-2); border: 1px solid var(--border-strong); border-right: none;
+    border-radius: var(--rad-2) 0 0 var(--rad-2);
+    color: var(--fg-muted); cursor: pointer; font-size: var(--t-xs); letter-spacing: 0.08em;
+  }
+  .rt-reopen:hover { color: var(--fg-bright); border-color: var(--accent-dim); }
+  .rt-reopen-label { writing-mode: vertical-rl; }
 
   /* ---- toggle switch in the transcript header ---- */
   .rt-toggle {

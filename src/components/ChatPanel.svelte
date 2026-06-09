@@ -48,8 +48,11 @@
   const pickedIds = $derived(Object.keys(picked).filter((k) => picked[k]));
   let messages = $state<ChatMessage[]>([]);
   let draft = $state("");
-  let streaming = $state<string | null>(null);
-  let suggestions = $state<string[]>([]); // next-step prompts under the composer
+  // Streaming + suggestions now live in the store (app.sendChat) so a reply keeps
+  // going even if this panel unmounts. We only surface the live text when it's for
+  // the subject this panel is showing.
+  const streaming = $derived(app.chatGenSubject === app.activeSubjectId ? app.chatStreaming : null);
+  const suggestions = $derived(app.chatGenSubject === null ? app.chatSuggestions : []);
   let queued = $state<string[]>([]); // messages sent while a response is streaming
 
   // In-chat model picker (writes the same model_chat setting Settings uses).
@@ -89,7 +92,6 @@
     if (sid === loadedSubject) return;
     loadedSubject = sid;
     messages = [];
-    suggestions = [];
     queued = [];
     if (!sid) return;
     api.listChatMessages(sid)
@@ -98,6 +100,39 @@
           messages = ms.map((m) => ({ role: m.role as ChatMessage["role"], text: m.text }));
       })
       .catch(() => {});
+  });
+
+  // When the store persists a freshly-generated reply it bumps chatMsgNonce; pull
+  // the updated history in so the assistant message lands (this is what lets a
+  // reply that finished while the panel was closed appear on reopen). Web-mode
+  // images aren't persisted, so re-attach the last reply's images to the tail.
+  let seenMsgNonce = app.chatMsgNonce;
+  $effect(() => {
+    const n = app.chatMsgNonce;
+    if (n === seenMsgNonce) return;
+    seenMsgNonce = n;
+    const sid = app.activeSubjectId;
+    if (!sid) return;
+    api.listChatMessages(sid)
+      .then((ms) => {
+        if (app.activeSubjectId !== sid) return;
+        const next = ms.map((m) => ({ role: m.role as ChatMessage["role"], text: m.text })) as ChatMessage[];
+        const imgs = app.chatLastImages;
+        if (imgs.length && next.length && next[next.length - 1].role === "assistant") {
+          next[next.length - 1] = { ...next[next.length - 1], images: imgs };
+          app.chatLastImages = [];
+        }
+        messages = next;
+      })
+      .catch(() => {});
+  });
+
+  // Once the store finishes a reply (chatBusy falls), fire the next queued message.
+  let wasBusy = false;
+  $effect(() => {
+    const busy = app.chatBusy;
+    if (wasBusy && !busy) dequeue();
+    wasBusy = busy;
   });
   let scrollEl = $state<HTMLElement | null>(null);
   let composeEl = $state<HTMLTextAreaElement | null>(null);
@@ -298,30 +333,16 @@
     }
   }
 
-  // ── streaming send (with queue, stop, and next-step suggestions) ───────────
-  let typeIv: ReturnType<typeof setInterval> | null = null;
-  let cancelled = false;
-
-  // Split the trailing "SUGGESTIONS: a | b | c" line off the answer. Harden the
-  // parse so placeholder/garbage chips (empty, single chars, a/b/c labels, the
-  // literal word "prompt") never render as suggestions.
-  function splitSuggestions(full: string): { body: string; sugg: string[] } {
-    const m = full.match(/\n?\s*SUGGESTIONS:\s*(.+?)\s*$/i);
-    if (!m) return { body: full, sugg: [] };
-    const reject = new Set(["prompt", "a", "b", "c"]);
-    const sugg = m[1]
-      .split("|")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 1 && !/^[a-c]$/i.test(s) && !reject.has(s.toLowerCase()))
-      .slice(0, 3);
-    return { body: full.slice(0, m.index).trimEnd(), sugg };
-  }
-
+  // ── streaming send (with queue + stop) ─────────────────────────────────────
+  // Generation itself lives in the store (app.sendChat), so closing this panel
+  // mid-answer no longer kills the reply. Here we just record the user turn and
+  // hand off; the store persists the reply and bumps chatMsgNonce, which our
+  // reload effect picks up.
   function send(textArg?: string) {
     const text = (textArg ?? draft).trim();
     if (!text || !app.activeSubject) return;
     // While a response is in-flight, queue the message instead of dropping it.
-    if (streaming !== null) {
+    if (app.chatBusy) {
       queued = [...queued, text];
       if (textArg === undefined) draft = "";
       return;
@@ -330,9 +351,6 @@
     const sid = app.activeSubject.id;
     messages = [...messages, { role: "user", text }];
     api.addChatMessage(sid, "user", text).catch(() => {}); // persist
-    suggestions = [];
-    streaming = "";
-    cancelled = false;
 
     const multi = level === "sources" && pickedIds.length > 0;
     const sendLevel: "subject" | "topic" | "source" =
@@ -344,44 +362,8 @@
             ? "source"
             : "subject";
     const sourceId = !multi && sendLevel === "source" && curSrcObj ? curSrcObj.id : undefined;
-    api
-      .chatAnswer(sid, sendLevel, text, sourceId, multi ? pickedIds : undefined, webOn)
-      .then((result) => {
-        if (cancelled) { streaming = null; dequeue(); return; }
-        const imgs = result.images ?? [];
-        const { body, sugg } = splitSuggestions(result.text);
-        let i = 0;
-        typeIv = setInterval(() => {
-          if (cancelled) {
-            if (typeIv) clearInterval(typeIv);
-            typeIv = null;
-            const partial = body.slice(0, i) || body;
-            messages = [...messages, { role: "assistant", text: partial, images: imgs }];
-            api.addChatMessage(sid, "assistant", partial).catch(() => {}); // persist
-            streaming = null;
-            suggestions = sugg;
-            dequeue();
-            return;
-          }
-          i += 3;
-          streaming = body.slice(0, i);
-          if (i >= body.length) {
-            if (typeIv) clearInterval(typeIv);
-            typeIv = null;
-            messages = [...messages, { role: "assistant", text: body, images: imgs }];
-            api.addChatMessage(sid, "assistant", body).catch(() => {}); // persist
-            streaming = null;
-            suggestions = sugg;
-            dequeue();
-          }
-        }, 16);
-      })
-      .catch((err) => {
-        streaming = null;
-        const msg = err instanceof Error ? err.message : String(err);
-        messages = [...messages, { role: "system", text: msg }];
-        dequeue();
-      });
+    // Fire-and-forget: the store keeps running even if we unmount.
+    app.sendChat({ subjectId: sid, level: sendLevel, query: text, sourceId, sourceIds: multi ? pickedIds : undefined, web: webOn });
   }
 
   // ── chat sessions / history ────────────────────────────────────────────
@@ -393,7 +375,7 @@
     if (!sid) return;
     await api.newChat(sid).catch(() => {});
     messages = [];
-    suggestions = [];
+    app.chatSuggestions = [];
     queued = [];
     composeEl?.focus();
   }
@@ -411,25 +393,22 @@
     await api.openChatThread(sid, id).catch(() => {});
     const ms = await api.listChatMessages(sid).catch(() => []);
     messages = ms.map((m) => ({ role: m.role as ChatMessage["role"], text: m.text }));
-    suggestions = [];
+    app.chatSuggestions = [];
     historyOpen = false;
   }
 
   // Send the next queued message (if any) once the current one finishes.
   function dequeue() {
-    if (queued.length === 0) return;
+    if (queued.length === 0 || app.chatBusy) return;
     const [next, ...rest] = queued;
     queued = rest;
     send(next);
   }
 
-  // Stop the current generation: abort the typewriter (and discard a pending
-  // result), keeping whatever has streamed so far.
+  // Stop the current generation, keeping whatever has streamed so far. The store
+  // persists the partial reply and bumps chatMsgNonce; our reload effect shows it.
   function stop() {
-    cancelled = true;
-    if (typeIv) { clearInterval(typeIv); typeIv = null; }
-    if (streaming) messages = [...messages, { role: "assistant", text: streaming }];
-    streaming = null;
+    app.stopChat();
   }
 
   // ── save an assistant answer as a note ─────────────────────────────────────
@@ -507,17 +486,23 @@
      never receives keydown unless focused). panelKey ignores it while typing. -->
 <svelte:window onkeydown={panelKey} />
 
-<div class="chatdock-inner" style:height={panelHeight ? panelHeight + "px" : null}>
+<div class="chatdock-inner" class:is-full={!onClose} style:height={onClose && panelHeight ? panelHeight + "px" : null}>
   <!-- ── top drag handle: vertical resize of the whole panel ──────────────── -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="chat-resize"
-    role="separator"
-    aria-orientation="horizontal"
-    aria-label="Resize chat panel"
-    title="Drag to resize"
-    onpointerdown={startResize}
-  ></div>
+  <!-- Only meaningful for the docked instance (which passes onClose). In the
+       fullscreen Chats tab the panel already fills the page, so the grab bar is
+       hidden — it otherwise looked like a stray strip and let you shrink the
+       full-page chat for no reason. -->
+  {#if onClose}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="chat-resize"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize chat panel"
+      title="Drag to resize"
+      onpointerdown={startResize}
+    ></div>
+  {/if}
 
   <!-- ── header ─────────────────────────────────────────────────────────── -->
   <div class="chat-head">

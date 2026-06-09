@@ -288,46 +288,6 @@
     await savePdf(body, `${sub.name} — ${cheatTopic}`);
   }
 
-  // "Export all" loads the whole-subject sheet PLUS every topic-with-sources
-  // sheet, renders them all into a hidden print-only block, then prints. Topics
-  // without a stored sheet are skipped. We fall back to printing whatever is
-  // already on screen if nothing could be loaded.
-  let exportAll = $state<CheatsheetData[]>([]);
-  let exporting = $state(false);
-
-  async function exportWholeSubject() {
-    const sub = app.activeSubject;
-    if (!sub || exporting) return;
-    exporting = true;
-    try {
-      // The composed whole-subject sheet already contains every topic's sections
-      // (verbatim) with topic dividers, so exporting it = the full subject.
-      const composed = await api.getSubjectCheatsheet(sub.id).catch(() => null);
-      exportAll = composed ? [composed] : [];
-      if (exportAll.length === 0) {
-        app.pushToast({
-          kind: "warning",
-          title: "Nothing to export",
-          body: "No cheatsheets have been generated for this subject yet.",
-        });
-        return;
-      }
-      // Let the hidden export block render, then serialize it to the PDF.
-      await new Promise((r) => requestAnimationFrame(() => r(null)));
-      await new Promise((r) => requestAnimationFrame(() => r(null)));
-      const block = document.querySelector(".cs-export-all");
-      if (block) {
-        await savePdf(block.innerHTML, `${sub.name} — all cheatsheets`);
-      }
-    } finally {
-      exporting = false;
-      // Clear after the print dialog returns so the hidden block doesn't linger.
-      setTimeout(() => {
-        exportAll = [];
-      }, 0);
-    }
-  }
-
   // ── navigation memory ────────────────────────────────────────
   // Remember the subject + selected topic so leaving for another page and pressing
   // the cheatsheet keybind (space h) returns to this exact sheet.
@@ -533,7 +493,7 @@
 </script>
 
 <div class="workspace-scroll" bind:this={scrollEl} onscroll={onCsScroll}>
-  <div class="cs-doc{exportAll.length > 0 ? ' is-exporting-all' : ''}">
+  <div class="cs-doc">
     {#if !app.activeSubject}
       <!-- No subject open -->
       <div class="cs-empty-state">
@@ -644,14 +604,6 @@
             {:else}
               <button class="btn btn--sm" onclick={exportCurrent} title="Opens the print dialog — choose “Save as PDF”">
                 <Icon name="doc" size={13} /> Save as PDF
-              </button>
-              <button
-                class="btn btn--sm"
-                onclick={exportWholeSubject}
-                disabled={exporting}
-                title="Print the whole-subject sheet plus every topic's sheet together"
-              >
-                <Icon name="book" size={13} /> {exporting ? "Loading…" : "Export all"}
               </button>
               <button class="btn btn--sm" onclick={openHistory} title="Browse versions and diff changes">
                 <Icon name="refresh" size={13} /> History
@@ -821,57 +773,6 @@
     {/if}
   </div>
 
-  <!-- ── EXPORT-ALL print block ─────────────────────────────────
-       Hidden on screen; only visible when printing. Holds the whole-subject
-       sheet followed by each topic's stored sheet so "Export all" prints them
-       together as one document. -->
-  {#if exportAll.length > 0}
-    <div class="cs-export-all" aria-hidden="true">
-      {#each exportAll as sheet, si (si)}
-        <div class="cs-doc cs-export-sheet">
-          <div class="cs-doc-head">
-            <div>
-              <div class="eyebrow">Cheatsheet · {si === 0 ? "Whole subject" : "Topic"}</div>
-              <h1 class="cs-title">{sheet.topic}</h1>
-              <div class="cs-sub mono">
-                {sheet.subject} · synthesized from {sheet.sources} source{sheet.sources !== 1 ? "s" : ""} ·
-                {sheet.sections.length} enforced sections
-              </div>
-            </div>
-          </div>
-          <div class="cs-sections">
-            {#each sheet.sections as sec (sec.id)}
-              {#if sec.id.startsWith("__topic__")}
-                <div class="cs-topic-divider"><span class="cs-topic-divider-label read">{sec.title}</span></div>
-              {:else}
-              <section class="cs-section">
-                <header class="cs-sec-head">
-                  <h2 class="cs-sec-title">{sec.title}</h2>
-                  <span class="cs-sec-count mono">{sec.items.filter((x) => !x.t.startsWith("__topic__")).length}</span>
-                </header>
-                {#if sec.image}
-                  <span class="cs-sec-img"><img src={sec.image} alt={sec.title} /></span>
-                {/if}
-                <dl class="cs-list">
-                  {#each sec.items as item, i (i)}
-                    {#if item.t.startsWith("__topic__")}
-                      <div class="cs-topic-subdiv"><span class="cs-topic-subdiv-label read">{item.t.slice(9)}</span></div>
-                    {:else}
-                    <div class="cs-item">
-                      <dt>{item.t}</dt>
-                      <dd><RichText text={item.d} /></dd>
-                    </div>
-                    {/if}
-                  {/each}
-                </dl>
-              </section>
-              {/if}
-            {/each}
-          </div>
-        </div>
-      {/each}
-    </div>
-  {/if}
 </div>
 
 <!-- ── VERSION HISTORY / DIFF (git-like) ───────────────────────── -->
@@ -1209,11 +1110,6 @@
   }
   .cs-sec-img img { width: 100%; height: auto; display: block; }
 
-  /* export-all block is hidden on screen; print rules reveal it */
-  .cs-export-all {
-    display: none;
-  }
-
   /* ── PRINT / EXPORT PDF ─────────────────────────────────────
      window.print() exports the cheatsheet. Hide all app chrome and
      show only the cheatsheet document, black-on-white, full width. */
@@ -1255,21 +1151,6 @@
     .cs-tabs,
     .cs-doc-actions {
       display: none !important;
-    }
-    /* when an Export-all is in progress, reveal that block and hide the
-       on-screen single-view doc so we don't print both. */
-    .cs-export-all {
-      display: block !important;
-    }
-    /* don't also print the single on-screen view during an Export-all */
-    .cs-doc.is-exporting-all {
-      display: none !important;
-    }
-    .cs-export-sheet {
-      break-after: page;
-    }
-    .cs-export-sheet:last-child {
-      break-after: auto;
     }
     /* keep each section from splitting awkwardly across pages */
     :global(.cs-section) {

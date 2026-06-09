@@ -270,6 +270,120 @@ class AppStore {
   // and the Citations tab stay in sync both ways (each watches this nonce).
   eventsChangedNonce = $state(0);
   notifyEventsChanged() { this.eventsChangedNonce++; }
+
+  // When set, the Calendar view jumps to this day on mount — used by the
+  // Assignments list so clicking an assignment opens it on the calendar.
+  calendarFocusMs = $state<number | null>(null);
+  openCalendarAt(ms: number) {
+    this.calendarFocusMs = ms;
+    this.setView("calendar");
+  }
+
+  // ── chat generation (owned here so a reply survives the panel closing) ──────
+  // The request + typewriter used to live inside ChatPanel; closing the panel
+  // mid-answer unmounted them and the reply was lost ("it stops answering").
+  // Now the store drives generation: the panel just reads `chatStreaming` and
+  // reloads history when `chatMsgNonce` bumps, so closing/reopening the chat (or
+  // switching between the dock and the fullscreen Chats tab) never interrupts a
+  // reply — it keeps generating in the background and persists when done.
+  chatStreaming = $state<string | null>(null); // live typed-out text, or null
+  chatGenSubject = $state<string | null>(null); // subject the in-flight reply is for
+  chatBusy = $state(false);
+  chatMsgNonce = $state(0); // bump → open panels reload persisted history
+  chatSuggestions = $state<string[]>([]); // next-step chips from the last reply
+  chatLastImages = $state<api.WebImage[]>([]); // web-mode images from the last reply
+  #chatTypeIv: ReturnType<typeof setInterval> | null = null;
+  #chatCancelled = false;
+
+  #clearChatIv() {
+    if (this.#chatTypeIv) { clearInterval(this.#chatTypeIv); this.#chatTypeIv = null; }
+  }
+
+  // Peel the trailing "SUGGESTIONS: a | b | c" line off a reply; reject junk chips.
+  #splitChatSuggestions(full: string): { body: string; sugg: string[] } {
+    const m = full.match(/\n?\s*SUGGESTIONS:\s*(.+?)\s*$/i);
+    if (!m) return { body: full, sugg: [] };
+    const reject = new Set(["prompt", "a", "b", "c"]);
+    const sugg = m[1]
+      .split("|")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 1 && !/^[a-c]$/i.test(s) && !reject.has(s.toLowerCase()))
+      .slice(0, 3);
+    return { body: full.slice(0, m.index).trimEnd(), sugg };
+  }
+
+  #finishAssistant(subjectId: string, text: string, images: api.WebImage[], sugg: string[]) {
+    this.chatLastImages = images;
+    this.chatSuggestions = sugg;
+    api.addChatMessage(subjectId, "assistant", text).catch(() => {}); // persist
+    this.chatMsgNonce++;
+  }
+
+  // Generate a chat reply. Safe to call without awaiting; keeps running even if
+  // the ChatPanel that started it unmounts. Resolves once typed-out + persisted.
+  async sendChat(params: {
+    subjectId: string;
+    level: "subject" | "topic" | "source";
+    query: string;
+    sourceId?: string;
+    sourceIds?: string[];
+    web?: boolean;
+  }): Promise<void> {
+    const { subjectId, level, query, sourceId, sourceIds, web } = params;
+    this.#chatCancelled = false;
+    this.chatBusy = true;
+    this.chatGenSubject = subjectId;
+    this.chatStreaming = "";
+    this.chatSuggestions = [];
+    try {
+      const result = await api.chatAnswer(subjectId, level, query, sourceId, sourceIds, web);
+      if (this.#chatCancelled) return;
+      const imgs = result.images ?? [];
+      const { body, sugg } = this.#splitChatSuggestions(result.text);
+      await new Promise<void>((resolve) => {
+        let i = 0;
+        this.#chatTypeIv = setInterval(() => {
+          if (this.#chatCancelled) {
+            this.#clearChatIv();
+            this.#finishAssistant(subjectId, body.slice(0, i) || body, imgs, sugg);
+            resolve();
+            return;
+          }
+          i += 3;
+          this.chatStreaming = body.slice(0, i);
+          if (i >= body.length) {
+            this.#clearChatIv();
+            this.#finishAssistant(subjectId, body, imgs, sugg);
+            resolve();
+          }
+        }, 16);
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await api.addChatMessage(subjectId, "system", msg).catch(() => {}); // persist error
+      this.chatMsgNonce++;
+    } finally {
+      this.#clearChatIv();
+      this.chatStreaming = null;
+      this.chatGenSubject = null;
+      this.chatBusy = false;
+      this.#chatCancelled = false;
+    }
+  }
+
+  // Stop the current generation, keeping whatever has streamed so far. The
+  // running typewriter tick sees the flag, persists the partial, and resolves.
+  stopChat() {
+    if (!this.chatBusy) return;
+    this.#chatCancelled = true;
+    // If we're still waiting on the network (no partial yet), nothing to keep —
+    // the awaited result will hit the `#chatCancelled` guard and clean up.
+    if (this.chatStreaming && this.chatGenSubject && !this.#chatTypeIv) {
+      this.#finishAssistant(this.chatGenSubject, this.chatStreaming, [], []);
+      this.chatStreaming = null;
+      this.chatBusy = false;
+    }
+  }
   musicOpen = $state(false);
   diffOpen = $state(false);
   helpOpen = $state(false);
@@ -304,6 +418,9 @@ class AppStore {
 
   async init() {
     this.loading = true;
+    // Safety net: never let the window stay hidden if init stalls or throws
+    // before the normal reveal below.
+    setTimeout(() => void this.revealWindow(), 3000);
     // Surface stream/playback failures instead of swallowing them.
     music.onError = (m) => this.pushToast({ kind: "warning", title: "Music", body: m });
     // Toast on every focus↔break transition.
@@ -349,6 +466,12 @@ class AppStore {
         "data-density",
         all["density"] === "compact" ? "compact" : "regular"
       );
+      // Appearance is fully applied (theme + reading font + density) and the shell
+      // has rendered — reveal the window now so the first frame the user sees is
+      // already correctly themed (no white flash, no default-theme flash). Use a
+      // macrotask (not rAF, which is throttled while the window is hidden) so any
+      // pending Svelte render flushes first, then map+paint the window once.
+      setTimeout(() => void this.revealWindow(), 0);
       await keybinds.load(all); // reuse the settings we already fetched
       // Reopen the last-viewed subject (its chat history loads with it).
       const last = all["last_subject_id"];
@@ -390,6 +513,7 @@ class AppStore {
     } catch {
       this.applyTheme(this.theme);
     }
+    void this.revealWindow(); // ensure the window shows even if settings failed
     this.startReminderPolling();
     void this.loadSyncStatus(); // learn whether homelab sync is on (drives the pill)
     // Auto-retry sources that failed to ingest last time (offline, model not set
@@ -744,6 +868,25 @@ class AppStore {
       this.pushToast({ kind: "success", title: "Topic deleted" });
     } catch (e) {
       this.pushToast({ kind: "error", title: "Delete topic failed", body: String(e) });
+    }
+  }
+
+  // ---- window reveal ----
+  // The window boots hidden (tauri.conf `visible:false`) so the user never sees
+  // the white webview flash or the brief default-theme paint before the real
+  // theme loads. We show it once appearance (theme/font/density) is applied.
+  // Idempotent + has a safety timeout so the window can never stay stuck hidden.
+  #revealed = false;
+  async revealWindow() {
+    if (this.#revealed) return;
+    this.#revealed = true;
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const w = getCurrentWindow();
+      await w.show();
+      await w.setFocus();
+    } catch {
+      /* not running under Tauri (e.g. browser dev) — nothing to reveal */
     }
   }
 

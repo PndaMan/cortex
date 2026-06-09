@@ -12,6 +12,7 @@
   import Icon from "./components/Icon.svelte";
   import FindBar from "./components/FindBar.svelte";
   import HelpOverlay from "./components/HelpOverlay.svelte";
+  import ContextMenu from "./components/ContextMenu.svelte";
   import Dialog from "./components/Dialog.svelte";
   import EditModal from "./components/EditModal.svelte";
   import PomodoroPanel from "./components/PomodoroPanel.svelte";
@@ -100,7 +101,13 @@
   // Ctrl chords (copy/paste/etc.) pass straight through.
   $effect(() => {
     function onFind(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+      // NB: keep the two halves as separate booleans. Writing this as one
+      // `(mod) && (key)` expression triggers a Svelte 5 compiler bug that strips
+      // the parentheses (→ `ctrl || meta && key... || key...`), which made bare
+      // Ctrl and Shift+F open find. Separate statements compile correctly.
+      const mod = e.ctrlKey || e.metaKey;
+      const isF = e.key === "f" || e.key === "F";
+      if (mod && isF) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation(); // also beat any native find-in-page handler
@@ -109,6 +116,30 @@
     }
     window.addEventListener("keydown", onFind, true);
     return () => window.removeEventListener("keydown", onFind, true);
+  });
+
+  // Kill webview zoom — Ctrl/Cmd+scroll and Ctrl/Cmd +/-/0 otherwise scale the
+  // whole UI, which makes Cortex feel like a zoomable web page / PWA instead of
+  // a native app. Captured early so WebKitGTK never gets to zoom. Ctrl+F / Ctrl+P
+  // (letters) are untouched — only the zoom combos are swallowed.
+  $effect(() => {
+    function onWheel(e: WheelEvent) {
+      if (e.ctrlKey || e.metaKey) e.preventDefault();
+    }
+    function onZoomKey(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (["=", "+", "-", "_", "0"].includes(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }
+    // passive:false is required for preventDefault on wheel.
+    window.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    window.addEventListener("keydown", onZoomKey, true);
+    return () => {
+      window.removeEventListener("wheel", onWheel, true);
+      window.removeEventListener("keydown", onZoomKey, true);
+    };
   });
 
   // Global keyboard engine (Helix-style). Modals/sessions set window.__cortexModalOpen
@@ -154,7 +185,11 @@
       if ((window as any).__cortexViewKeys) return;
       if (app.cmdkOpen) return;
 
-      if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) { e.preventDefault(); app.cmdkOpen = true; return; }
+      // Separate booleans on purpose — see the onFind note above (Svelte 5
+      // paren-stripping compiler bug would otherwise make any Ctrl chord open this).
+      const cmdMod = e.ctrlKey || e.metaKey;
+      const isP = e.key === "p" || e.key === "P";
+      if (cmdMod && isP) { e.preventDefault(); app.cmdkOpen = true; return; }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       if (app.leaderOpen) return; // LeaderPane consumes its own keys
@@ -287,6 +322,7 @@
     <EditModal />
     <PomodoroPanel />
     <LiveActivity />
+    <ContextMenu />
     <ToastStack />
   </div>
 {/if}

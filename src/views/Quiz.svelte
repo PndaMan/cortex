@@ -12,6 +12,8 @@
   let picked      = $state<number | null>(null);
   let score       = $state(0);
   let done        = $state(false);
+  // Record of the option index the user picked, keyed by question index in activeQs.
+  let answers     = $state<Record<number, number>>({});
 
   // Review mode: null = normal quiz, string[] = only these question texts
   let reviewKeys  = $state<string[] | null>(null);
@@ -22,9 +24,15 @@
       : qs
   );
 
+  // Questions the user got wrong (or didn't answer), for the review summary.
+  const wrongQs = $derived(
+    activeQs.filter((q, idx) => answers[idx] === undefined || answers[idx] !== q.answer)
+  );
+
   function choose(idx: number) {
     if (picked !== null) return;
     picked = idx;
+    answers[i] = idx;
     const isCorrect = idx === activeQs[i].answer;
     if (isCorrect) score += 1;
     // Record attempt (fire-and-forget; skip if no active subject)
@@ -43,7 +51,7 @@
   }
 
   function restart() {
-    i = 0; picked = null; score = 0; done = false; reviewKeys = null;
+    i = 0; picked = null; score = 0; done = false; reviewKeys = null; answers = {};
   }
 
   async function startReview() {
@@ -56,7 +64,7 @@
         return;
       }
       reviewKeys = wrong.map((w) => w.item_key);
-      i = 0; picked = null; score = 0; done = false;
+      i = 0; picked = null; score = 0; done = false; answers = {};
     } catch (e) {
       app.pushToast({ kind: "error", title: "Review load failed", body: String(e) });
     }
@@ -79,6 +87,66 @@
             <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={12} /></span> Materials
           </button>
         {/if}
+      </div>
+
+      <div class="qz-review">
+        <div class="qz-revise">
+          <p class="mono qz-revise-head">What to revise</p>
+          {#if wrongQs.length === 0}
+            <p class="read qz-revise-clear">Nothing to revise — you nailed every question.</p>
+          {:else}
+            <ul class="qz-revise-list">
+              {#each wrongQs as wq (wq.q)}
+                <li class="read">{wq.q}</li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+
+        <div class="qz-review-list">
+          {#each activeQs as q, idx (idx)}
+            {@const userPick = answers[idx]}
+            {@const gotIt    = userPick !== undefined && userPick === q.answer}
+            <div class="qz-review-card">
+              <div class="qz-review-q">
+                <span class="quiz-key mono">{idx + 1}</span>
+                <p class="read">{q.q}</p>
+                <span class="qz-review-mark mono" class:ok={gotIt} class:err={!gotIt}>
+                  {gotIt ? "Correct" : "Revise"}
+                </span>
+              </div>
+
+              {#if q.options.length === 0}
+                <p class="mono muted qz-review-empty">
+                  (This question is from a previous quiz — retake it to answer again.)
+                </p>
+              {:else}
+                <div class="qz-review-opts">
+                  {#each q.options as opt, oi (oi)}
+                    {@const isAnswer = oi === q.answer}
+                    {@const isPick   = userPick === oi}
+                    <div
+                      class="qz-review-opt"
+                      class:correct={isAnswer}
+                      class:wrong={isPick && !isAnswer}
+                    >
+                      <span class="quiz-key mono">{String.fromCharCode(65 + oi)}</span>
+                      <span class="read">{opt}</span>
+                      <span class="qz-review-tags">
+                        {#if isPick}<span class="badge qz-tag-you">Your answer</span>{/if}
+                        {#if isAnswer}<span class="badge qz-tag-correct">Correct</span>{/if}
+                      </span>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+
+              {#if q.explain}
+                <p class="mono muted qz-review-explain">{q.explain}</p>
+              {/if}
+            </div>
+          {/each}
+        </div>
       </div>
     </div>
   {:else}
@@ -155,3 +223,107 @@
     </div>
   {/if}
 </div>
+
+<style>
+  /* When the done screen carries a review, let the wrap top-align and the
+     review list own the scroll so the page never overflows the viewport. */
+  .fc-wrap:has(.qz-review) { justify-content: flex-start; min-height: 0; }
+  .fc-wrap:has(.qz-review) .fc-done { width: 100%; min-height: 0; }
+
+  .qz-review {
+    width: 100%;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-4);
+    margin-top: var(--sp-4);
+    min-height: 0;
+  }
+
+  .qz-revise {
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--rad-4);
+    padding: var(--sp-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+  .qz-revise-head {
+    font-size: var(--t-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-faint);
+  }
+  .qz-revise-clear { font-size: var(--r-md); color: var(--ok); }
+  .qz-revise-list { display: flex; flex-direction: column; gap: var(--sp-1); padding-left: 1.1em; }
+  .qz-revise-list li { font-size: var(--r-sm); color: var(--fg); list-style: disc; }
+
+  .qz-review-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    overflow-y: auto;
+    min-height: 0;
+    max-height: 60vh;
+    padding-right: var(--sp-1);
+  }
+
+  .qz-review-card {
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--rad-4);
+    padding: var(--sp-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+  }
+  .qz-review-q { display: flex; align-items: baseline; gap: var(--sp-3); }
+  .qz-review-q .read { flex: 1; font-size: var(--r-md); color: var(--fg-bright); line-height: 1.35; }
+  .qz-review-mark {
+    flex: none;
+    font-size: var(--t-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .qz-review-mark.ok  { color: var(--ok); }
+  .qz-review-mark.err { color: var(--err); }
+
+  .qz-review-opts { display: flex; flex-direction: column; gap: 7px; }
+  .qz-review-opt {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--rad-3);
+    color: var(--fg);
+  }
+  .qz-review-opt .read { flex: 1; font-size: var(--r-sm); }
+  .qz-review-opt.correct {
+    border-color: var(--ok);
+    background: color-mix(in oklab, var(--ok) 14%, var(--surface));
+  }
+  .qz-review-opt.correct .quiz-key { border-color: var(--ok); color: var(--ok); }
+  .qz-review-opt.wrong {
+    border-color: var(--err);
+    background: color-mix(in oklab, var(--err) 12%, var(--surface));
+  }
+  .qz-review-opt.wrong .quiz-key { border-color: var(--err); color: var(--err); }
+
+  .qz-review-tags { flex: none; display: inline-flex; gap: var(--sp-1); }
+  .qz-tag-you {
+    border-color: color-mix(in oklab, var(--err) 45%, transparent);
+    background: color-mix(in oklab, var(--err) 14%, transparent);
+    color: var(--err);
+  }
+  .qz-tag-correct {
+    border-color: color-mix(in oklab, var(--ok) 45%, transparent);
+    background: color-mix(in oklab, var(--ok) 14%, transparent);
+    color: var(--ok);
+  }
+
+  .qz-review-empty { font-size: var(--t-sm); }
+  .qz-review-explain { font-size: var(--t-xs); line-height: 1.5; }
+</style>

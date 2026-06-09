@@ -170,6 +170,7 @@
     <AudioPlayer
       title={matLaunch.title}
       script={matLaunch.payload?.segments ?? []}
+      materialId={matLaunch.id}
       onExit={() => (matLaunch = null)}
     />
   {:else if matLaunch.type === "infographic"}

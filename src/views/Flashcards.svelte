@@ -22,6 +22,13 @@
   let rated   = $state(0);
   let glow    = $state<string | null>(null);
 
+  // Indices (into the active deck) the user rated "Again" this session.
+  // Reset whenever a new session starts so the review list stays per-session.
+  let missed  = $state<number[]>([]);
+  const missedCards = $derived(
+    missed.map((idx) => activeDeck[idx]).filter((c): c is { q: string; a: string } => !!c)
+  );
+
   // Review mode: null = normal deck, string[] = only fronts in this list
   let reviewKeys  = $state<string[] | null>(null);
   // Cards due now per the SM-2 schedule (for the "Study due" affordance).
@@ -43,6 +50,8 @@
         app.pushToast({ kind: "error", title: "Record failed", body: String(e) });
       });
     }
+    // "Again" (the first rate button) counts as missed for this session.
+    if (cls === "again" && !missed.includes(i)) missed = [...missed, i];
     glow = cls;
     setTimeout(() => {
       glow = null;
@@ -54,7 +63,7 @@
   }
 
   function restart() {
-    i = 0; done = false; flipped = false; rated = 0; glow = null; reviewKeys = null;
+    i = 0; done = false; flipped = false; rated = 0; glow = null; reviewKeys = null; missed = [];
   }
 
   async function startReview() {
@@ -67,7 +76,7 @@
         return;
       }
       reviewKeys = wrong.map((w) => w.item_key);
-      i = 0; done = false; flipped = false; rated = 0; glow = null;
+      i = 0; done = false; flipped = false; rated = 0; glow = null; missed = [];
     } catch (e) {
       app.pushToast({ kind: "error", title: "Review load failed", body: String(e) });
     }
@@ -84,7 +93,7 @@
         return;
       }
       reviewKeys = due.map((d) => d.item_key);
-      i = 0; done = false; flipped = false; rated = 0; glow = null;
+      i = 0; done = false; flipped = false; rated = 0; glow = null; missed = [];
     } catch (e) {
       app.pushToast({ kind: "error", title: "Due load failed", body: String(e) });
     }
@@ -160,6 +169,28 @@
           </button>
         {/if}
       </div>
+
+      <div class="fc-review">
+        <div class="fc-review-head mono">
+          <span>Cards you missed</span>
+          {#if missedCards.length > 0}
+            <span class="badge">{missedCards.length}</span>
+          {/if}
+        </div>
+        {#if missedCards.length === 0}
+          <p class="mono muted fc-review-empty">No cards missed this session 🎉</p>
+        {:else}
+          <ul class="fc-review-list">
+            {#each missedCards as card, idx (idx)}
+              <li class="fc-review-item">
+                <div class="fc-review-q read"><RichText text={card.q} /></div>
+                <div class="fc-review-a-label mono">ANSWER</div>
+                <div class="fc-review-a read"><RichText text={card.a} /></div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
     </div>
   {:else}
     <div class="fc-bar-row">
@@ -218,3 +249,66 @@
     </div>
   {/if}
 </div>
+
+<style>
+  /* In-session "missed" review list on the completion screen. Tokens only. */
+  .fc-review {
+    width: 100%;
+    max-width: 520px;
+    margin-top: var(--sp-4);
+    text-align: left;
+  }
+  .fc-review-head {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-size: var(--t-2xs);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+    margin-bottom: var(--sp-3);
+  }
+  .fc-review-empty {
+    margin: 0;
+    font-size: var(--t-xs);
+  }
+  .fc-review-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  .fc-review-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--err);
+    border-radius: var(--rad-3);
+    padding: var(--sp-3) var(--sp-4);
+  }
+  .fc-review-q {
+    font-size: var(--r-md);
+    line-height: 1.4;
+    color: var(--fg-bright);
+    font-weight: 500;
+  }
+  .fc-review-a-label {
+    font-size: var(--t-2xs);
+    letter-spacing: 0.16em;
+    color: var(--fg-faint);
+    margin: var(--sp-3) 0 var(--sp-1);
+  }
+  .fc-review-a {
+    font-size: var(--r-sm);
+    line-height: 1.45;
+    color: var(--ok);
+  }
+  /* RichText emits .rt-* nodes; keep spacing tight inside review cells. */
+  .fc-review-q :global(.rt-p),
+  .fc-review-a :global(.rt-p) { margin: 0 0 var(--sp-1); }
+  .fc-review-q :global(.rt-p:last-child),
+  .fc-review-a :global(.rt-p:last-child) { margin-bottom: 0; }
+</style>
