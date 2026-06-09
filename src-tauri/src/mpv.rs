@@ -138,6 +138,9 @@ fn ensure_mpv(socket: &Path, ytdlp: &Path, volume: u8) -> Result<()> {
         .arg("--idle=yes")
         .arg("--no-terminal")
         .arg("--really-quiet")
+        // Buffer ahead so a resolved direct stream starts (and stays) smooth.
+        .arg("--cache=yes")
+        .arg("--demuxer-readahead-secs=10")
         .arg(format!("--volume={volume}"))
         .arg(format!("--input-ipc-server={}", socket.display()))
         .arg(format!(
@@ -218,8 +221,33 @@ pub fn youtube_play(app: AppHandle, url: String, volume: u8) -> Result<()> {
     let socket = socket_path(&dir);
     let ytdlp = ensure_ytdlp(&dir)?;
     ensure_mpv(&socket, &ytdlp, volume)?;
-    // `loadfile … replace` swaps whatever's playing for the new URL.
-    ipc(&socket, &json!({ "command": ["loadfile", url, "replace"] }))?;
+    // Stations are YouTube watch URLs; mpv's ytdl hook normally re-runs yt-dlp on
+    // every load to resolve the direct googlevideo stream (several seconds). We
+    // cache that resolved URL per station so repeat plays start near-instantly.
+    // Playlist/radio URLs are skipped (they need the hook for playlist behaviour).
+    let loaded_url = match cache_lookup_fresh(&dir, &url) {
+        // FRESH hit: hand mpv the direct stream — no yt-dlp on the play path.
+        Some(direct) => {
+            ipc(
+                &socket,
+                &json!({ "command": ["loadfile", direct, "replace"] }),
+            )?;
+            // Re-resolve in the background so the cached URL stays fresh for next time.
+            spawn_resolve_and_cache(dir.clone(), ytdlp.clone(), url.clone());
+            true
+        }
+        None => false,
+    };
+    if !loaded_url {
+        // Miss: fall back to the original URL (mpv's ytdl hook resolves it — the
+        // user waits no longer than before) and prime the cache so the SECOND play
+        // is instant. This also auto-covers user-added stations on first play.
+        ipc(
+            &socket,
+            &json!({ "command": ["loadfile", url, "replace"] }),
+        )?;
+        spawn_resolve_and_cache(dir.clone(), ytdlp.clone(), url.clone());
+    }
     ipc(&socket, &json!({ "command": ["set_property", "pause", false] }))?;
     ipc(
         &socket,
@@ -258,4 +286,220 @@ pub fn youtube_set_volume(app: AppHandle, volume: u8) -> Result<()> {
         &json!({ "command": ["set_property", "volume", volume as i64] }),
     );
     Ok(())
+}
+
+/// Pre-resolve a batch of station URLs in the background so their first play is
+/// instant. Returns immediately; ONE detached thread walks the list, resolving
+/// only stale/missing non-playlist entries (cheap no-op when all are fresh).
+/// Best-effort: any failure (no yt-dlp, no network) just leaves the cache as-is.
+#[tauri::command]
+pub fn youtube_prewarm(app: AppHandle, urls: Vec<String>) -> Result<()> {
+    let dir = data_dir(&app)?;
+    // Resolve yt-dlp's path on the calling thread (cheap: avoids a download race
+    // inside the worker); if it isn't available yet, skip prewarming entirely.
+    let Ok(ytdlp) = ensure_ytdlp(&dir) else {
+        return Ok(());
+    };
+    std::thread::spawn(move || {
+        for url in urls {
+            if is_playlist_url(&url) {
+                continue; // playlists use mpv's ytdl hook; never cached
+            }
+            if cache_lookup_fresh(&dir, &url).is_some() {
+                continue; // already fresh — nothing to do
+            }
+            if let Some(direct) = resolve_direct(&ytdlp, &url) {
+                cache_store(&dir, &url, &direct);
+            }
+        }
+    });
+    Ok(())
+}
+
+// ---- resolved-stream cache --------------------------------------------------
+//
+// Each station URL is a YouTube watch page; mpv's ytdl hook shells out to yt-dlp
+// to turn it into a direct googlevideo stream on every load (several seconds).
+// We persist that resolved URL so repeat plays skip yt-dlp. Direct URLs expire
+// (~6h) and can be IP-bound, so entries are only trusted for 3 hours.
+
+/// How long a cached direct URL is trusted before we re-resolve it.
+const CACHE_FRESH_MS: i64 = 3 * 60 * 60 * 1000; // 3 hours
+
+/// Playlist/radio URLs (`list=`) must keep going through mpv's ytdl hook so
+/// playlist/next-track behaviour works — never cache or resolve these.
+fn is_playlist_url(url: &str) -> bool {
+    url.contains("list=")
+}
+
+fn stream_cache_path(dir: &Path) -> PathBuf {
+    dir.join("stream-cache.json")
+}
+
+fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// One cached entry: a resolved direct stream URL and when it was resolved.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct CacheEntry {
+    direct: String,
+    resolved_at_ms: i64,
+}
+
+/// Load the whole cache. A missing or corrupt file yields an empty map — the
+/// cache is a pure optimisation and must never be a failure path.
+fn cache_load(dir: &Path) -> std::collections::HashMap<String, CacheEntry> {
+    std::fs::read_to_string(stream_cache_path(dir))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Persist the cache best-effort; write errors are intentionally ignored.
+fn cache_save(dir: &Path, map: &std::collections::HashMap<String, CacheEntry>) {
+    if let Ok(s) = serde_json::to_string(map) {
+        let _ = std::fs::write(stream_cache_path(dir), s);
+    }
+}
+
+/// Return the cached direct URL for `url` only if it's a non-playlist entry that
+/// resolved within the freshness window; otherwise `None`.
+fn cache_lookup_fresh(dir: &Path, url: &str) -> Option<String> {
+    if is_playlist_url(url) {
+        return None;
+    }
+    let entry = cache_load(dir).remove(url)?;
+    if now_ms().saturating_sub(entry.resolved_at_ms) < CACHE_FRESH_MS {
+        Some(entry.direct)
+    } else {
+        None
+    }
+}
+
+/// Insert/refresh one entry (skipping playlist URLs), preserving the rest.
+fn cache_store(dir: &Path, url: &str, direct: &str) {
+    if is_playlist_url(url) {
+        return;
+    }
+    let mut map = cache_load(dir);
+    map.insert(
+        url.to_string(),
+        CacheEntry {
+            direct: direct.to_string(),
+            resolved_at_ms: now_ms(),
+        },
+    );
+    cache_save(dir, &map);
+}
+
+/// Resolve a YouTube/URL to its direct best-audio stream via yt-dlp's `-g`
+/// (get-url). Returns the first stdout line, or `None` on any failure. Playlist
+/// URLs return `None` (they must not be flattened to a single stream).
+fn resolve_direct(ytdlp: &Path, url: &str) -> Option<String> {
+    if is_playlist_url(url) {
+        return None;
+    }
+    let out = Command::new(ytdlp)
+        .arg("-g")
+        .arg("-f")
+        .arg("bestaudio")
+        .arg("--no-playlist")
+        .arg(url)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout.lines().next()?.trim();
+    if line.is_empty() {
+        None
+    } else {
+        Some(line.to_string())
+    }
+}
+
+/// Resolve `url` in a detached thread and cache the result. Used to prime the
+/// cache after a miss and to refresh it after a fresh hit. Best-effort.
+fn spawn_resolve_and_cache(dir: PathBuf, ytdlp: PathBuf, url: String) {
+    if is_playlist_url(&url) {
+        return;
+    }
+    std::thread::spawn(move || {
+        if let Some(direct) = resolve_direct(&ytdlp, &url) {
+            cache_store(&dir, &url, &direct);
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn playlist_urls_are_never_cached() {
+        assert!(is_playlist_url(
+            "https://www.youtube.com/watch?v=x&list=PLabc"
+        ));
+        assert!(is_playlist_url(
+            "https://www.youtube.com/watch?v=y&list=RDy&start_radio=1"
+        ));
+        assert!(!is_playlist_url("https://www.youtube.com/watch?v=z"));
+    }
+
+    #[test]
+    fn store_then_fresh_lookup_roundtrips() {
+        let dir = std::env::temp_dir().join(format!("cortex-stream-cache-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = "https://www.youtube.com/watch?v=roundtrip";
+        cache_store(&dir, url, "https://direct.example/stream.m4a");
+        assert_eq!(
+            cache_lookup_fresh(&dir, url).as_deref(),
+            Some("https://direct.example/stream.m4a")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stale_entries_are_not_returned() {
+        let dir = std::env::temp_dir().join(format!("cortex-stream-stale-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = "https://www.youtube.com/watch?v=stale";
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            url.to_string(),
+            CacheEntry {
+                direct: "https://direct.example/old.m4a".into(),
+                resolved_at_ms: now_ms() - CACHE_FRESH_MS - 1,
+            },
+        );
+        cache_save(&dir, &map);
+        assert_eq!(cache_lookup_fresh(&dir, url), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_cache_file_yields_empty_map() {
+        let dir = std::env::temp_dir().join(format!("cortex-stream-corrupt-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(stream_cache_path(&dir), "{ not json").unwrap();
+        assert!(cache_load(&dir).is_empty());
+        assert_eq!(cache_lookup_fresh(&dir, "https://x/watch?v=a"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn playlist_store_is_a_noop() {
+        let dir = std::env::temp_dir().join(format!("cortex-stream-pl-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = "https://www.youtube.com/watch?v=p&list=PLx";
+        cache_store(&dir, url, "https://direct.example/should-not-store");
+        assert!(cache_load(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

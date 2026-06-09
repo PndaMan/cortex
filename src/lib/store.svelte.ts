@@ -4,7 +4,7 @@
 
 import * as api from "./api";
 import type { Subject, Source } from "./api";
-import { music, BUILTIN_STATION_IDS } from "./music";
+import { music, BUILTIN_STATION_IDS, builtinStationUrl, builtinStationUrls } from "./music";
 import { keybinds } from "./keybinds.svelte";
 
 export type View =
@@ -407,7 +407,22 @@ class AppStore {
       this.chatBusy = false;
     }
   }
-  musicOpen = $state(false);
+  // Backing state for the music panel. Exposed via get/set so opening it can
+  // prewarm the resolved-stream cache for EVERY station (built-in + custom) —
+  // any station the user clicks next then starts near-instantly. All existing
+  // `app.musicOpen = true/false` call sites keep working unchanged.
+  #musicOpen = $state(false);
+  get musicOpen() {
+    return this.#musicOpen;
+  }
+  set musicOpen(open: boolean) {
+    const wasClosed = !this.#musicOpen;
+    this.#musicOpen = open;
+    if (open && wasClosed) {
+      const urls = [...builtinStationUrls(), ...this.customStations.map((s) => s.url)];
+      api.youtubePrewarm(urls).catch(() => {});
+    }
+  }
   diffOpen = $state(false);
   helpOpen = $state(false);
   pomodoroOpen = $state(false);
@@ -563,6 +578,17 @@ class AppStore {
           (BUILTIN_STATION_IDS.includes(saved) || this.customStations.some((s) => s.id === saved))
         ) {
           this.music = { ...this.music, current: saved };
+        }
+        // Prewarm the resolved-stream cache for whatever station will play first
+        // (the saved default, else the "lofi" fallback) so its first play is
+        // near-instant. Fire-and-forget; never blocks startup.
+        {
+          const firstId = saved && (BUILTIN_STATION_IDS.includes(saved) || this.customStations.some((s) => s.id === saved))
+            ? saved
+            : "lofi";
+          const firstUrl =
+            this.customStations.find((s) => s.id === firstId)?.url ?? builtinStationUrl(firstId);
+          if (firstUrl) api.youtubePrewarm([firstUrl]).catch(() => {});
         }
       }
       // Restore the saved volume (previously reset to 60% on every launch).
