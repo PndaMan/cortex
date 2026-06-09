@@ -8,6 +8,11 @@ use crate::error::{Error, Result};
 pub trait Llm: Send + Sync {
     fn complete(&self, system: &str, user: &str) -> Result<String>;
     fn name(&self) -> String;
+    /// Cap output tokens for this provider's request. Wiring the per-task token
+    /// budget here is what stops OpenRouter from defaulting to a huge max_tokens
+    /// (its model default) and 402-ing when the key's credit limit can't cover it.
+    /// Default: no-op (providers that don't store it ignore the cap).
+    fn set_max_tokens(&mut self, _max: u32) {}
     /// OCR/transcribe images (each `(mime, base64)`) to Markdown text. Default:
     /// unsupported — only vision-capable providers override this.
     fn ocr(&self, _images: &[(String, String)]) -> Result<String> {
@@ -44,7 +49,9 @@ pub fn b64_encode(data: &[u8]) -> String {
     out
 }
 
-const OCR_PROMPT: &str = "Transcribe ALL text in these page image(s) EXACTLY, in reading order. \
+const OCR_PROMPT: &str = "Transcribe ALL text in these page image(s) EXACTLY, in reading order — \
+including HANDWRITTEN text (photographed notes, whiteboards): transcribe messy writing as \
+faithfully as you can and mark genuinely unreadable words as [illegible]. \
 Preserve headings, lists, tables (as Markdown tables), and math. Do not summarise, \
 translate, or add commentary — output ONLY the transcribed text as Markdown.";
 
@@ -70,9 +77,13 @@ impl Llm for StubLlm {
 pub struct GeminiLlm {
     pub api_key: String,
     pub model: String,
+    pub max_tokens: Option<u32>,
 }
 
 impl Llm for GeminiLlm {
+    fn set_max_tokens(&mut self, max: u32) {
+        self.max_tokens = Some(max);
+    }
     fn complete(&self, system: &str, user: &str) -> Result<String> {
         let client = llm_client();
         let url = format!(
@@ -92,7 +103,7 @@ impl Llm for GeminiLlm {
         // mid-answer — e.g. a table cut off halfway. 2.5 models support 65536.
         let mut generation_config = serde_json::json!({
             "temperature": 0.3,
-            "maxOutputTokens": 65536
+            "maxOutputTokens": self.max_tokens.unwrap_or(65536)
         });
         if self.model.contains("flash") {
             generation_config["thinkingConfig"] = serde_json::json!({ "thinkingBudget": 0 });
@@ -153,6 +164,16 @@ impl Llm for GeminiLlm {
 
 fn truncate(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
+}
+
+/// Pull the affordable token count out of an OpenRouter 402 message, e.g.
+/// "...you requested up to 64000 tokens, but can only afford 55765." Returns the
+/// last number after "afford" so we can retry within the key's credit limit.
+fn parse_affordable(msg: &str) -> Option<u32> {
+    let idx = msg.find("afford")?;
+    let tail = &msg[idx..];
+    let digits: String = tail.chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse::<u32>().ok().filter(|n| *n > 0)
 }
 
 /// Shared blocking HTTP client for LLM calls: a generous request timeout (model
@@ -248,20 +269,16 @@ pub struct OpenAiCompatLlm {
     pub api_key: String,
     pub model: String,
     pub label: &'static str,
+    pub max_tokens: Option<u32>,
 }
 
-impl Llm for OpenAiCompatLlm {
-    fn complete(&self, system: &str, user: &str) -> Result<String> {
+impl OpenAiCompatLlm {
+    /// One chat/completions attempt with an explicit max_tokens (or none).
+    fn complete_once(&self, system: &str, user: &str, max_tokens: Option<u32>) -> Result<String> {
         let key = self.api_key.trim();
-        if key.is_empty() {
-            return Err(Error::Other(format!(
-                "{}: API key is empty — paste it in Settings → API keys and click Save keys.",
-                self.label
-            )));
-        }
         let client = llm_client();
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.model,
             "messages": [
                 { "role": "system", "content": system },
@@ -269,6 +286,9 @@ impl Llm for OpenAiCompatLlm {
             ],
             "temperature": 0.3
         });
+        if let Some(n) = max_tokens {
+            body["max_tokens"] = serde_json::json!(n);
+        }
         let json = send_json(
             self.label,
             client
@@ -279,11 +299,40 @@ impl Llm for OpenAiCompatLlm {
                 .header("X-Title", "Cortex")
                 .json(&body),
         )?;
-        let text = json["choices"][0]["message"]["content"]
+        json["choices"][0]["message"]["content"]
             .as_str()
-            .ok_or_else(|| Error::Other(format!("{}: empty response", self.label)))?
-            .to_string();
-        Ok(text)
+            .map(|s| s.to_string())
+            .ok_or_else(|| Error::Other(format!("{}: empty response", self.label)))
+    }
+}
+
+impl Llm for OpenAiCompatLlm {
+    fn set_max_tokens(&mut self, max: u32) {
+        self.max_tokens = Some(max);
+    }
+    fn complete(&self, system: &str, user: &str) -> Result<String> {
+        let key = self.api_key.trim();
+        if key.is_empty() {
+            return Err(Error::Other(format!(
+                "{}: API key is empty — paste it in Settings → API keys and click Save keys.",
+                self.label
+            )));
+        }
+        match self.complete_once(system, user, self.max_tokens) {
+            Ok(t) => Ok(t),
+            // OpenRouter returns 402 with "...can only afford N" when the key's
+            // credit limit can't cover the requested max_tokens. Retry once with
+            // the affordable amount so generation succeeds instead of hard-failing.
+            Err(Error::Other(msg)) if msg.contains("402") => {
+                if let Some(afford) = parse_affordable(&msg) {
+                    // Leave a little headroom under the affordable cap.
+                    let retry = afford.saturating_sub(512).max(256);
+                    return self.complete_once(system, user, Some(retry));
+                }
+                Err(Error::Other(msg))
+            }
+            Err(e) => Err(e),
+        }
     }
     fn name(&self) -> String {
         format!("{}:{}", self.label, self.model)
@@ -353,9 +402,13 @@ impl Llm for OpenAiCompatLlm {
 pub struct ClaudeLlm {
     pub api_key: String,
     pub model: String,
+    pub max_tokens: Option<u32>,
 }
 
 impl Llm for ClaudeLlm {
+    fn set_max_tokens(&mut self, max: u32) {
+        self.max_tokens = Some(max);
+    }
     fn complete(&self, system: &str, user: &str) -> Result<String> {
         let client = llm_client();
         let body = serde_json::json!({
@@ -363,7 +416,7 @@ impl Llm for ClaudeLlm {
             // Roomy enough for a full cheatsheet without cutting off mid-section.
             // Modern Claude models support far more (Sonnet 4.x: 64K, Opus: 128K
             // output tokens); 32K covers any cheatsheet while staying within limits.
-            "max_tokens": 32000,
+            "max_tokens": self.max_tokens.unwrap_or(32000),
             "temperature": 0.3,
             "system": system,
             "messages": [{ "role": "user", "content": user }]
@@ -414,7 +467,7 @@ pub fn from_spec(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
     let model = model.trim().to_string();
     match provider {
         "gemini" => nonempty(&keys.gemini).map(|k| {
-            Box::new(GeminiLlm { api_key: k.to_string(), model }) as Box<dyn Llm>
+            Box::new(GeminiLlm { api_key: k.to_string(), model, max_tokens: None }) as Box<dyn Llm>
         }),
         "openrouter" => nonempty(&keys.openrouter).map(|k| {
             Box::new(OpenAiCompatLlm {
@@ -422,6 +475,7 @@ pub fn from_spec(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
                 api_key: k.to_string(),
                 model,
                 label: "openrouter",
+                max_tokens: None,
             }) as Box<dyn Llm>
         }),
         "openai" => nonempty(&keys.openai).map(|k| {
@@ -430,10 +484,11 @@ pub fn from_spec(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
                 api_key: k.to_string(),
                 model,
                 label: "openai",
+                max_tokens: None,
             }) as Box<dyn Llm>
         }),
         "claude" | "anthropic" => nonempty(&keys.claude).map(|k| {
-            Box::new(ClaudeLlm { api_key: k.to_string(), model }) as Box<dyn Llm>
+            Box::new(ClaudeLlm { api_key: k.to_string(), model, max_tokens: None }) as Box<dyn Llm>
         }),
         "custom" => nonempty(&keys.custom_endpoint).map(|base| {
             Box::new(OpenAiCompatLlm {
@@ -441,6 +496,7 @@ pub fn from_spec(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
                 api_key: nonempty(&keys.openai).unwrap_or("").to_string(),
                 model,
                 label: "custom",
+                max_tokens: None,
             }) as Box<dyn Llm>
         }),
         // Ollama exposes an OpenAI-compatible API at <base>/v1; it's keyless, so
@@ -452,6 +508,7 @@ pub fn from_spec(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
                 api_key: "ollama".to_string(),
                 model,
                 label: "ollama",
+                max_tokens: None,
             }) as Box<dyn Llm>)
         }
         _ => None,
@@ -638,6 +695,7 @@ mod tests {
             api_key: key,
             model: "google/gemini-2.5-flash".into(),
             label: "openrouter",
+            max_tokens: None,
         };
         match llm.complete("You output JSON only.", "Return {\"ok\":true} and nothing else.") {
             Ok(t) => println!("LIVE OK: {}", truncate(&t, 200)),

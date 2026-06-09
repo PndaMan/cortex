@@ -396,8 +396,9 @@
     margin-bottom: 16px;
   }
 
+  /* .notes-page-title typography comes from the shared .page-title rule (app.css). */
   .notes-page-title {
-    margin: 4px 0 2px; font-size: var(--r-lg, 20px); color: var(--fg-bright); font-weight: 600;
+    margin: 4px 0 2px;
   }
 
   /* ── Master–detail grid ─────────────────────────────────────────────────── */

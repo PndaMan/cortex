@@ -6,8 +6,34 @@
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
   import { stations } from "../lib/mock";
-  import { keybinds, ACTION_LABELS, ACTION_ORDER } from "../lib/keybinds.svelte";
+  import { keybinds, ACTION_LABELS, ACTION_ORDER, LEADER_ACTIONS } from "../lib/keybinds.svelte";
   import type { Action } from "../lib/keybinds.svelte";
+  import type { Snippet } from "svelte";
+
+  // Shape for the reusable homelab endpoint-service snippet (Integrations tab).
+  type EndpointOpts = {
+    title: string;
+    desc: string;
+    value: string;
+    oninput: (v: string) => void;
+    onsave: () => void;
+    onTest: () => void;
+    state: null | "testing" | "ok" | "fail";
+    placeholder: string;
+    failHint?: string;
+    hint?: string;
+    extra?: Snippet;
+  };
+
+  // Fixed system bindings (not rebindable) shown for reference in the Keybinds tab
+  // so the page reflects every shortcut, not just the customizable single-key set.
+  const SYSTEM_BINDS = [
+    { keys: "Ctrl F", label: "Find on page" },
+    { keys: "Ctrl P", label: "Command palette" },
+    { keys: "Esc",    label: "Close overlay / go back" },
+    { keys: "g d",    label: "Go to dashboard" },
+    { keys: "Alt 1–9", label: "Jump to subject N" },
+  ];
 
   // ---- tab navigation ----
   const TABS = [
@@ -54,7 +80,7 @@
       "x-ai/grok-2-1212",
     ] },
     { id: "openai",     label: "OpenAI",              models: ["gpt-4o","gpt-4o-mini","o3-mini"] },
-    { id: "claude",     label: "Claude",              models: ["claude-3-7-sonnet-20250219","claude-3-5-sonnet-20241022","claude-3-5-haiku-20241022"] },
+    { id: "claude",     label: "Claude",              models: ["claude-opus-4-8","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-3-7-sonnet-20250219","claude-3-5-sonnet-20241022","claude-3-5-haiku-20241022"] },
     { id: "ollama",     label: "Ollama (local)",      models: ["llama3.3:70b","qwen2.5:32b","mistral-small"] },
     { id: "custom",     label: "Custom endpoint",     models: ["custom-model"] },
   ];
@@ -165,6 +191,7 @@
     // track both values
     const rf = readFont;
     const d  = density;
+    if (!loaded) return;
     api.setSettings({ reading_font: rf, density: d }).catch(() => {});
   });
 
@@ -211,11 +238,73 @@
     };
   });
 
-  // ---- local models (ollama) + web search ----
+  // ---- local models (ollama) + web search + remote whisper ----
   let endpoint   = $state("http://localhost:11434");
   let searxng    = $state("");
+  let whisperUrl = $state("");
+  let webImages  = $state(false);
   let testState  = $state<null | "testing" | "ok" | "fail">(null);
   let searxState = $state<null | "testing" | "ok" | "fail">(null);
+  let whisperState = $state<null | "testing" | "ok" | "fail">(null);
+
+  function saveWhisper() {
+    api.setSetting("whisper_url", whisperUrl.trim()).catch(() => {});
+  }
+  async function testWhisper() {
+    if (!whisperUrl.trim()) return;
+    whisperState = "testing";
+    whisperState = await testEndpoint(whisperUrl);
+  }
+
+  // ---- live homelab sync (last-write-wins DB snapshot) ----
+  let syncUrl   = $state("");
+  let syncUser  = $state("");
+  let syncPass  = $state("");
+  let syncOn    = $state(false);
+  let syncTestState = $state<null | "testing" | "ok" | "fail">(null);
+
+  function saveSync() {
+    api.setSettings({
+      sync_url: syncUrl.trim(),
+      sync_user: syncUser.trim(),
+      sync_pass: syncPass,
+      sync_enabled: syncOn ? "true" : "false",
+    }).then(() => app.loadSyncStatus()).catch(() => {});
+  }
+  function toggleSync() {
+    syncOn = !syncOn;
+    if (syncOn && !syncUrl.trim()) { syncOn = false; return; }
+    saveSync();
+  }
+  async function testSync() {
+    if (!syncUrl.trim()) return;
+    syncTestState = "testing";
+    try {
+      syncTestState = (await api.syncTest(syncUrl.trim(), syncUser.trim(), syncPass)) ? "ok" : "fail";
+    } catch {
+      syncTestState = "fail";
+    }
+  }
+  function fmtSyncTime(ms: number): string {
+    return ms ? new Date(ms).toLocaleString() : "never";
+  }
+  function syncPill() {
+    switch (app.syncState) {
+      case "syncing": return { cls: "draft", label: "Syncing…" };
+      case "synced":  return { cls: "ready", label: "Synced" };
+      case "error":   return { cls: "error", label: "Sync error" };
+      case "idle":    return { cls: "ready", label: "On" };
+      default:        return { cls: "pending", label: "Off" };
+    }
+  }
+
+  // Diagrams/images from the homelab SearXNG. Mirrors app.webImagesEnabled and
+  // persists an explicit choice so it survives the "default-on-when-connected".
+  function setWebImages(on: boolean) {
+    webImages = on;
+    app.webImagesEnabled = on;
+    api.setSetting("web_images_enabled", on ? "true" : "false").catch(() => {});
+  }
 
   // ---- encrypted backups (age + rclone) ----
   let ageRecipient = $state("");
@@ -327,9 +416,22 @@
     searxState = await testEndpoint(searxng);
   }
 
+  // Map a connection test state + whether the endpoint is set to a design-system
+  // status pill (class modifier + label), so every integration shows state the
+  // same way the rest of the app shows source/cheatsheet state.
+  function connPill(state: null | "testing" | "ok" | "fail", configured: boolean) {
+    if (state === "testing") return { cls: "draft", label: "Checking…" };
+    if (state === "ok") return { cls: "ready", label: "Connected" };
+    if (state === "fail") return { cls: "error", label: "Unreachable" };
+    return configured
+      ? { cls: "pending", label: "Untested" }
+      : { cls: "pending", label: "Not set" };
+  }
+
   // persist the Ollama endpoint on change
   $effect(() => {
     const ep = endpoint;
+    if (!loaded) return;
     api.setSettings({ ollama_url: ep }).catch(() => {});
   });
 
@@ -356,6 +458,18 @@
   let voiceA   = $state("maya");
   let voiceB   = $state("theo");
 
+  // Set true only once the mount hydration below has loaded persisted values.
+  // The persist $effects fire immediately on mount with their *default* values;
+  // without this guard, opening Settings would clobber saved settings (e.g. it
+  // silently reset default_station to "lofi" on every visit).
+  let loaded = $state(false);
+
+  // Built-in + user-added stations, so the Default-station picker shows them all.
+  const allStations = $derived([
+    ...stations.map((s) => ({ id: s.id, label: s.name })),
+    ...app.customStations.map((s) => ({ id: s.id, label: s.name })),
+  ]);
+
   // Stream-tool detection for the YouTube-audio engine (mpv sidecar).
   let mediaTools = $state<api.MediaTools | null>(null);
   $effect(() => {
@@ -364,17 +478,32 @@
     }
   });
 
-  // persist audio on change
+  // persist audio on change. NOTE: never read app.music here — reading + writing
+  // it in one effect creates a self-triggering reactive loop (crashes the view).
+  // The live-player sync happens in the Picker's onChange handler instead.
   $effect(() => {
     const st = station;
     const ap = autoplay;
+    if (!loaded) return;
     api.setSettings({ default_station: st, autoplay: String(ap) }).catch(() => {});
   });
 
   // persist host voices on change
   $effect(() => {
-    api.setSettings({ voice_a: voiceA, voice_b: voiceB }).catch(() => {});
+    const a = voiceA;
+    const b = voiceB;
+    if (!loaded) return;
+    api.setSettings({ voice_a: a, voice_b: b }).catch(() => {});
   });
+
+  // ---- window behaviour ----
+  // Default ON: closing the window hides to the tray so ingest/generation/music
+  // keep running; the backend treats anything but "false" as enabled.
+  let closeToTray = $state(true);
+  function toggleCloseToTray() {
+    closeToTray = !closeToTray;
+    api.setSetting("close_to_tray", closeToTray ? "true" : "false").catch(() => {});
+  }
 
   // ---- data & privacy state ----
   let offlineMode = $state(false);
@@ -473,9 +602,15 @@
         assign = { ...assign, embedding: { ...assign.embedding, provider: s.embed_provider } };
       }
 
-      // Local models + web search
+      // Local models + web search + remote whisper
       if (s.ollama_url)                    endpoint = s.ollama_url;
       if (s.searxng_url)                   searxng  = s.searxng_url;
+      if (s.whisper_url)                   whisperUrl = s.whisper_url;
+      // Live sync
+      if (s.sync_url)   syncUrl  = s.sync_url;
+      if (s.sync_user)  syncUser = s.sync_user;
+      if (s.sync_pass)  syncPass = s.sync_pass;
+      syncOn = s.sync_enabled === "true";
       // Encrypted backups
       if (s.backup_age_recipient) ageRecipient = s.backup_age_recipient;
       if (s.backup_rclone_remote) rcloneRemote = s.backup_rclone_remote;
@@ -484,10 +619,17 @@
       // Appearance
       if (s.reading_font)   readFont      = s.reading_font;
       if (s.density)        density       = s.density;
+      // Window behaviour (default ON: closing hides to the tray)
+      if (s.close_to_tray !== undefined) closeToTray = s.close_to_tray !== "false";
 
-      // Audio voices
+      // Audio: default station, autoplay, host voices
+      if (s.default_station) station = s.default_station;
+      if (s.autoplay !== undefined) autoplay = s.autoplay === "true";
       if (s.voice_a) voiceA = s.voice_a;
       if (s.voice_b) voiceB = s.voice_b;
+
+      // Homelab: web images (diagrams) toggle mirrors the store's resolved value.
+      webImages = app.webImagesEnabled;
 
       // Data & privacy
       if (s.offline_mode !== undefined) offlineMode = s.offline_mode === "true";
@@ -500,6 +642,9 @@
       if (s.profile_about)     about    = s.profile_about;
       if (s.profile_style)     style    = s.profile_style;
       if (s.profile_explain)   explain  = s.profile_explain.split(",").filter(Boolean);
+
+      // Hydration complete — persist effects may now write without clobbering.
+      loaded = true;
     })();
   });
 
@@ -590,7 +735,7 @@
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Profile</div>
-          <h1 class="read set-title">Who the AI thinks you are</h1>
+          <h1 class="set-title">Who the AI thinks you are</h1>
           <p class="set-sub">Shared with every chat and generation so answers fit your level and style. Stays on this machine.</p>
         </header>
 
@@ -735,7 +880,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Models</div>
-          <h1 class="read set-title">A model for every task</h1>
+          <h1 class="set-title">A model for every task</h1>
           <p class="set-sub">Route each job to the provider that does it best. Token budgets cap spend per call.</p>
         </header>
 
@@ -786,7 +931,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">API keys</div>
-          <h1 class="read set-title">Bring your own keys</h1>
+          <h1 class="set-title">Bring your own keys</h1>
           <p class="set-sub">Stored in the OS keychain, never synced. Nothing routes through Cortex servers.</p>
         </header>
 
@@ -852,18 +997,47 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Appearance</div>
-          <h1 class="read set-title">Make it yours</h1>
+          <h1 class="set-title">Make it yours</h1>
           <p class="set-sub">Cortex re-skins live from your Omarchy theme, or pick one manually.</p>
         </header>
 
         <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Theme</h3></div>
           <div class="set-card">
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">Follow Omarchy theme</div>
+                <div class="set-row-d">Mirror your desktop's current Omarchy palette on every launch. Picking a theme below turns this off.</div>
+              </div>
+              <div class="set-row-r">
+                <button
+                  type="button"
+                  class={"st-toggle" + (app.followOmarchy ? " on" : "")}
+                  role="switch"
+                  aria-checked={app.followOmarchy}
+                  aria-label="follow omarchy theme"
+                  onclick={async () => {
+                    const matched = await app.setFollowOmarchy(!app.followOmarchy);
+                    if (app.followOmarchy && !matched) {
+                      app.pushToast({ kind: "warning", title: "Omarchy theme not found", body: "Couldn't read your Omarchy theme, or it has no Cortex match." });
+                    } else if (matched) {
+                      app.pushToast({ kind: "success", title: "Following Omarchy", body: `Matched → ${THEME_LABELS[matched]}.` });
+                    }
+                  }}
+                ><span class="st-knob"></span></button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h"><h3 class="set-group-t">Manual theme</h3></div>
+          <div class="set-card">
             <div class="set-themes">
               {#each THEME_OPTS as t}
                 <button
                   class={"set-theme" + (app.theme === t.id ? " on" : "")}
-                  onclick={() => app.setTheme(t.id)}
+                  onclick={() => { if (app.followOmarchy) app.setFollowOmarchy(false); app.setTheme(t.id); }}
                   style="background:{t.b}"
                 >
                   <div class="set-theme-sws">
@@ -913,6 +1087,21 @@ Notes: {about}</pre>
             </div>
           </div>
         </section>
+
+        <section class="set-group">
+          <div class="set-group-h"><h3 class="set-group-t">Window</h3></div>
+          <div class="set-card">
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">Close to tray</div>
+                <div class="set-row-d">Closing the window keeps Cortex running in the tray — ingest, generation and music continue. Quit from the tray menu.</div>
+              </div>
+              <div class="set-row-r">
+                <button type="button" class={"st-toggle" + (closeToTray ? " on" : "")} onclick={toggleCloseToTray} role="switch" aria-checked={closeToTray} aria-label="close to tray"><span class="st-knob"></span></button>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
 
     <!-- ===== KEYBINDS ===== -->
@@ -920,7 +1109,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Keybinds</div>
-          <h1 class="read set-title">Helix-style, your way</h1>
+          <h1 class="set-title">Helix-style, your way</h1>
           <p class="set-sub">Click any binding to rebind it. Press Esc while listening to cancel.</p>
         </header>
 
@@ -975,125 +1164,207 @@ Notes: {about}</pre>
             Reset to preset
           </button>
         </div>
+
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">Leader menu (Space then…)</h3>
+            <p class="set-group-d">Press <span class="kbd">Space</span> to open the leader menu, then a key. Fixed, mnemonic — they only fire while the menu is open.</p>
+          </div>
+          <div class="set-card set-binds">
+            {#each LEADER_ACTIONS as a}
+              <div class="bind-row">
+                <span class="bind-label">{a.label} <span class="faint">· {a.detail}</span></span>
+                <span class="bind-keys"><span class="kbd">Space</span> <span class="kbd">{a.key}</span></span>
+              </div>
+            {/each}
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">System</h3>
+            <p class="set-group-d">Built-in shortcuts that follow OS conventions and can't be rebound.</p>
+          </div>
+          <div class="set-card set-binds">
+            {#each SYSTEM_BINDS as b}
+              <div class="bind-row">
+                <span class="bind-label">{b.label}</span>
+                <span class="bind-keys">
+                  {#each b.keys.split(" ") as part}<span class="kbd">{part}</span> {/each}
+                </span>
+              </div>
+            {/each}
+          </div>
+        </section>
       </div>
 
     <!-- ===== INTEGRATIONS ===== -->
     {:else if tab === "homelab"}
+      {#snippet endpointService(o: EndpointOpts)}
+        {@const p = connPill(o.state, !!o.value.trim())}
+        <section class="set-group">
+          <div class="set-group-h svc-h">
+            <div>
+              <h3 class="set-group-t">{o.title}</h3>
+              <p class="set-group-d">{@html o.desc}</p>
+            </div>
+            <span class="status-pill status-pill--{p.cls}"><span class="dot"></span>{p.label}</span>
+          </div>
+          <div class="set-card">
+            <div class="set-row stacked">
+              <div class="row-inline">
+                <input class="input mono" value={o.value} oninput={(e) => o.oninput(e.currentTarget.value)} onchange={o.onsave} onblur={o.onsave} placeholder={o.placeholder} />
+                <button class="btn" onclick={o.onTest} disabled={o.state === "testing" || !o.value.trim()}>
+                  <Icon name="refresh" size={12} /> Test
+                </button>
+              </div>
+              {#if o.state === "fail" && o.failHint}
+                <div class="set-row-d" style="color:var(--err,#e5484d)">{o.failHint}</div>
+              {/if}
+              {#if o.hint}<div class="set-row-d">{@html o.hint}</div>{/if}
+            </div>
+            {#if o.extra}{@render o.extra()}{/if}
+          </div>
+        </section>
+      {/snippet}
+
+      {#snippet diagramsToggle()}
+        <div class="set-row">
+          <div class="set-row-l">
+            <div class="set-row-t">Illustrate with diagrams</div>
+            <div class="set-row-d">A relevant diagram per cheatsheet section + images in chat. On by default once SearXNG is connected.</div>
+          </div>
+          <div class="set-row-r">
+            <button type="button" class={"st-toggle" + (webImages ? " on" : "")} onclick={() => setWebImages(!webImages)} disabled={!searxng.trim()} role="switch" aria-checked={webImages} aria-label="diagrams"><span class="st-knob"></span></button>
+          </div>
+        </div>
+      {/snippet}
+
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Integrations</div>
-          <h1 class="read set-title">Local models, web search & backups</h1>
-          <p class="set-sub">Optional, self-hosted services. Cortex stays fully local without any of them.</p>
+          <h1 class="set-title">Local models, web search & backups</h1>
+          <p class="set-sub">Optional, self-hosted services. Cortex stays fully local without any of them — or run them all with the <span class="mono">homelab/</span> docker compose.</p>
         </header>
 
+        {@render endpointService({
+          title: "Local models (Ollama)",
+          desc: "Run chat/embeddings on a local or self-hosted <span class='mono'>ollama</span> server — keyless and private. Select <span class='mono'>ollama:&lt;model&gt;</span> per task in Models.",
+          value: endpoint,
+          oninput: (v: string) => (endpoint = v),
+          onsave: () => {},
+          onTest: testConnection,
+          state: testState,
+          placeholder: "http://localhost:11434",
+          failHint: "Unreachable — check the URL and that ollama is running.",
+        })}
+
+        {@render endpointService({
+          title: "Web search (SearXNG)",
+          desc: "Pulls diagrams/images into cheatsheets and enriches chat answers. There is no separate web-search page.",
+          value: searxng,
+          oninput: (v: string) => (searxng = v),
+          onsave: saveSearxng,
+          onTest: testSearxng,
+          state: searxState,
+          placeholder: "http://192.168.1.50:8080",
+          failHint: "Unreachable — check the URL and that SearXNG is running with JSON enabled.",
+          hint: "Base URL only. Enable JSON in settings.yml (<span class='mono'>formats: [html, json]</span>).",
+          extra: diagramsToggle,
+        })}
+
+        {@render endpointService({
+          title: "Remote transcription (Whisper)",
+          desc: "Offload lecture transcription to a homelab Whisper server instead of installing Python locally. Leave blank to transcribe on this machine.",
+          value: whisperUrl,
+          oninput: (v: string) => (whisperUrl = v),
+          onsave: saveWhisper,
+          onTest: testWhisper,
+          state: whisperState,
+          placeholder: "http://192.168.1.50:9009",
+          failHint: "Unreachable — check the URL and that the Whisper service is running.",
+          hint: "OpenAI-compatible endpoint, base URL only (Cortex calls <span class='mono'>/v1/audio/transcriptions</span>).",
+        })}
+
         <section class="set-group">
-          <div class="set-group-h">
-            <h3 class="set-group-t">Local models (Ollama)</h3>
-            <p class="set-group-d">Optional: run chat/embeddings on a local or self-hosted <span class="mono">ollama</span> server — keyless and fully private. Select <span class="mono">ollama:&lt;model&gt;</span> per task in Providers.</p>
+          <div class="set-group-h svc-h">
+            <div>
+              <h3 class="set-group-t">Live sync</h3>
+              <p class="set-group-d">Auto-store your library to a homelab WebDAV target and fetch the newest copy on launch. Last-write-wins across devices (whole-database, not per-record).</p>
+            </div>
+            <span class="status-pill status-pill--{syncPill().cls}"><span class="dot"></span>{syncPill().label}</span>
           </div>
           <div class="set-card">
-            <div class="set-row stacked">
-              <div class="set-row-l"><div class="set-row-t">Ollama endpoint</div></div>
-              <div class="set-row-r">
-                <div class="row-inline">
-                  <input class="input mono" bind:value={endpoint} placeholder="http://localhost:11434" />
-                  <button class="btn" onclick={testConnection}>
-                    <Icon name="refresh" size={12} /> Test
-                  </button>
-                </div>
-                {#if testState === "testing"}
-                  <div class="set-test mono faint">
-                    <span class="is-spin" style="width:11px;height:11px;display:inline-block;vertical-align:-1px"></span>
-                    Pinging…
-                  </div>
-                {:else if testState === "ok"}
-                  <div class="set-test mono" style="color:var(--ok)">
-                    <Icon name="check" size={12} /> Reachable
-                  </div>
-                {:else if testState === "fail"}
-                  <div class="set-test mono" style="color:var(--danger,#e06c75)">
-                    <Icon name="x" size={12} /> Unreachable — check the URL and that ollama is running.
-                  </div>
-                {/if}
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">Enable live sync</div>
+                <div class="set-row-d">Push after changes (debounced) + pull a newer copy on launch.</div>
               </div>
+              <div class="set-row-r">
+                <button type="button" class={"st-toggle" + (syncOn ? " on" : "")} onclick={toggleSync} disabled={!syncUrl.trim()} role="switch" aria-checked={syncOn} aria-label="live sync"><span class="st-knob"></span></button>
+              </div>
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">WebDAV URL</div>
+              <div class="row-inline">
+                <input class="input mono" bind:value={syncUrl} onchange={saveSync} onblur={saveSync} placeholder="http://192.168.1.50:9010" />
+                <button class="btn" onclick={testSync} disabled={syncTestState === "testing" || !syncUrl.trim()}>
+                  <Icon name="refresh" size={12} /> Test
+                </button>
+              </div>
+              {#if syncTestState === "fail"}
+                <div class="set-row-d" style="color:var(--err,#e5484d)">Unreachable or auth failed — check the URL and credentials.</div>
+              {:else if syncTestState === "ok"}
+                <div class="set-row-d" style="color:var(--ok)">Reachable.</div>
+              {/if}
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">Username <span class="faint">optional</span></div>
+              <input class="input mono" bind:value={syncUser} onchange={saveSync} onblur={saveSync} placeholder="cortex" />
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">Password <span class="faint">optional</span></div>
+              <div class="row-inline">
+                <input class="input mono" type="password" bind:value={syncPass} onchange={saveSync} onblur={saveSync} placeholder="••••••••" />
+                <button class="btn btn--primary" disabled={!syncOn || app.syncState === "syncing"} onclick={() => app.syncNow()}>
+                  <Icon name="upload" size={12} /> {app.syncState === "syncing" ? "Syncing…" : "Sync now"}
+                </button>
+              </div>
+              <div class="set-row-d">Last synced: <span class="mono">{fmtSyncTime(app.syncLastAt)}</span>. Bring up a WebDAV target with the <span class="mono">homelab/</span> compose.</div>
             </div>
           </div>
         </section>
 
         <section class="set-group">
-          <div class="set-group-h">
-            <h3 class="set-group-t">Web search</h3>
-            <p class="set-group-d">Point Cortex at your self-hosted SearXNG so chat can pull in fresh web results.</p>
-          </div>
-          <div class="set-card">
-            <div class="set-row stacked">
-              <div class="set-row-l"><div class="set-row-t">SearXNG endpoint</div></div>
-              <div class="set-row-r">
-                <div class="row-inline">
-                  <input class="input mono" bind:value={searxng} onchange={saveSearxng} onblur={saveSearxng} placeholder="http://192.168.1.50:8080" />
-                  <button class="btn" onclick={testSearxng}>
-                    <Icon name="refresh" size={12} /> Test
-                  </button>
-                </div>
-                {#if searxState === "testing"}
-                  <div class="set-test mono faint">
-                    <span class="is-spin" style="width:11px;height:11px;display:inline-block;vertical-align:-1px"></span>
-                    Pinging…
-                  </div>
-                {:else if searxState === "ok"}
-                  <div class="set-test mono" style="color:var(--ok)">
-                    <Icon name="check" size={12} /> Reachable
-                  </div>
-                {:else if searxState === "fail"}
-                  <div class="set-test mono" style="color:var(--danger,#e06c75)">
-                    <Icon name="x" size={12} /> Unreachable — check the URL and that SearXNG is running.
-                  </div>
-                {/if}
-                <div class="set-row-d" style="margin-top:6px">Self-hosted SearXNG base URL, e.g. http://192.168.1.50:8080</div>
-              </div>
+          <div class="set-group-h svc-h">
+            <div>
+              <h3 class="set-group-t">Encrypted backups</h3>
+              <p class="set-group-d">Snapshot the database, encrypt it with <span class="mono">age</span>, and upload with <span class="mono">rclone</span>. Nothing leaves the machine unencrypted.</p>
             </div>
-          </div>
-        </section>
-
-        <section class="set-group">
-          <div class="set-group-h">
-            <h3 class="set-group-t">Encrypted backups</h3>
-            <p class="set-group-d">Snapshot the database, encrypt it with <span class="mono">age</span>, and upload to your homelab with <span class="mono">rclone</span>. Nothing leaves the machine unencrypted.</p>
-          </div>
-          <div class="set-card">
             {#if backupInfo}
-              <div class="set-row">
-                <div class="set-row-l"><div class="set-row-t">Tools</div></div>
-                <div class="set-row-r">
-                  <span class="mono" style="color:{backupInfo.age_found ? 'var(--ok)' : 'var(--danger,#e06c75)'}">
-                    <Icon name={backupInfo.age_found ? "check" : "x"} size={12} /> age
-                  </span>
-                  <span class="mono" style="margin-left:14px;color:{backupInfo.rclone_found ? 'var(--ok)' : 'var(--danger,#e06c75)'}">
-                    <Icon name={backupInfo.rclone_found ? "check" : "x"} size={12} /> rclone
-                  </span>
-                </div>
+              <div class="svc-tools">
+                <span class="badge {backupInfo.age_found ? 'badge--ok' : 'badge--err'}"><span class="dot"></span>age</span>
+                <span class="badge {backupInfo.rclone_found ? 'badge--ok' : 'badge--err'}"><span class="dot"></span>rclone</span>
               </div>
             {/if}
+          </div>
+          <div class="set-card">
             <div class="set-row stacked">
-              <div class="set-row-l"><div class="set-row-t">age recipient (public key)</div></div>
-              <div class="set-row-r">
-                <input class="input mono" bind:value={ageRecipient} onchange={saveBackupConfig} onblur={saveBackupConfig} placeholder="age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p" />
-                <div class="set-row-d" style="margin-top:6px">From <span class="mono">age-keygen</span>. Only this key's holder can decrypt the backups.</div>
-              </div>
+              <div class="set-row-t">age recipient (public key)</div>
+              <input class="input mono" bind:value={ageRecipient} onchange={saveBackupConfig} onblur={saveBackupConfig} placeholder="age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p" />
+              <div class="set-row-d">From <span class="mono">age-keygen</span>. Only this key's holder can decrypt the backups.</div>
             </div>
             <div class="set-row stacked">
-              <div class="set-row-l"><div class="set-row-t">rclone remote</div></div>
-              <div class="set-row-r">
-                <div class="row-inline">
-                  <input class="input mono" bind:value={rcloneRemote} onchange={saveBackupConfig} onblur={saveBackupConfig} placeholder="homelab:cortex-backups" />
-                  <button class="btn btn--primary" disabled={backingUp} onclick={runBackup}>
-                    <Icon name={backingUp ? "refresh" : "upload"} size={12} /> {backingUp ? "Backing up…" : "Back up now"}
-                  </button>
-                </div>
-                <div class="set-row-d" style="margin-top:6px">
-                  An rclone remote + path, e.g. <span class="mono">homelab:cortex-backups</span> (configure with <span class="mono">rclone config</span>).
-                  Last backup: <span class="mono">{fmtBackupTime(backupInfo?.last_at ?? null)}</span>{#if backupInfo?.last_dest} → <span class="mono">{backupInfo.last_dest}</span>{/if}
-                </div>
+              <div class="set-row-t">rclone remote</div>
+              <div class="row-inline">
+                <input class="input mono" bind:value={rcloneRemote} onchange={saveBackupConfig} onblur={saveBackupConfig} placeholder="homelab:cortex-backups" />
+                <button class="btn btn--primary" disabled={backingUp} onclick={runBackup}>
+                  <Icon name={backingUp ? "refresh" : "upload"} size={12} /> {backingUp ? "Backing up…" : "Back up now"}
+                </button>
+              </div>
+              <div class="set-row-d">
+                An rclone remote + path, e.g. <span class="mono">homelab:cortex-backups</span> (configure with <span class="mono">rclone config</span>).
+                Last backup: <span class="mono">{fmtBackupTime(backupInfo?.last_at ?? null)}</span>{#if backupInfo?.last_dest} → <span class="mono">{backupInfo.last_dest}</span>{/if}
               </div>
             </div>
           </div>
@@ -1106,7 +1377,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Audio</div>
-          <h1 class="read set-title">Study sound & voices</h1>
+          <h1 class="set-title">Study sound & voices</h1>
           <p class="set-sub">Defaults for the music player and generated audio overviews.</p>
         </header>
 
@@ -1118,8 +1389,8 @@ Notes: {about}</pre>
               <div class="set-row-r">
                 <Picker
                   value={station}
-                  onChange={(v) => (station = v)}
-                  options={stations.map((s) => ({ id: s.id, label: s.name }))}
+                  onChange={(v) => { station = v; app.music = { ...app.music, current: v }; }}
+                  options={allStations}
                 />
               </div>
             </div>
@@ -1224,7 +1495,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Google Calendar</div>
-          <h1 class="read set-title">Sync your calendar</h1>
+          <h1 class="set-title">Sync your calendar</h1>
           <p class="set-sub">Two-way sync with Google Calendar. The native Cortex calendar works fully without this — connecting just mirrors events both ways.</p>
         </header>
 
@@ -1291,7 +1562,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Data & privacy</div>
-          <h1 class="read set-title">Local-first by default</h1>
+          <h1 class="set-title">Local-first by default</h1>
           <p class="set-sub">Everything lives in a SQLite database on this machine. You own it.</p>
         </header>
 
@@ -1375,7 +1646,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">About</div>
-          <h1 class="read set-title">Cortex</h1>
+          <h1 class="set-title">Cortex</h1>
           <p class="set-sub">A desktop study OS for serious students.</p>
         </header>
 

@@ -3,6 +3,7 @@
   import Sidebar from "./components/Sidebar.svelte";
   import StatusBar from "./components/StatusBar.svelte";
   import CommandPalette from "./components/CommandPalette.svelte";
+  import GlobalSearch from "./components/GlobalSearch.svelte";
   import ToastStack from "./components/ToastStack.svelte";
   import DiffModal from "./components/DiffModal.svelte";
   import MusicPanel from "./components/MusicPanel.svelte";
@@ -12,6 +13,7 @@
   import Icon from "./components/Icon.svelte";
   import FindBar from "./components/FindBar.svelte";
   import HelpOverlay from "./components/HelpOverlay.svelte";
+  import ContextMenu from "./components/ContextMenu.svelte";
   import Dialog from "./components/Dialog.svelte";
   import EditModal from "./components/EditModal.svelte";
   import PomodoroPanel from "./components/PomodoroPanel.svelte";
@@ -23,17 +25,48 @@
   import SourceViewer from "./views/SourceViewer.svelte";
   import AddSource from "./views/AddSource.svelte";
   import AddSubject from "./views/AddSubject.svelte";
-  import WebSearch from "./views/WebSearch.svelte";
-  import Recorder from "./views/Recorder.svelte";
   import GenerateMaterial from "./views/GenerateMaterial.svelte";
   import NotesView from "./views/NotesView.svelte";
-  import CalendarView from "./views/CalendarView.svelte";
-  import Settings from "./views/Settings.svelte";
   import Onboarding from "./views/Onboarding.svelte";
+
+  // The three heaviest views (Settings 70KB, Recorder 32KB, Calendar 31KB) are
+  // code-split out of the startup bundle and loaded on first visit. They're
+  // prefetched right after init settles, so by the time a human can navigate
+  // there the chunk is already resolved — no flash, just a faster cold start.
+  let SettingsView = $state<any>(null);
+  let RecorderView = $state<any>(null);
+  let CalendarViewC = $state<any>(null);
+  let AnalyticsViewC = $state<any>(null);
+  let ExamViewC = $state<any>(null);
+  const loadSettings = () =>
+    SettingsView ?? import("./views/Settings.svelte").then((m) => (SettingsView = m.default));
+  const loadRecorder = () =>
+    RecorderView ?? import("./views/Recorder.svelte").then((m) => (RecorderView = m.default));
+  const loadCalendar = () =>
+    CalendarViewC ?? import("./views/CalendarView.svelte").then((m) => (CalendarViewC = m.default));
+  const loadAnalytics = () =>
+    AnalyticsViewC ?? import("./views/AnalyticsView.svelte").then((m) => (AnalyticsViewC = m.default));
+  const loadExam = () =>
+    ExamViewC ?? import("./views/ExamView.svelte").then((m) => (ExamViewC = m.default));
+  $effect(() => {
+    if (app.view === "settings") void loadSettings();
+    else if (app.view === "recorder") void loadRecorder();
+    else if (app.view === "calendar") void loadCalendar();
+    else if (app.view === "analytics") void loadAnalytics();
+    else if (app.view === "exam") void loadExam();
+  });
 
   // Initialize app state on mount (loads subjects, seeds demo if empty, restores theme)
   $effect(() => {
     app.init();
+    const prefetch = setTimeout(() => {
+      void loadSettings();
+      void loadRecorder();
+      void loadCalendar();
+      void loadAnalytics();
+      void loadExam();
+    }, 1500);
+    return () => clearTimeout(prefetch);
   });
 
   // Chat dock / FAB visibility. Read EVERY signal into a local first so &&/||
@@ -65,11 +98,17 @@
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   });
+  // Below 1080 the sidebar becomes a slide-in drawer (overlay, never pushes the
+  // workspace) so the content always has the full width to itself — that kills
+  // the 760-1080 "squash" where a fixed 248px rail + workspace both fought for
+  // ~900px. `tight` (<760) keeps its phone tweaks; `drawer` is the shared
+  // hamburger+overlay sidebar mode for the whole sub-1080 band.
   const tight = $derived(vw < 760);
+  const drawer = $derived(vw < 1080);
   const compact = $derived(vw < 1080);
   let navOpen = $state(false);
-  // Close the drawer when leaving tight mode or when navigating anywhere.
-  $effect(() => { if (!tight) navOpen = false; });
+  // Close the drawer when leaving drawer mode or when navigating anywhere.
+  $effect(() => { if (!drawer) navOpen = false; });
   $effect(() => { void app.view; void app.activeSubjectId; void app.subjectTab; navOpen = false; });
 
   // ---- view back-stack: Esc goes back to the previous page ----
@@ -101,7 +140,13 @@
   // Ctrl chords (copy/paste/etc.) pass straight through.
   $effect(() => {
     function onFind(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+      // NB: keep the two halves as separate booleans. Writing this as one
+      // `(mod) && (key)` expression triggers a Svelte 5 compiler bug that strips
+      // the parentheses (→ `ctrl || meta && key... || key...`), which made bare
+      // Ctrl and Shift+F open find. Separate statements compile correctly.
+      const mod = e.ctrlKey || e.metaKey;
+      const isF = e.key === "f" || e.key === "F";
+      if (mod && isF) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation(); // also beat any native find-in-page handler
@@ -110,6 +155,30 @@
     }
     window.addEventListener("keydown", onFind, true);
     return () => window.removeEventListener("keydown", onFind, true);
+  });
+
+  // Kill webview zoom — Ctrl/Cmd+scroll and Ctrl/Cmd +/-/0 otherwise scale the
+  // whole UI, which makes Cortex feel like a zoomable web page / PWA instead of
+  // a native app. Captured early so WebKitGTK never gets to zoom. Ctrl+F / Ctrl+P
+  // (letters) are untouched — only the zoom combos are swallowed.
+  $effect(() => {
+    function onWheel(e: WheelEvent) {
+      if (e.ctrlKey || e.metaKey) e.preventDefault();
+    }
+    function onZoomKey(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (["=", "+", "-", "_", "0"].includes(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }
+    // passive:false is required for preventDefault on wheel.
+    window.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    window.addEventListener("keydown", onZoomKey, true);
+    return () => {
+      window.removeEventListener("wheel", onWheel, true);
+      window.removeEventListener("keydown", onZoomKey, true);
+    };
   });
 
   // Global keyboard engine (Helix-style). Modals/sessions set window.__cortexModalOpen
@@ -132,8 +201,8 @@
       if (e.key === "Escape") {
         // 1. Close any transient overlay first.
         if (app.findOpen) { app.findOpen = false; return; }
-        if (app.cmdkOpen || app.leaderOpen || app.musicOpen) {
-          app.cmdkOpen = false; app.leaderOpen = false; app.musicOpen = false; return;
+        if (app.cmdkOpen || app.leaderOpen || app.musicOpen || app.searchOpen) {
+          app.cmdkOpen = false; app.leaderOpen = false; app.musicOpen = false; app.searchOpen = false; return;
         }
         if ((window as any).__cortexModalOpen) return; // modals handle their own Esc
         // 2. In a text field (e.g. the chat compose box) Esc just leaves edit mode.
@@ -155,7 +224,13 @@
       if ((window as any).__cortexViewKeys) return;
       if (app.cmdkOpen) return;
 
-      if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) { e.preventDefault(); app.cmdkOpen = true; return; }
+      // Separate booleans on purpose — see the onFind note above (Svelte 5
+      // paren-stripping compiler bug would otherwise make any Ctrl chord open this).
+      const cmdMod = e.ctrlKey || e.metaKey;
+      const isP = e.key === "p" || e.key === "P";
+      if (cmdMod && isP) { e.preventDefault(); app.cmdkOpen = true; return; }
+      const isK = e.key === "k" || e.key === "K";
+      if (cmdMod && isK) { e.preventDefault(); app.searchOpen = true; return; }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       if (app.leaderOpen) return; // LeaderPane consumes its own keys
@@ -182,7 +257,6 @@
       if (e.key === k.toggleSidebar) { app.toggleSidebar(); return; }
       if (e.key === k.newSubject) { e.preventDefault(); app.setView("add-subject"); return; }
       if (e.key === k.recorder) { app.setView("recorder"); return; }
-      if (e.key === k.websearch) { app.setView("websearch"); return; }
       if (e.key === k.cycleTheme) { app.cycleTheme(); return; }
       if (e.key === k.music) { app.musicOpen = true; return; }
       if (e.key === k.insert) {
@@ -215,12 +289,13 @@
   <div
     class="app-shell"
     class:tight
+    class:drawer
     class:compact
     class:nav-open={navOpen}
     style:--sb-w={app.sidebarCollapsed ? "0px" : "248px"}
   >
-    {#if tight}
-      <!-- Mobile: hamburger toggles the slide-in sidebar drawer. -->
+    {#if drawer}
+      <!-- Sub-1080: hamburger toggles the slide-in sidebar drawer (overlay). -->
       <button class="nav-toggle" onclick={() => (navOpen = !navOpen)} aria-label="Toggle menu">
         <Icon name="grid" size={16} />
       </button>
@@ -246,18 +321,20 @@
           <AddSource />
         {:else if app.view === "add-subject"}
           <AddSubject />
-        {:else if app.view === "websearch"}
-          <WebSearch />
         {:else if app.view === "recorder"}
-          <Recorder />
+          {#if RecorderView}{@const Recorder = RecorderView}<Recorder />{/if}
         {:else if app.view === "gen-material"}
           <GenerateMaterial />
         {:else if app.view === "notes"}
           <NotesView />
         {:else if app.view === "calendar"}
-          <CalendarView />
+          {#if CalendarViewC}{@const CalendarView = CalendarViewC}<CalendarView />{/if}
+        {:else if app.view === "analytics"}
+          {#if AnalyticsViewC}{@const AnalyticsView = AnalyticsViewC}<AnalyticsView />{/if}
+        {:else if app.view === "exam"}
+          {#if ExamViewC}{@const ExamView = ExamViewC}<ExamView />{/if}
         {:else if app.view === "settings"}
-          <Settings />
+          {#if SettingsView}{@const Settings = SettingsView}<Settings />{/if}
         {/if}
       </div>
 
@@ -282,6 +359,7 @@
     <!-- overlays -->
     <FindBar />
     <CommandPalette />
+    <GlobalSearch />
     <LeaderPane />
     <HelpOverlay />
     <DiffModal />
@@ -291,6 +369,7 @@
     <EditModal />
     <PomodoroPanel />
     <LiveActivity />
+    <ContextMenu />
     <ToastStack />
   </div>
 {/if}

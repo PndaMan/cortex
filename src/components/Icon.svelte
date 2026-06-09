@@ -121,6 +121,11 @@
       <path d="M3 4h10v9H3z M3 6.5h10" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
       <path d="M5.5 2.5v2 M10.5 2.5v2" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
     </g>
+  {:else if name === "chart"}
+    <g>
+      <path d="M2.5 13.5h11" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M4.5 13.5V9 M8 13.5V5.5 M11.5 13.5V7.5" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
+    </g>
   {:else}
     <!-- fallback: small square -->
     <rect x="5" y="5" width="6" height="6" fill="none" stroke="currentColor" stroke-width={sw} />

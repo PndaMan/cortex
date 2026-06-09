@@ -41,7 +41,7 @@ const OFFLINE_MSG: &str =
 
 /// Reject a cloud LLM call when offline mode is on. `spec` is "provider:model";
 /// only `ollama:` (local) is permitted offline.
-fn guard_offline_llm(c: &Connection, spec: &str) -> Result<()> {
+pub(crate) fn guard_offline_llm(c: &Connection, spec: &str) -> Result<()> {
     if offline_mode(c) && !spec.trim().starts_with("ollama:") {
         return Err(Error::Other(OFFLINE_MSG.into()));
     }
@@ -63,8 +63,21 @@ fn effective_embed_provider(c: &Connection) -> String {
     }
 }
 
+/// Apply the user's per-task output-token budget (settings key `budget_<task>`,
+/// e.g. budget_cheatsheet) to a freshly built model. This is what makes the
+/// Settings → Models token-budget sliders actually do something — without it,
+/// OpenRouter sends no max_tokens and defaults to a huge cap, 402-ing when the
+/// key's credit limit can't cover it.
+pub(crate) fn apply_budget(model: &mut Box<dyn llm::Llm>, c: &Connection, task: &str) {
+    if let Ok(Some(b)) = repo::get_setting(c, &format!("budget_{task}")) {
+        if let Some(n) = b.trim().parse::<u32>().ok().filter(|n| *n > 0) {
+            model.set_max_tokens(n);
+        }
+    }
+}
+
 /// Read all configured provider keys from settings.
-fn read_keys(c: &Connection) -> Result<llm::Keys> {
+pub(crate) fn read_keys(c: &Connection) -> Result<llm::Keys> {
     // Trim keys — a pasted key with a trailing newline/space produces an invalid
     // HTTP header value (reqwest drops it → "Missing Authentication header" 401).
     let key = |k: &str| -> Result<Option<String>> {
@@ -283,6 +296,14 @@ pub fn list_sources(state: State<AppState>, subject_id: String) -> Result<Vec<So
     repo::list_sources(&c, &subject_id)
 }
 
+/// All sources that failed to ingest (across every subject/topic). The frontend
+/// auto-retries these on launch so transient failures heal themselves.
+#[tauri::command]
+pub fn list_failed_sources(state: State<AppState>) -> Result<Vec<Source>> {
+    let c = state.db.lock().unwrap();
+    repo::list_failed_sources(&c)
+}
+
 #[tauri::command]
 pub fn get_source(state: State<AppState>, id: String) -> Result<Source> {
     let c = state.db.lock().unwrap();
@@ -382,9 +403,10 @@ fn auto_rename_source(state: &State<AppState>, source_id: &str, original_name: &
             Err(_) => return,
         }
     };
-    let Some(model) = llm::from_spec_or_any(&spec, &keys) else {
+    let Some(mut model) = llm::from_spec_or_any(&spec, &keys) else {
         return;
     };
+    { let c = state.db.lock().unwrap(); apply_budget(&mut model, &c, "chat"); }
     let excerpt: String = text.chars().take(2500).collect();
     let sys = "You name a study source. Reply with ONLY a concise, specific title (Title Case, \
         max 8 words, no quotes, no file extension, no trailing punctuation). If the original \
@@ -510,9 +532,12 @@ pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult>
         } else if src.kind == "audio" {
             if let Some(p) = input.path.as_deref() {
                 emit_progress(&app, &id, "parsing", "transcribing audio (Whisper)", 35);
-                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true);
+                let remote = whisper_remote_url(&state);
+                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref());
                 if !t.trim().is_empty() {
                     text = t;
+                    warning = w;
+                } else if w.is_some() {
                     warning = w;
                 }
             }
@@ -671,7 +696,8 @@ pub async fn add_source(
         } else if kind == "audio" {
             if let Some(p) = input.path.as_deref() {
                 emit_progress(&app, &source_id, "parsing", "transcribing audio (Whisper)", 35);
-                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true);
+                let remote = whisper_remote_url(&state);
+                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref());
                 if t.trim().is_empty() { (text, w.or(warning)) } else { (t, w) }
             } else {
                 (text, warning)
@@ -826,6 +852,67 @@ pub fn search_chunks(
     repo::search_chunks(&c, subject_id.as_deref(), &qvec, k.unwrap_or(8))
 }
 
+/// Global Ctrl+K search: semantic over every subject's chunks (the existing
+/// vector index) + plain-text matches over sources, notes, events and
+/// materials. Returns a flat, deduplicated hit list the overlay groups by kind.
+#[tauri::command]
+pub fn global_search(state: State<AppState>, query: String) -> Result<Vec<SearchHit>> {
+    let query = query.trim().to_string();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (provider, gemini_key, ollama_url) = {
+        let c = state.db.lock().unwrap();
+        (
+            effective_embed_provider(&c),
+            repo::get_setting(&c, "gemini_api_key")?,
+            repo::get_setting(&c, "ollama_url")?,
+        )
+    };
+    let mut hits: Vec<SearchHit> = Vec::new();
+
+    // Text matches first — instant, no network.
+    {
+        let c = state.db.lock().unwrap();
+        hits.extend(repo::text_search(&c, &query, 5)?);
+    }
+
+    // Semantic over the vector index, appended AFTER the exact matches so the
+    // default Enter target is always a predictable name hit. Skipped entirely
+    // on the stub embedder — its hash vectors rank essentially at random, which
+    // made every search "navigate" to whichever subject was ingested first.
+    let embedder = embed::from_settings(&provider, gemini_key.as_deref(), ollama_url.as_deref());
+    if embedder.name() != "stub" {
+        if let Ok(mut v) = embedder.embed(&[query.clone()]) {
+            let qvec = v.pop().unwrap_or_default();
+            let c = state.db.lock().unwrap();
+            if let Ok(mut chunks) = repo::search_chunks(&c, None, &qvec, 8) {
+                chunks.sort_by(|a, b| b.score.total_cmp(&a.score));
+                for h in chunks {
+                    // Junk floor: weakly-related chunks aren't navigation targets.
+                    if h.score < 0.3 {
+                        continue;
+                    }
+                    // A name match for the same source may already be present.
+                    if hits.iter().any(|x| x.kind == "source" && x.id == h.source_id) {
+                        continue;
+                    }
+                    let subject = repo::get_source(&c, &h.source_id).ok().map(|s| s.subject_id);
+                    hits.push(SearchHit {
+                        kind: "chunk".into(),
+                        id: h.source_id.clone(),
+                        subject_id: subject,
+                        title: h.source_name,
+                        snippet: h.text.chars().take(160).collect(),
+                        score: h.score,
+                    });
+                }
+            }
+        }
+    }
+    Ok(hits)
+}
+
 /// Seed a few demo subjects/topics/sources so the UI has content on first run.
 #[tauri::command]
 pub fn seed_demo(state: State<AppState>) -> Result<Vec<Subject>> {
@@ -907,7 +994,8 @@ pub async fn chat_answer(
         )
     };
     // Require a real model before doing any work.
-    let model = llm::from_spec_or_any(&chat_spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    let mut model = llm::from_spec_or_any(&chat_spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    { let c = state.db.lock().unwrap(); apply_budget(&mut model, &c, "chat"); }
 
     // Scope: source-level chats are restricted to a single source's chunks; the
     // keyword path applies this in SQL, the vector path filters its results.
@@ -1136,12 +1224,18 @@ fn parse_cheatsheet(raw: &str) -> Vec<CsSection> {
                                     .collect()
                             })
                             .unwrap_or_default();
+                        let image_query = s
+                            .get("image_query")
+                            .and_then(|q| q.as_str())
+                            .map(|q| q.trim().to_string())
+                            .filter(|q| !q.is_empty());
                         Some(CsSection {
                             id: slug(&title),
                             title,
                             state: "approved".into(),
                             items,
                             image: None,
+                            image_query,
                         })
                     })
                     .collect();
@@ -1289,6 +1383,118 @@ pub async fn export_anki(app: AppHandle, material_id: String, dest: String) -> R
     .map_err(|e| Error::Other(format!("anki export task failed: {e}")))?
 }
 
+/// Import an Anki `.apkg` deck file into this subject as flashcard materials —
+/// one material per Anki deck. Cards are HTML-stripped to plain text, deduped
+/// within the import AND against existing flashcard decks in this subject (by
+/// normalized front), then stored in the exact `[{ "q": front, "a": back }]`
+/// payload shape the Flashcards view renders. Returns a small summary.
+#[tauri::command]
+pub async fn import_anki(
+    app: AppHandle,
+    subject_id: String,
+    topic_id: Option<String>,
+    path: String,
+) -> Result<AnkiImportResult> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<AnkiImportResult> {
+        let state = app.state::<AppState>();
+
+        // Parse the archive off the DB lock (zip + sqlite read can be slow).
+        let decks = crate::anki::import_apkg(std::path::Path::new(&path))?;
+        if decks.is_empty() {
+            return Err(Error::Other(
+                "no flashcards found in this .apkg (no decks with usable cards)".into(),
+            ));
+        }
+
+        // Gather every existing flashcard front already in this subject so we don't
+        // re-import duplicates the user already has. Built once, under one lock.
+        let mut existing_fronts: std::collections::HashSet<String> = std::collections::HashSet::new();
+        {
+            let c = state.db.lock().unwrap();
+            for m in repo::list_materials(&c, &subject_id)? {
+                if m.kind != "flashcards" {
+                    continue;
+                }
+                for card in m.payload.as_array().into_iter().flatten() {
+                    if let Some(q) = card["q"].as_str() {
+                        let q = q.trim();
+                        if !q.is_empty() {
+                            existing_fronts.insert(crate::anki::dedupe_key(q));
+                        }
+                    }
+                }
+            }
+        }
+
+        // The stem of the imported file — a fallback deck title when Anki's deck
+        // name is the generic "Default" or empty.
+        let stem = std::path::Path::new(&path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Imported deck")
+            .to_string();
+
+        let mut deck_count = 0usize;
+        let mut card_count = 0usize;
+        let mut skipped = 0usize;
+
+        for deck in decks {
+            // Drop cards whose front already exists in this subject (cross-deck
+            // dedupe). Within-deck dedupe already happened in import_apkg.
+            let mut cards: Vec<serde_json::Value> = Vec::new();
+            for card in &deck.cards {
+                if !existing_fronts.insert(crate::anki::dedupe_key(&card.front)) {
+                    skipped += 1;
+                    continue;
+                }
+                cards.push(serde_json::json!({ "q": card.front, "a": card.back }));
+            }
+            if cards.is_empty() {
+                continue; // every card was a duplicate — no material to create
+            }
+
+            // A "Default"/blank Anki deck name carries no meaning; use the filename.
+            let title = if deck.name.trim().is_empty() || deck.name.trim() == "Default" {
+                stem.clone()
+            } else {
+                deck.name.trim().to_string()
+            };
+            let n = cards.len();
+            let meta = format!("{n} cards · imported from Anki");
+            let payload = serde_json::Value::Array(cards);
+
+            {
+                let c = state.db.lock().unwrap();
+                repo::save_material(
+                    &c,
+                    &subject_id,
+                    topic_id.as_deref(),
+                    "flashcards",
+                    &title,
+                    &meta,
+                    &payload,
+                )?;
+            }
+            deck_count += 1;
+            card_count += n;
+        }
+
+        if card_count == 0 {
+            return Err(Error::Other(
+                "every card in this .apkg already exists in this subject".into(),
+            ));
+        }
+
+        Ok(AnkiImportResult {
+            deck_count,
+            card_count,
+            skipped,
+        })
+    })
+    .await
+    .map_err(|e| Error::Other(format!("anki import task failed: {e}")))?
+}
+
 /// MAP step: turn ONE source into an exhaustive, compact study digest so a bucket
 /// with many sources can be reduced into a single cheatsheet without overflowing
 /// the model window — and so every source is guaranteed to be represented.
@@ -1355,6 +1561,7 @@ fn synthesize_bucket(
                 d: truncate(&raw, 600),
             }],
             image: None,
+            image_query: None,
         }];
     }
     Ok((sections, used))
@@ -1408,7 +1615,8 @@ pub async fn generate_cheatsheet(
         guard_offline_llm(&c, &spec)?;
         (bucket, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c), searxng_base(&c)?)
     };
-    let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    let mut model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    { let c = state.db.lock().unwrap(); apply_budget(&mut model, &c, "cheatsheet"); }
     if bucket.is_empty() {
         return Err(Error::Other(
             "No source text to synthesize from — add and ingest a source first.".into(),
@@ -1435,7 +1643,13 @@ pub async fn generate_cheatsheet(
         \n\
         OUTPUT CONTRACT: Respond with ONLY raw JSON — no markdown code fences, no prose before or \
         after. Use this EXACT shape (do not add or rename keys):\n\
-        {{\"sections\":[{{\"title\":string,\"items\":[{{\"t\":\"term\",\"d\":\"explanation\"}}]}}]}}\n\
+        {{\"sections\":[{{\"title\":string,\"image_query\":string|null,\"items\":[{{\"t\":\"term\",\"d\":\"explanation\"}}]}}]}}\n\
+        \"image_query\" is OPTIONAL and almost always null. Set it to a 3-6 word web image-search \
+        query ONLY when understanding the section genuinely depends on seeing a specific diagram, \
+        labelled model, structure, cycle, map, or chart that words alone can't convey (e.g. \
+        \"Burgess concentric zone model\", \"animal cell organelles diagram\", \"nitrogen cycle \
+        diagram\"). Leave it null for definitions, lists, prose, formulas, mnemonics, and anything \
+        a reader doesn't need a picture to grasp — do NOT request decorative images.\n\
         Every item has a short heading \"t\" (the term/concept/rule name) and a RICH MARKDOWN body \
         \"d\". JSON string escaping must stay valid: write newlines inside \"d\" as the two \
         characters backslash-n, escape any double quotes, and never emit a literal control \
@@ -1490,21 +1704,20 @@ pub async fn generate_cheatsheet(
     };
     let (mut sections, sources_used) = synthesize_bucket(model.as_ref(), system, &scope, &bucket)?;
 
-    // Optionally illustrate sections with a web image (diagrams/figures). Skipped
-    // for the generic framing sections; capped so generation stays quick.
+    // Illustrate only the sections the synthesis model flagged as genuinely
+    // needing a diagram (image_query set) — so we don't burn a web search on
+    // every section. Capped so generation stays quick.
     if with_images.unwrap_or(false) {
         if let Some(base) = &searxng {
-            const SKIP: &[&str] = &["overview", "mnemonics & quick recall", "common pitfalls"];
             let mut used = 0;
             for sec in sections.iter_mut() {
                 if used >= 6 {
                     break;
                 }
-                if SKIP.contains(&sec.title.to_lowercase().as_str()) {
-                    continue;
-                }
-                let q = format!("{subject_name} {} diagram", sec.title);
-                if let Some(first) = searxng_images(base, &q, 1).into_iter().next() {
+                let Some(q) = sec.image_query.as_deref().filter(|q| !q.is_empty()) else {
+                    continue; // model didn't ask for an image here
+                };
+                if let Some(first) = searxng_images(base, q, 1).into_iter().next() {
                     sec.image = Some(first.img);
                     used += 1;
                 }
@@ -1628,6 +1841,7 @@ fn compose_subject_cheatsheet(c: &Connection, subject_id: &str) -> Result<Option
                 state: "approved".into(),
                 items,
                 image: None,
+                image_query: None,
             }
         })
         .collect();
@@ -1766,6 +1980,7 @@ pub async fn generate_material(
     title: Option<String>,
     custom_prompt: Option<String>,
     source_ids: Option<Vec<String>>,
+    count: Option<u32>,
 ) -> Result<MaterialRec> {
     tauri::async_runtime::spawn_blocking(move || -> Result<MaterialRec> {
     let state = app.state::<AppState>();
@@ -1808,18 +2023,32 @@ pub async fn generate_material(
         let host_b = cap(repo::get_setting(&c, "voice_b")?.unwrap_or_else(|| "theo".into()));
         (ctx, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c), host_a, host_b)
     };
-    let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    let mut model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
+    {
+        let task = setting_key.strip_prefix("model_").unwrap_or("cheatsheet");
+        let c = state.db.lock().unwrap();
+        apply_budget(&mut model, &c, task);
+    }
     if context.trim().is_empty() {
         return Err(Error::Other(
             "No source text to generate from — add and ingest a source first.".into(),
         ));
     }
 
+    // How many items to generate, when the kind is count-based. The user can set
+    // this in GenerateMaterial; clamp to a sane range so a bad value can't ask the
+    // model for 0 or 500 cards.
+    let quiz_n = count.unwrap_or(9).clamp(3, 30);
+    let card_n = count.unwrap_or(14).clamp(4, 40);
+
     // Per-kind prompt + payload shape.
     let (system, default_title) = match kind.as_str() {
         "quiz" => (
-            "You generate quiz questions from study material. Output ONLY a JSON array of 8-10 \
-             items, each: {\"q\":\"question\",\"options\":[\"a\",\"b\",\"c\",\"d\"],\"answer\":<index 0-3>,\"explain\":\"why\"}. No prose.".to_string(),
+            format!(
+                "You generate quiz questions from study material. Output ONLY a JSON array of \
+                 EXACTLY {quiz_n} items, each: {{\"q\":\"question\",\"options\":[\"a\",\"b\",\"c\",\"d\"],\
+                 \"answer\":<index 0-3>,\"explain\":\"why\"}}. No prose."
+            ),
             format!("{topic_name} quiz"),
         ),
         "audio" => (
@@ -1876,10 +2105,13 @@ pub async fn generate_material(
             format!("{topic_name} — mind map"),
         ),
         _ => (
-            "You generate study flashcards from material. Output ONLY a JSON array of 12-18 items, \
-             each {\"q\":\"front\",\"a\":\"back\"}. Keep the \"a\" CONCISE (about 15-45 words) and \
-             use light Markdown where it aids recall: **bold** the key term(s), and short `- ` \
-             bullet lists for multi-part answers. No headings, no prose outside the JSON.".to_string(),
+            format!(
+                "You generate study flashcards from material. Output ONLY a JSON array of EXACTLY \
+                 {card_n} items, each {{\"q\":\"front\",\"a\":\"back\"}}. Keep the \"a\" SHORT and \
+                 punchy — ideally one tight sentence or a few words (8-25 words max); never a \
+                 paragraph. **bold** the single key term; use a short `- ` bullet list ONLY when \
+                 the answer is genuinely multi-part. No headings, no preamble, no prose outside the JSON."
+            ),
             format!("{topic_name} flashcards"),
         ),
     };
@@ -1938,6 +2170,110 @@ pub async fn generate_material(
         status: "ready".into(),
         payload,
     })
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+}
+
+#[derive(serde::Deserialize)]
+pub struct TtsSegment {
+    #[serde(default)]
+    pub speaker: String,
+    #[serde(default)]
+    pub text: String,
+}
+
+/// Turn a generated two-host podcast script into a REAL audio file (NotebookLM
+/// style) using a cloud TTS — OpenAI's `/audio/speech` with the user's two
+/// configured voices. Returns the path to the cached mp3 under `$APPDATA/
+/// audio_overviews/` (served to the webview via the asset protocol). The result
+/// is cached by material id, so re-calling is instant unless `force` is set. When
+/// there's no OpenAI key (offline), this errors and the frontend falls back to
+/// on-device speech synthesis.
+#[tauri::command]
+pub async fn synthesize_overview(
+    app: AppHandle,
+    material_id: String,
+    segments: Vec<TtsSegment>,
+    force: Option<bool>,
+) -> Result<String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String> {
+        let state = app.state::<AppState>();
+        let dir = app
+            .path()
+            .app_data_dir()
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join("audio_overviews");
+        std::fs::create_dir_all(&dir).ok();
+        let out = dir.join(format!("{material_id}.mp3"));
+        if !force.unwrap_or(false) && out.exists() {
+            return Ok(out.to_string_lossy().to_string());
+        }
+        if segments.is_empty() {
+            return Err(Error::Other("No script segments to synthesize.".into()));
+        }
+        // OpenAI key + the two voices (sensible OpenAI-voice defaults).
+        let (key, voice_a, voice_b) = {
+            let c = state.db.lock().unwrap();
+            let key = read_keys(&c)?
+                .openai
+                .filter(|k| !k.trim().is_empty())
+                .ok_or_else(|| {
+                    Error::Other(
+                        "Add an OpenAI API key in Settings to generate real audio (offline mode uses on-device voices)."
+                            .into(),
+                    )
+                })?;
+            let va = repo::get_setting(&c, "tts_voice_a")?.unwrap_or_else(|| "alloy".into());
+            let vb = repo::get_setting(&c, "tts_voice_b")?.unwrap_or_else(|| "onyx".into());
+            (key, va, vb)
+        };
+        let client = http_client(180);
+        // First distinct speaker → voice_a, the other → voice_b. mp3 frames
+        // concatenate cleanly enough for sequential playback in the webview.
+        let mut audio: Vec<u8> = Vec::new();
+        let mut first: Option<String> = None;
+        for seg in &segments {
+            let text = seg.text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            let spk = seg.speaker.trim().to_lowercase();
+            let voice = match &first {
+                None => {
+                    first = Some(spk.clone());
+                    voice_a.clone()
+                }
+                Some(f) if *f == spk => voice_a.clone(),
+                _ => voice_b.clone(),
+            };
+            let body = serde_json::json!({
+                "model": "tts-1",
+                "voice": voice,
+                "input": text,
+                "response_format": "mp3",
+            });
+            let resp = client
+                .post("https://api.openai.com/v1/audio/speech")
+                .header("Authorization", format!("Bearer {}", key.trim()))
+                .json(&body)
+                .send()?;
+            if !resp.status().is_success() {
+                let code = resp.status();
+                let detail = resp.text().unwrap_or_default();
+                return Err(Error::Other(format!(
+                    "TTS request failed ({code}): {}",
+                    truncate(&detail, 200)
+                )));
+            }
+            audio.extend_from_slice(&resp.bytes()?);
+        }
+        if audio.is_empty() {
+            return Err(Error::Other("TTS produced no audio.".into()));
+        }
+        std::fs::write(&out, &audio)
+            .map_err(|e| Error::Other(format!("Could not save audio file: {e}")))?;
+        Ok(out.to_string_lossy().to_string())
     })
     .await
     .map_err(|e| Error::Other(format!("background task failed: {e}")))?
@@ -2041,10 +2377,64 @@ pub fn set_settings(state: State<AppState>, values: std::collections::HashMap<St
 /// Transcribe an audio file with a local Whisper CLI if one is installed
 /// (openai-whisper `whisper`, or whisper.cpp `whisper-cli`/`main`). Returns
 /// `(transcript, warning)`. A missing binary is a graceful warning, not an error.
-fn transcribe(file: &Path, data_dir: &Path, allow_install: bool) -> (String, Option<String>) {
+/// The configured homelab Whisper base URL, if any (empty → None).
+fn whisper_remote_url(state: &AppState) -> Option<String> {
+    let c = state.db.lock().ok()?;
+    repo::get_setting(&c, "whisper_url")
+        .ok()
+        .flatten()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Restrict a client-supplied audio extension to known containers so it can't
+/// smuggle path separators or oddities into the recordings filename.
+fn sanitize_ext(ext: Option<&str>) -> &'static str {
+    match ext.map(|e| e.trim().to_ascii_lowercase()).as_deref() {
+        Some("wav") => "wav",
+        Some("ogg") => "ogg",
+        Some("mp3") => "mp3",
+        Some("m4a") => "m4a",
+        Some("mp4") => "mp4",
+        Some("flac") => "flac",
+        Some("opus") => "opus",
+        _ => "webm",
+    }
+}
+
+fn transcribe(
+    file: &Path,
+    data_dir: &Path,
+    allow_install: bool,
+    remote_url: Option<&str>,
+) -> (String, Option<String>) {
     use std::process::Command;
     let outdir = std::env::temp_dir().join(format!("cortex-asr-{}", crate::db::new_id()));
     let _ = std::fs::create_dir_all(&outdir);
+
+    // 0. Remote homelab Whisper (OpenAI-compatible /v1/audio/transcriptions).
+    //    Tried first when configured so users never need a local Python toolchain.
+    if let Some(base) = remote_url.map(str::trim).filter(|s| !s.is_empty()) {
+        match transcribe_remote(base, file) {
+            Ok(t) => {
+                let _ = std::fs::remove_dir_all(&outdir);
+                return (t, None); // empty = ran but recognised nothing
+            }
+            // Remote configured but unreachable/erroring: surface it rather than
+            // silently falling back to a (likely absent) local toolchain.
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&outdir);
+                return (
+                    String::new(),
+                    Some(format!(
+                        "Couldn't reach your homelab Whisper server at {base} — {e}. \
+                         Check Settings → Integrations → Remote transcription, or clear it to \
+                         transcribe on this machine."
+                    )),
+                );
+            }
+        }
+    }
 
     // openai-whisper. Fall back to ~/.local/bin/whisper (pip --user install dir)
     // in case the app was launched without it on PATH (desktop launchers often
@@ -2106,35 +2496,156 @@ fn transcribe(file: &Path, data_dir: &Path, allow_install: bool) -> (String, Opt
     // app sets up automatically (CTranslate2, no PyTorch). The first call on a
     // fresh machine creates the venv + pip-installs it (slow, one-off); afterwards
     // it's quick. PyAV decodes the audio, so no system ffmpeg is needed.
-    if let Some(py) = faster_whisper_python(data_dir, allow_install) {
-        let models_dir = data_dir.join("whisper-models");
-        let _ = std::fs::create_dir_all(&models_dir);
-        // argv[1] = audio file, argv[2] = model cache dir (model auto-downloads here)
-        const RUNNER: &str = "import sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('base.en',device='cpu',compute_type='int8',download_root=sys.argv[2])\nsegs,_=m.transcribe(sys.argv[1],language='en')\nprint(' '.join(s.text.strip() for s in segs))";
-        let out = Command::new(&py).arg("-c").arg(RUNNER).arg(file).arg(&models_dir).output();
-        if let Ok(o) = out {
-            if o.status.success() {
-                let t = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                let _ = std::fs::remove_dir_all(&outdir);
-                return (t, None); // empty string = ran but recognised nothing
+    // Diagnostic detail collected from the faster-whisper bootstrap so the user
+    // gets a real reason instead of a generic "setup failed".
+    let setup_detail;
+    match faster_whisper_python(data_dir, allow_install) {
+        Ok(py) => {
+            let models_dir = data_dir.join("whisper-models");
+            let _ = std::fs::create_dir_all(&models_dir);
+            // faster-whisper decodes via PyAV, whose bundled ffmpeg often can't
+            // read the browser's MediaRecorder .webm (Opus) — it throws
+            // "Invalid data found when processing input". Pre-convert to 16 kHz
+            // mono WAV with system ffmpeg when available; PyAV decodes WAV cleanly.
+            // Track WHY conversion didn't happen so a decode failure later can
+            // report the real cause instead of always blaming a missing ffmpeg.
+            let wav = outdir.join("fw.wav");
+            let mut ffmpeg_problem: Option<String> = None;
+            let decodable = match ingest::which("ffmpeg") {
+                None => {
+                    ffmpeg_problem = Some(
+                        "ffmpeg isn't installed — install it (e.g. `sudo pacman -S ffmpeg`) \
+                         so Cortex can transcode recordings"
+                            .into(),
+                    );
+                    file.to_path_buf()
+                }
+                Some(ff) => match Command::new(&ff)
+                    .args(["-y", "-i"])
+                    .arg(file)
+                    .args(["-ar", "16000", "-ac", "1"])
+                    .arg(&wav)
+                    .output()
+                {
+                    Ok(o) if o.status.success() && wav.is_file() => wav.clone(),
+                    Ok(o) => {
+                        ffmpeg_problem = Some(format!(
+                            "ffmpeg couldn't read the recording ({}) — the file may be \
+                             corrupt or empty; try re-recording",
+                            last_line(&String::from_utf8_lossy(&o.stderr))
+                        ));
+                        file.to_path_buf()
+                    }
+                    Err(e) => {
+                        ffmpeg_problem = Some(format!("ffmpeg failed to run: {e}"));
+                        file.to_path_buf()
+                    }
+                },
+            };
+            // argv[1] = audio file, argv[2] = model cache dir (model auto-downloads here)
+            const RUNNER: &str = "import sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('base.en',device='cpu',compute_type='int8',download_root=sys.argv[2])\nsegs,_=m.transcribe(sys.argv[1],language='en')\nprint(' '.join(s.text.strip() for s in segs))";
+            let out = Command::new(&py).arg("-c").arg(RUNNER).arg(&decodable).arg(&models_dir).output();
+            match out {
+                Ok(o) if o.status.success() => {
+                    let t = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    let _ = std::fs::remove_dir_all(&outdir);
+                    return (t, None); // empty string = ran but recognised nothing
+                }
+                Ok(o) => {
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    eprintln!("[whisper] faster-whisper run failed: {err}");
+                    // Distinguish the two common runtime failures: an audio-decode
+                    // error (needs system ffmpeg to transcode the recording) vs the
+                    // one-off model download.
+                    setup_detail = if err.contains("Invalid data") || err.contains("decode_audio") {
+                        format!(
+                            "couldn't decode the recording — {}",
+                            ffmpeg_problem.unwrap_or_else(|| {
+                                "the transcoded audio was still unreadable; try re-recording"
+                                    .to_string()
+                            })
+                        )
+                    } else {
+                        format!(
+                            "transcription failed — likely the model download (needs internet on \
+                             first use) or low disk. Details: {}",
+                            last_line(&err)
+                        )
+                    };
+                }
+                Err(e) => setup_detail = format!("couldn't run the Whisper venv: {e}"),
             }
-            eprintln!(
-                "[whisper] faster-whisper failed: {}",
-                String::from_utf8_lossy(&o.stderr)
-            );
         }
+        Err(e) => setup_detail = e,
     }
 
     let _ = std::fs::remove_dir_all(&outdir);
     (
         String::new(),
-        Some(
-            "Couldn't transcribe — automatic Whisper setup failed. Make sure Python 3 and pip are \
-             installed (the app installs faster-whisper into its own venv on first use), or install \
-             `openai-whisper` / whisper.cpp manually, then re-record."
-                .into(),
-        ),
+        Some(format!(
+            "Couldn't transcribe — {setup_detail}. You can instead point Cortex at a homelab \
+             Whisper server in Settings → Integrations, or install `openai-whisper` / whisper.cpp \
+             manually, then re-record."
+        )),
     )
+}
+
+/// Last non-empty line of a (possibly multi-line) stderr blob, trimmed to a sane
+/// length for a toast/message. Keeps the actionable bit (the real exception).
+fn last_line(s: &str) -> String {
+    let line = s.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    if line.len() > 240 { format!("{}…", &line[..240]) } else { line.to_string() }
+}
+
+/// Send an audio file to an OpenAI-compatible transcription endpoint
+/// (`{base}/v1/audio/transcriptions`, model `whisper-1`). Returns the text or a
+/// short error. This is how the homelab Whisper service is consumed.
+fn transcribe_remote(base: &str, file: &Path) -> std::result::Result<String, String> {
+    let base = base.trim_end_matches('/');
+    // Accept either a bare base ("http://host:9009") or a full endpoint.
+    let url = if base.ends_with("/audio/transcriptions") {
+        base.to_string()
+    } else if base.ends_with("/v1") {
+        format!("{base}/audio/transcriptions")
+    } else {
+        format!("{base}/v1/audio/transcriptions")
+    };
+    let bytes = std::fs::read(file).map_err(|e| format!("read audio: {e}"))?;
+    let fname = file
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("audio.webm")
+        .to_string();
+    let part = reqwest::blocking::multipart::Part::bytes(bytes)
+        .file_name(fname)
+        .mime_str("application/octet-stream")
+        .map_err(|e| e.to_string())?;
+    let form = reqwest::blocking::multipart::Form::new()
+        .text("model", "whisper-1")
+        .text("response_format", "text")
+        .part("file", part);
+    // Transcription is slow; allow a generous timeout.
+    let resp = http_client(600)
+        .post(&url)
+        .multipart(form)
+        .send()
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let code = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("HTTP {code}: {}", last_line(&body)));
+    }
+    let body = resp.text().map_err(|e| e.to_string())?;
+    // OpenAI returns plain text for response_format=text; some servers wrap JSON.
+    let text = if body.trim_start().starts_with('{') {
+        serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v["text"].as_str().map(|s| s.to_string()))
+            .unwrap_or(body)
+    } else {
+        body
+    };
+    Ok(text.trim().to_string())
 }
 
 /// A self-managed Python venv under the app data dir with `faster-whisper`
@@ -2142,38 +2653,79 @@ fn transcribe(file: &Path, data_dir: &Path, allow_install: bool) -> (String, Opt
 /// returns an already-prepared venv (never triggers the slow first-run install) —
 /// so the live partial transcriber stays snappy and only the full ingest path
 /// bootstraps it.
-fn faster_whisper_python(data_dir: &Path, allow_install: bool) -> Option<std::path::PathBuf> {
+fn faster_whisper_python(
+    data_dir: &Path,
+    allow_install: bool,
+) -> std::result::Result<std::path::PathBuf, String> {
     use std::process::Command;
     let venv = data_dir.join("whisper-venv");
     let py = venv.join("bin").join("python");
     let ready = venv.join(".ready");
     if py.is_file() && ready.is_file() {
-        return Some(py);
+        return Ok(py);
     }
     if !allow_install {
-        return None;
+        // The live partial transcriber never bootstraps; just report not-ready.
+        return Err("Whisper isn't set up yet".into());
     }
-    let py3 = ingest::which("python3").or_else(|| ingest::which("python"))?;
-    let made = Command::new(&py3)
-        .arg("-m")
-        .arg("venv")
-        .arg(&venv)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if !made || !py.is_file() {
-        return None;
+    let py3 = ingest::which("python3")
+        .or_else(|| ingest::which("python"))
+        .ok_or_else(|| "Python 3 isn't installed or isn't on PATH".to_string())?;
+
+    // A half-built venv from a previous failed attempt would otherwise wedge us;
+    // start clean so the bootstrap is deterministic.
+    if venv.exists() && !ready.is_file() {
+        let _ = std::fs::remove_dir_all(&venv);
     }
+
+    // 1. Create the venv. The classic Debian/Ubuntu failure is a missing
+    //    python3-venv package (ensurepip) — detect it from stderr and say so.
+    let made = Command::new(&py3).arg("-m").arg("venv").arg(&venv).output();
+    match made {
+        Ok(o) if o.status.success() && py.is_file() => {}
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            let hint = if err.contains("ensurepip") || err.contains("python3-venv") {
+                " — install the venv module (e.g. `sudo apt install python3-venv`)"
+            } else {
+                ""
+            };
+            return Err(format!("couldn't create the Python venv{hint}: {}", last_line(&err)));
+        }
+        Err(e) => return Err(format!("couldn't run python3: {e}")),
+    }
+
+    // 2. Install faster-whisper. Capture stderr so network/build failures surface.
     let installed = Command::new(&py)
         .args(["-m", "pip", "install", "-U", "pip", "faster-whisper"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if !installed {
-        return None;
+        .output();
+    match installed {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => {
+            return Err(format!(
+                "pip couldn't install faster-whisper (needs internet on first use): {}",
+                last_line(&String::from_utf8_lossy(&o.stderr))
+            ));
+        }
+        Err(e) => return Err(format!("couldn't run pip: {e}")),
     }
-    let _ = std::fs::write(&ready, b"1");
-    Some(py)
+
+    // 3. Only mark ready once the package actually imports — a half-finished
+    //    install must NOT leave a `.ready` marker that wedges every later run.
+    let imports = Command::new(&py)
+        .args(["-c", "import faster_whisper"])
+        .output();
+    match imports {
+        Ok(o) if o.status.success() => {
+            let _ = std::fs::write(&ready, b"1");
+            Ok(py)
+        }
+        Ok(o) => Err(format!(
+            "faster-whisper installed but won't import: {}",
+            last_line(&String::from_utf8_lossy(&o.stderr))
+        )),
+        Err(e) => Err(format!("couldn't verify the install: {e}")),
+    }
 }
 
 /// Transcribe a short rolling audio buffer for the live-recording transcript
@@ -2182,8 +2734,11 @@ fn faster_whisper_python(data_dir: &Path, allow_install: bool) -> Option<std::pa
 /// transcriber is installed this returns an empty string (the frontend shows an
 /// install note) rather than hard-erroring.
 #[tauri::command]
-pub async fn transcribe_partial(app: AppHandle, audio: Vec<u8>) -> Result<String> {
+pub async fn transcribe_partial(app: AppHandle, audio: Vec<u8>, ext: Option<String>) -> Result<String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String> {
+    if audio.is_empty() {
+        return Ok(String::new()); // nothing captured yet — not an error mid-recording
+    }
     // Prefer the app data dir's recordings folder; fall back to the OS temp dir.
     let dir = app
         .path()
@@ -2191,10 +2746,12 @@ pub async fn transcribe_partial(app: AppHandle, audio: Vec<u8>) -> Result<String
         .map(|d| d.join("recordings"))
         .unwrap_or_else(|_| std::env::temp_dir());
     std::fs::create_dir_all(&dir)?;
-    let file = dir.join(format!("partial-{}.webm", crate::db::new_id()));
+    let ext = sanitize_ext(ext.as_deref());
+    let file = dir.join(format!("partial-{}.{ext}", crate::db::new_id()));
     std::fs::write(&file, &audio)?;
 
-    let (transcript, _warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), false);
+    let remote = whisper_remote_url(&app.state::<AppState>());
+    let (transcript, _warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), false, remote.as_deref());
     let _ = std::fs::remove_file(&file);
     Ok(transcript)
     })
@@ -2211,13 +2768,22 @@ pub async fn save_recording(
     topic_id: Option<String>,
     name: String,
     audio: Vec<u8>,
+    ext: Option<String>,
 ) -> Result<IngestResult> {
     tauri::async_runtime::spawn_blocking(move || -> Result<IngestResult> {
+    if audio.is_empty() {
+        return Err(Error::Other(
+            "the recording is empty — the microphone produced no audio (check the \
+             input device in your system sound settings), so there is nothing to save"
+                .into(),
+        ));
+    }
     let state = app.state::<AppState>();
-    // 1. persist the audio file
+    // 1. persist the audio file (keep the real container as the extension)
     let dir = app.path().app_data_dir().map_err(|e| Error::Other(e.to_string()))?.join("recordings");
     std::fs::create_dir_all(&dir)?;
-    let file = dir.join(format!("{}.webm", crate::db::new_id()));
+    let ext = sanitize_ext(ext.as_deref());
+    let file = dir.join(format!("{}.{ext}", crate::db::new_id()));
     std::fs::write(&file, &audio)?;
 
     // 2. create the source row
@@ -2234,8 +2800,9 @@ pub async fn save_recording(
     };
     emit_progress(&app, &source_id, "parsing", "transcribing audio", 25);
 
-    // 3. transcribe (local Whisper if available)
-    let (transcript, warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true);
+    // 3. transcribe (homelab Whisper if configured, else local)
+    let remote = whisper_remote_url(&state);
+    let (transcript, warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref());
 
     if transcript.trim().is_empty() {
         let c = state.db.lock().unwrap();
@@ -2276,6 +2843,10 @@ pub async fn save_recording(
     };
     emit_progress(&app, &source_id, "done", "transcribed", 100);
 
+    // 5. auto-summary: distill the lecture into a note in the background so the
+    // user comes back to key points + terms without blocking the save.
+    spawn_lecture_summary(app.clone(), subject_id.clone(), topic_id.clone(), name.clone(), transcript.clone());
+
     let c = state.db.lock().unwrap();
     let source = repo::get_source(&c, &source_id)?;
     Ok(IngestResult {
@@ -2287,6 +2858,72 @@ pub async fn save_recording(
     })
     .await
     .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+}
+
+/// Background auto-summary of a transcribed lecture → a note ("Summary — <name>")
+/// under the same subject/topic. Best-effort: no model configured, offline mode,
+/// or an LLM error just logs — the recording itself already saved fine.
+fn spawn_lecture_summary(
+    app: AppHandle,
+    subject_id: String,
+    topic_id: Option<String>,
+    name: String,
+    transcript: String,
+) {
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let (spec, keys, offline) = {
+            let c = state.db.lock().unwrap();
+            let spec = match repo::get_setting(&c, "model_chat") {
+                Ok(Some(s)) => s,
+                _ => "gemini:gemini-2.5-flash".into(),
+            };
+            let keys = match read_keys(&c) {
+                Ok(k) => k,
+                Err(e) => { eprintln!("[summary] keys unavailable: {e}"); return; }
+            };
+            let offline = matches!(repo::get_setting(&c, "offline_mode"), Ok(Some(v)) if v == "true");
+            (spec, keys, offline)
+        };
+        if offline && !spec.starts_with("ollama") {
+            return; // honor offline mode: only a local model may run
+        }
+        let Some(mut model) = llm::from_spec_or_any(&spec, &keys) else { return };
+        {
+            let c = state.db.lock().unwrap();
+            apply_budget(&mut model, &c, "chat");
+        }
+        // Keep the prompt inside a sane context window.
+        let excerpt: String = transcript.chars().take(24_000).collect();
+        let system = "You summarize lecture transcripts for a student's study notes. \
+                      Be faithful to the transcript; do not invent content.";
+        let user = format!(
+            "Summarize this lecture transcript as Markdown with exactly these sections:\n\
+             ## Key points — 5-10 tight bullets\n\
+             ## Terms — each important term with a one-line definition\n\
+             ## Open questions — anything the lecturer left unresolved or flagged as exam-relevant (omit the section if none)\n\n\
+             Transcript:\n{excerpt}"
+        );
+        match model.complete(system, &user) {
+            Ok(summary) if !summary.trim().is_empty() => {
+                let c = state.db.lock().unwrap();
+                if let Err(e) = repo::insert_note(
+                    &c,
+                    Some(&subject_id),
+                    topic_id.as_deref(),
+                    &format!("Summary — {name}"),
+                    summary.trim(),
+                ) {
+                    eprintln!("[summary] couldn't save note: {e}");
+                } else {
+                    use tauri::Emitter;
+                    let _ = app.emit("note:created", ());
+                }
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("[summary] generation failed: {e}"),
+        }
+    });
 }
 
 // ---- web search (SearXNG) --------------------------------------------
@@ -2507,6 +3144,28 @@ pub fn delete_all_data(app: AppHandle, state: State<AppState>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The user's current Omarchy theme name (e.g. "tokyo-night"), read from
+/// `~/.config/omarchy/current/theme.name`. Returns None when Omarchy isn't
+/// installed so the "Follow Omarchy theme" toggle can degrade gracefully.
+#[tauri::command]
+pub fn omarchy_theme() -> Option<String> {
+    let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
+    let name_file = home.join(".config/omarchy/current/theme.name");
+    if let Ok(s) = std::fs::read_to_string(&name_file) {
+        let t = s.trim().to_string();
+        if !t.is_empty() {
+            return Some(t);
+        }
+    }
+    // Fall back to the basename of the `current/theme` symlink target.
+    let link = home.join(".config/omarchy/current/theme");
+    let target = std::fs::read_link(&link).ok()?;
+    target
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
 }
 
 /// Reachability check for the homelab "Test connection" button.

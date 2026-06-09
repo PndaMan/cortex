@@ -14,7 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
@@ -26,14 +26,29 @@ sqlite-vec = "0.1.6"
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip", "multipart"] }
+# Read Anki `.apkg` archives on import (an apkg is a ZIP holding a SQLite
+# collection). Pure-Rust deflate only — no system zlib, no extra C deps. The
+# export path hand-rolls a STORED zip writer; reading needs real unzip, hence
+# this crate (default features off keeps bzip2/zstd/AES out of the build).
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0", features = ["v2_8"] }
+# Used to intercept Ctrl+F at the GTK level (WebKitGTK's native find steals
+# Ctrl+C/V). Versions match webkit2gtk 2.0's gtk-rs (0.18).
+gtk = "0.18"
+gdk = "0.18"
 
 [features]
 # this feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+# panic stays "unwind": a panicking command thread shouldn't kill the whole app.
+lto = "thin"
+codegen-units = 1
+strip = true

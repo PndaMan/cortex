@@ -59,6 +59,15 @@ pub struct IngestResult {
     pub warning: Option<String>,
 }
 
+/// Summary returned by `import_anki` — how many decks/cards landed and how many
+/// cards were skipped (empty fronts or duplicates of existing/within-import cards).
+#[derive(Debug, Clone, Serialize)]
+pub struct AnkiImportResult {
+    pub deck_count: usize,
+    pub card_count: usize,
+    pub skipped: usize,
+}
+
 /// A stored chunk's info, returned by `list_chunks` — lets the UI prove a
 /// source was actually parsed + embedded (text + vector dimension).
 #[derive(Debug, Clone, Serialize)]
@@ -77,6 +86,21 @@ pub struct ChunkHit {
     pub source_name: String,
     pub text: String,
     pub loc: Option<String>,
+    pub score: f32,
+}
+
+/// One result of the global Ctrl+K search, normalized across record types so
+/// the overlay can render and navigate uniformly.
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchHit {
+    /// "chunk" | "source" | "note" | "event" | "material"
+    pub kind: String,
+    pub id: String,
+    /// For chunk hits this is the SOURCE id to open; subject_id scopes navigation.
+    pub subject_id: Option<String>,
+    pub title: String,
+    pub snippet: String,
+    /// Cosine similarity for semantic hits; 0 for plain text matches.
     pub score: f32,
 }
 
@@ -134,6 +158,12 @@ pub struct CsSection {
     /// Optional illustrative image (web-sourced when "include images" is on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
+    /// A short web-image search query the synthesis model supplies ONLY for a
+    /// section whose understanding genuinely needs a diagram/figure. Drives
+    /// whether we fetch an image at all (saves needless searches). Transient —
+    /// never persisted or sent to the frontend.
+    #[serde(default, skip_serializing)]
+    pub image_query: Option<String>,
 }
 
 fn default_state() -> String {
@@ -175,6 +205,30 @@ pub struct MaterialRec {
     pub meta: String,
     pub status: String,
     pub payload: serde_json::Value,
+}
+
+// ---- exams (timed, locally-graded practice exams) --------------------
+
+/// A practice exam row. `questions`/`answers`/`results` are JSON values mirrored
+/// 1:1 in the frontend (`src/lib/api.ts` ExamRec). `answers`/`results` are
+/// `Null` until the exam is submitted/graded; `started_ms`/`score` until then.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExamRec {
+    pub id: String,
+    pub subject_id: String,
+    /// Topic ids the exam is scoped to (empty = whole subject).
+    #[serde(default)]
+    pub topic_ids: Vec<String>,
+    pub title: String,
+    pub duration_min: i64,
+    pub questions: serde_json::Value,
+    pub answers: serde_json::Value,
+    pub results: serde_json::Value,
+    pub status: String,
+    pub started_ms: Option<i64>,
+    pub score: Option<f64>,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 /// Payload the frontend sends to ingest a new source.
@@ -300,6 +354,12 @@ pub struct CalEvent {
     /// Topic ids ticked off for this deadline's study checklist.
     #[serde(default)]
     pub checklist: Vec<String>,
+    /// Assignment priority: "low" | "med" | "high" (None = normal). Previously
+    /// encoded as a colour hex in `color` — now a real field.
+    pub priority: Option<String>,
+    /// Topic ids this assignment covers (previously squatted in `tags`).
+    #[serde(default)]
+    pub topic_ids: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -395,4 +455,104 @@ pub struct IngestProgress {
     pub stage: String, // parsing | chunking | embedding | storing | done | error
     pub detail: String,
     pub pct: u8,
+}
+
+// ---- study analytics --------------------------------------------------
+//
+// One `analytics_summary` call returns the whole dashboard payload so the
+// frontend renders from a single round-trip / DB lock. Days are local-date
+// strings ("YYYY-MM-DD") computed in SQL so per-day buckets line up with the
+// user's calendar rather than UTC midnight.
+
+/// Study minutes on one local day (work pomodoro + passive app segments).
+#[derive(Debug, Clone, Serialize)]
+pub struct DayMinutes {
+    pub day: String, // YYYY-MM-DD (local)
+    pub minutes: i64,
+}
+
+/// A topic flagged as needing more work, ranked by a weakness score blending
+/// low review accuracy, high lapse count, and low FSRS stability.
+#[derive(Debug, Clone, Serialize)]
+pub struct WeakTopic {
+    pub subject_id: String,
+    pub topic_id: String,
+    pub topic_name: String,
+    /// Review attempts attributable to this topic in the window.
+    pub reviews: i64,
+    pub correct: i64,
+    /// 0.0-1.0; 0 when no reviews for this topic.
+    pub accuracy: f64,
+    /// Total lapses across this topic's scheduled cards.
+    pub lapses: i64,
+    /// Mean FSRS stability (days) over this topic's cards that have one set.
+    pub avg_stability: f64,
+    /// Short human reason it's flagged (e.g. "Low accuracy · 4 lapses").
+    pub reason: String,
+}
+
+/// Reviews answered on one local day, with that day's accuracy.
+#[derive(Debug, Clone, Serialize)]
+pub struct DayReviews {
+    pub day: String, // YYYY-MM-DD (local)
+    pub reviews: i64,
+    pub correct: i64,
+    /// 0.0-1.0; 0 when no reviews that day.
+    pub accuracy: f64,
+}
+
+/// Cards becoming due on one upcoming local day (next-7-day forecast).
+#[derive(Debug, Clone, Serialize)]
+pub struct DueDay {
+    pub day: String, // YYYY-MM-DD (local)
+    pub due: i64,
+}
+
+/// Per-subject roll-up: study minutes, reviews, and accuracy.
+#[derive(Debug, Clone, Serialize)]
+pub struct SubjectStat {
+    pub subject_id: String,
+    pub minutes: i64,
+    pub reviews: i64,
+    pub correct: i64,
+    /// 0.0-1.0; 0 when no reviews for this subject.
+    pub accuracy: f64,
+}
+
+/// FSRS memory-state totals across all scheduled cards.
+#[derive(Debug, Clone, Serialize)]
+pub struct FsrsTotals {
+    pub cards: i64,
+    /// Mean stability in days over cards that have an FSRS stability set.
+    pub avg_stability: f64,
+    pub lapses: i64,
+}
+
+/// The whole Study Analytics dashboard, returned by `analytics_summary`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyticsSummary {
+    /// Per-day study minutes for the window (oldest → newest, gaps filled with 0).
+    pub minutes_per_day: Vec<DayMinutes>,
+    /// A full rolling year (366 days) of daily study minutes, oldest → newest,
+    /// gaps filled with 0 — drives the GitHub-style contributions heatmap.
+    /// Always a year regardless of the `days` window param.
+    pub year_minutes: Vec<DayMinutes>,
+    /// Per-day reviews + accuracy for the window (oldest → newest, gaps filled).
+    pub reviews_per_day: Vec<DayReviews>,
+    /// Cards due each of the next 7 days (today → today+6, gaps filled with 0).
+    pub due_forecast: Vec<DueDay>,
+    /// Per-subject totals over the window (only subjects with any activity).
+    pub per_subject: Vec<SubjectStat>,
+    /// Topics needing the most work (top ~8 across subjects, weakest first).
+    pub weak_topics: Vec<WeakTopic>,
+    /// FSRS state totals (all scheduled cards, not windowed).
+    pub fsrs: FsrsTotals,
+    /// Consecutive days ending today with ≥1 review attempt OR work session.
+    pub streak: i64,
+    /// Study minutes over the last 7 calendar days (rolling).
+    pub minutes_week: i64,
+    /// Reviews answered over the last 7 calendar days.
+    pub reviews_week: i64,
+    /// Accuracy over the last 7 calendar days (0.0-1.0).
+    pub accuracy_week: f64,
 }

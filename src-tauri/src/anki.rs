@@ -8,6 +8,16 @@ use crate::db::now_ms;
 use crate::error::{Error, Result};
 use rusqlite::{params, Connection};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Process-unique token for temp filenames. `now_ms()` alone collides when two
+/// exports/imports run in the same millisecond (e.g. parallel tests, or two
+/// concurrent imports) — the loser then opens the other's half-written DB. Pair
+/// the timestamp with a monotonic counter so every temp path is unique.
+fn temp_token() -> String {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    format!("{}-{}", now_ms(), SEQ.fetch_add(1, Ordering::Relaxed))
+}
 
 // ---- SHA-1 (for Anki's note checksum `csum`) --------------------------------
 
@@ -196,6 +206,9 @@ CREATE INDEX ix_revlog_cid on revlog (cid);
 /// Build a `collection.anki2` SQLite file at `path` containing one Basic note +
 /// card per (front, back) pair, all in a deck named `deck_name`.
 fn build_collection(path: &Path, deck_name: &str, cards: &[(String, String)]) -> Result<()> {
+    // Start from a clean file — a stale temp left by a crashed prior run would
+    // already hold the `col` table and make CREATE TABLE fail ("already exists").
+    let _ = std::fs::remove_file(path);
     let conn = Connection::open(path)?;
     conn.execute_batch(COL_SCHEMA)?;
 
@@ -275,7 +288,7 @@ pub fn export_apkg(dest: &Path, deck_name: &str, cards: &[(String, String)]) -> 
         return Err(Error::Other("no flashcards to export".into()));
     }
     // Build collection.anki2 in a temp file, then read its bytes.
-    let tmp = std::env::temp_dir().join(format!("cortex-anki-{}.anki2", now_ms()));
+    let tmp = std::env::temp_dir().join(format!("cortex-anki-{}.anki2", temp_token()));
     build_collection(&tmp, deck_name, cards)?;
     let col_bytes = std::fs::read(&tmp).map_err(Error::Io)?;
     let _ = std::fs::remove_file(&tmp);
@@ -286,6 +299,237 @@ pub fn export_apkg(dest: &Path, deck_name: &str, cards: &[(String, String)]) -> 
     ]);
     std::fs::write(dest, zip).map_err(Error::Io)?;
     Ok(())
+}
+
+// ===== IMPORT: read an `.apkg` into (deck name → cards) ======================
+//
+// An `.apkg` is a ZIP holding a `collection.anki21` (newer) or `collection.anki2`
+// (older) member — both are plain SQLite databases in Anki's schema. We extract
+// that member to a temp file, open it read-only with rusqlite, then pull:
+//   • the deck id→name map from the single `col` row's `decks` JSON column, and
+//   • every note's fields (`notes.flds`, fields joined by the 0x1f unit
+//     separator), with each note's deck resolved via its first card's `did`.
+// Fronts/backs are HTML-stripped + entity-decoded so they match how Cortex stores
+// generated cards (plain text the Flashcards view renders with RichText). The hard
+// `MAX_IMPORT` cap keeps a pathological deck from ballooning the DB / UI.
+
+/// Hard ceiling on cards per import — beyond this we error rather than ingest an
+/// unbounded deck (protects the materials table and the in-memory deck render).
+pub const MAX_IMPORT: usize = 5000;
+
+/// A single imported card: HTML-stripped, trimmed front/back.
+#[derive(Debug, Clone)]
+pub struct ImportedCard {
+    pub front: String,
+    pub back: String,
+}
+
+/// One imported deck: a name plus its cards (already deduped within the deck).
+#[derive(Debug, Clone)]
+pub struct ImportedDeck {
+    pub name: String,
+    pub cards: Vec<ImportedCard>,
+}
+
+/// Decode the handful of HTML entities that show up in Anki fields. We only need
+/// the common five (plus numeric refs) — fields are mostly plain text, and full
+/// entity tables would be overkill. Mirrors the codebase's "minimal, explain why"
+/// style: anything exotic is left as-is rather than risking a wrong substitution.
+fn decode_entities(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        // Find the terminating ';' within a short window (real entities are short).
+        if let Some(semi) = rest[..rest.len().min(12)].find(';') {
+            let ent = &rest[1..semi];
+            let decoded = match ent {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "nbsp" => Some(' '),
+                _ => ent
+                    .strip_prefix('#')
+                    .and_then(|num| {
+                        if let Some(hex) = num.strip_prefix(['x', 'X']) {
+                            u32::from_str_radix(hex, 16).ok()
+                        } else {
+                            num.parse::<u32>().ok()
+                        }
+                    })
+                    .and_then(char::from_u32),
+            };
+            match decoded {
+                Some(ch) => {
+                    out.push(ch);
+                    rest = &rest[semi + 1..];
+                }
+                // Unknown entity — keep the '&' literally and move past it so we
+                // don't loop forever on the same position.
+                None => {
+                    out.push('&');
+                    rest = &rest[1..];
+                }
+            }
+        } else {
+            out.push('&');
+            rest = &rest[1..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Normalize a field for storage/dedupe: strip HTML, decode entities, collapse
+/// runs of whitespace (Anki fields carry `<br>` and stray newlines), and trim.
+fn clean_field(s: &str) -> String {
+    let text = decode_entities(&strip_html(s));
+    // Collapse all whitespace (incl. the newlines left by stripped <br>/<div>) to
+    // single spaces so dedupe is robust and the card renders on one logical line.
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Case-insensitive key for duplicate detection. Inputs are already cleaned by
+/// `clean_field` (HTML stripped, whitespace collapsed), so two fronts differing
+/// only by letter-case map to the same key here.
+pub fn dedupe_key(front: &str) -> String {
+    front.to_lowercase()
+}
+
+/// Extract the named collection member from an `.apkg` zip to a temp file and
+/// return its path. Prefers `collection.anki21`, falling back to `collection.anki2`.
+fn extract_collection(apkg: &Path) -> Result<std::path::PathBuf> {
+    let file = std::fs::File::open(apkg)
+        .map_err(|e| Error::Other(format!("could not open .apkg file: {e}")))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| Error::Other(format!("not a valid .apkg (zip) file: {e}")))?;
+
+    // Newer Anki names the DB collection.anki21; older uses collection.anki2.
+    let member = ["collection.anki21", "collection.anki2"]
+        .into_iter()
+        .find(|name| archive.by_name(name).is_ok())
+        .ok_or_else(|| {
+            Error::Other(
+                "not a valid .apkg: no collection.anki21 or collection.anki2 inside".into(),
+            )
+        })?;
+
+    let mut entry = archive
+        .by_name(member)
+        .map_err(|e| Error::Other(format!("could not read {member} from .apkg: {e}")))?;
+    let dest = std::env::temp_dir().join(format!("cortex-anki-import-{}.db", temp_token()));
+    let mut out = std::fs::File::create(&dest).map_err(Error::Io)?;
+    std::io::copy(&mut entry, &mut out).map_err(Error::Io)?;
+    drop(out);
+    Ok(dest)
+}
+
+/// Read an `.apkg` at `path` into a list of decks with cleaned cards. Decks with
+/// no usable cards are dropped. Errors clearly on a corrupt zip, a missing
+/// collection member, or an unreadable database. Cleans up its temp file always.
+pub fn import_apkg(path: &Path) -> Result<Vec<ImportedDeck>> {
+    let db_path = extract_collection(path)?;
+    // RAII-style cleanup: ensure the temp DB is removed on every exit path below.
+    let result = read_collection(&db_path);
+    let _ = std::fs::remove_file(&db_path);
+    result
+}
+
+/// Open the extracted collection DB and assemble decks. Split out from
+/// `import_apkg` so the temp-file cleanup wraps it unconditionally.
+fn read_collection(db_path: &Path) -> Result<Vec<ImportedDeck>> {
+    // Plain connection — this is a foreign DB; we register no extensions (no
+    // sqlite-vec) and only read from it.
+    let conn = Connection::open(db_path)
+        .map_err(|e| Error::Other(format!("not a valid .apkg: unreadable collection db ({e})")))?;
+
+    // Deck id → name, from the single `col` row's `decks` JSON object.
+    let decks_json: String = conn
+        .query_row("SELECT decks FROM col LIMIT 1", [], |r| r.get(0))
+        .map_err(|e| Error::Other(format!("not a valid .apkg: missing col table ({e})")))?;
+    let decks_val: serde_json::Value = serde_json::from_str(&decks_json)
+        .map_err(|e| Error::Other(format!("malformed decks data in .apkg ({e})")))?;
+    let mut deck_names: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+    if let Some(obj) = decks_val.as_object() {
+        for (id, d) in obj {
+            if let (Ok(did), Some(name)) = (id.parse::<i64>(), d.get("name").and_then(|n| n.as_str()))
+            {
+                deck_names.insert(did, name.to_string());
+            }
+        }
+    }
+
+    // Join notes → their (first) card to learn which deck each note belongs to.
+    // A note can in theory have several cards across decks; for Basic decks (the
+    // import target) it's one, so MIN(did) is a safe, deterministic choice.
+    let mut stmt = conn
+        .prepare(
+            "SELECT n.flds, COALESCE(MIN(c.did), 0) AS did \
+             FROM notes n LEFT JOIN cards c ON c.nid = n.id \
+             GROUP BY n.id",
+        )
+        .map_err(|e| Error::Other(format!("not a valid .apkg: missing notes/cards ({e})")))?;
+
+    // Preserve deck encounter order so the resulting materials feel stable.
+    let mut order: Vec<i64> = Vec::new();
+    let mut by_deck: std::collections::HashMap<i64, Vec<ImportedCard>> =
+        std::collections::HashMap::new();
+    // Per-deck seen-fronts for within-deck dedupe.
+    let mut seen: std::collections::HashMap<i64, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+
+    let rows = stmt
+        .query_map([], |r| {
+            let flds: String = r.get(0)?;
+            let did: i64 = r.get(1)?;
+            Ok((flds, did))
+        })
+        .map_err(Error::Db)?;
+
+    let mut total = 0usize;
+    for row in rows {
+        let (flds, did) = row.map_err(Error::Db)?;
+        // Fields are joined by the 0x1f unit separator. First = front, second = back.
+        let mut parts = flds.split('\u{001f}');
+        let front = clean_field(parts.next().unwrap_or(""));
+        let back = clean_field(parts.next().unwrap_or(""));
+        if front.is_empty() {
+            continue; // unusable card — skip (counted as skipped by the caller)
+        }
+        let set = seen.entry(did).or_default();
+        if !set.insert(dedupe_key(&front)) {
+            continue; // duplicate front within this deck
+        }
+        if !by_deck.contains_key(&did) {
+            order.push(did);
+        }
+        by_deck.entry(did).or_default().push(ImportedCard { front, back });
+        total += 1;
+        if total > MAX_IMPORT {
+            return Err(Error::Other(format!(
+                "this .apkg has more than {MAX_IMPORT} cards — split it and import in parts"
+            )));
+        }
+    }
+
+    let decks = order
+        .into_iter()
+        .filter_map(|did| {
+            let cards = by_deck.remove(&did)?;
+            if cards.is_empty() {
+                return None;
+            }
+            let name = deck_names
+                .get(&did)
+                .cloned()
+                .unwrap_or_else(|| "Imported deck".to_string());
+            Some(ImportedDeck { name, cards })
+        })
+        .collect();
+    Ok(decks)
 }
 
 #[cfg(test)]
@@ -332,6 +576,78 @@ mod tests {
         let cnt: i64 = conn.query_row("SELECT count(*) FROM cards", [], |r| r.get(0)).unwrap();
         assert_eq!(notes, 2);
         assert_eq!(cnt, 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn entities_and_html_are_cleaned() {
+        assert_eq!(decode_entities("a &amp; b &lt;c&gt; &quot;d&quot;"), "a & b <c> \"d\"");
+        assert_eq!(decode_entities("x&nbsp;y"), "x y");
+        assert_eq!(decode_entities("&#65;&#x42;"), "AB");
+        // Unknown entity is left intact (no infinite loop, no wrong substitution).
+        assert_eq!(decode_entities("100% &foo; ok"), "100% &foo; ok");
+        // Full field cleaning: strip tags, decode known entities, collapse
+        // whitespace. Unknown entities (&rarr;) are preserved verbatim by design.
+        assert_eq!(clean_field("<b>Na</b>+ &amp;<br>  ion"), "Na+ & ion");
+        assert_eq!(clean_field("  <div>What is ATP?</div> "), "What is ATP?");
+    }
+
+    #[test]
+    fn import_roundtrips_an_exported_apkg() {
+        let dir = std::env::temp_dir().join(format!("cortex-apkg-import-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("deck.apkg");
+        let cards = vec![
+            ("What is ATP?".to_string(), "Adenosine triphosphate".to_string()),
+            ("Powerhouse of the cell?".to_string(), "Mitochondria".to_string()),
+        ];
+        export_apkg(&dest, "Biology", &cards).unwrap();
+
+        let decks = import_apkg(&dest).unwrap();
+        assert_eq!(decks.len(), 1, "one Anki deck → one imported deck");
+        let deck = &decks[0];
+        assert_eq!(deck.name, "Biology");
+        assert_eq!(deck.cards.len(), 2);
+        assert_eq!(deck.cards[0].front, "What is ATP?");
+        assert_eq!(deck.cards[0].back, "Adenosine triphosphate");
+        assert_eq!(deck.cards[1].front, "Powerhouse of the cell?");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_dedupes_within_deck_and_skips_empty_fronts() {
+        let dir = std::env::temp_dir().join(format!("cortex-apkg-dedupe-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("deck.apkg");
+        // Two identical fronts (differing only by case) + one empty front.
+        let cards = vec![
+            ("Term".to_string(), "Def".to_string()),
+            ("term".to_string(), "Other".to_string()), // dup of "Term" (case-insensitive)
+            ("".to_string(), "no front".to_string()),  // empty front → skipped
+            ("Unique".to_string(), "Yes".to_string()),
+        ];
+        export_apkg(&dest, "Vocab", &cards).unwrap();
+
+        let decks = import_apkg(&dest).unwrap();
+        assert_eq!(decks.len(), 1);
+        // "Term", (dup dropped), (empty dropped), "Unique" → 2 cards.
+        assert_eq!(decks[0].cards.len(), 2);
+        let fronts: Vec<&str> = decks[0].cards.iter().map(|c| c.front.as_str()).collect();
+        assert!(fronts.contains(&"Term"));
+        assert!(fronts.contains(&"Unique"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_rejects_a_non_apkg_file() {
+        let dir = std::env::temp_dir().join(format!("cortex-apkg-bad-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bad = dir.join("not.apkg");
+        std::fs::write(&bad, b"this is not a zip file at all").unwrap();
+        let err = import_apkg(&bad).unwrap_err();
+        assert!(err.to_string().contains("not a valid .apkg"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

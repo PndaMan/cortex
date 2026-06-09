@@ -6,6 +6,7 @@ use crate::error::{Error, Result};
 use crate::models::*;
 use crate::vector::{blob_to_f32s, cosine};
 use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::HashMap;
 
 // ---- subjects ----------------------------------------------------------
 
@@ -60,45 +61,65 @@ pub fn delete_subject(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
+fn map_subject(r: &rusqlite::Row) -> rusqlite::Result<Subject> {
+    Ok(Subject {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        code: r.get(2)?,
+        glyph: r.get(3)?,
+        color: r.get(4)?,
+        status: r.get(5)?,
+        streak: r.get(6)?,
+        position: r.get(7)?,
+        source_count: 0,
+        topics: Vec::new(),
+        created_at: r.get(8)?,
+        updated_at: r.get(9)?,
+    })
+}
+
+const SUBJECT_COLS: &str =
+    "id, name, code, glyph, color, status, streak, position, created_at, updated_at";
+
 /// Full Subjects → Topics → Sources tree (what the sidebar + dashboard render).
+/// Batched: a fixed 5 queries regardless of subject/topic/source counts
+/// (previously 1 + per-subject topics + per-topic sources + per-source tags).
 pub fn list_subjects(conn: &Connection) -> Result<Vec<Subject>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, name, code, glyph, color, status, streak, position, created_at, updated_at
-         FROM subjects ORDER BY position, created_at",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok(Subject {
-            id: r.get(0)?,
-            name: r.get(1)?,
-            code: r.get(2)?,
-            glyph: r.get(3)?,
-            color: r.get(4)?,
-            status: r.get(5)?,
-            streak: r.get(6)?,
-            position: r.get(7)?,
-            source_count: 0,
-            topics: Vec::new(),
-            created_at: r.get(8)?,
-            updated_at: r.get(9)?,
-        })
-    })?;
+    let sql = format!("SELECT {SUBJECT_COLS} FROM subjects ORDER BY position, created_at");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], map_subject)?;
     let mut subjects: Vec<Subject> = rows.collect::<rusqlite::Result<_>>()?;
+
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    let mut stmt =
+        conn.prepare("SELECT subject_id, count(*) FROM sources GROUP BY subject_id")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    for row in rows {
+        let (sid, n) = row?;
+        counts.insert(sid, n);
+    }
+
+    let mut topics_by_subject = topics_grouped(conn)?;
     for s in &mut subjects {
-        s.topics = list_topics(conn, &s.id)?;
-        s.source_count = conn.query_row(
-            "SELECT count(*) FROM sources WHERE subject_id=?1",
-            params![s.id],
-            |r| r.get(0),
-        )?;
+        s.topics = topics_by_subject.remove(&s.id).unwrap_or_default();
+        s.source_count = counts.get(&s.id).copied().unwrap_or(0);
     }
     Ok(subjects)
 }
 
 pub fn get_subject(conn: &Connection, id: &str) -> Result<Subject> {
-    list_subjects(conn)?
-        .into_iter()
-        .find(|s| s.id == id)
-        .ok_or_else(|| Error::NotFound(format!("subject {id}")))
+    let sql = format!("SELECT {SUBJECT_COLS} FROM subjects WHERE id=?1");
+    let mut s = conn
+        .query_row(&sql, params![id], map_subject)
+        .optional()?
+        .ok_or_else(|| Error::NotFound(format!("subject {id}")))?;
+    s.topics = list_topics(conn, id)?;
+    s.source_count = conn.query_row(
+        "SELECT count(*) FROM sources WHERE subject_id=?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    Ok(s)
 }
 
 // ---- topics ------------------------------------------------------------
@@ -181,27 +202,80 @@ pub fn reorder_topics(conn: &Connection, subject_id: &str, ids: &[String]) -> Re
     Ok(())
 }
 
+fn map_topic(r: &rusqlite::Row) -> rusqlite::Result<Topic> {
+    Ok(Topic {
+        id: r.get(0)?,
+        subject_id: r.get(1)?,
+        name: r.get(2)?,
+        glyph: r.get(3)?,
+        position: r.get(4)?,
+        tags: text_to_tags(r.get(5)?),
+        sources: Vec::new(),
+    })
+}
+
 pub fn list_topics(conn: &Connection, subject_id: &str) -> Result<Vec<Topic>> {
     let mut stmt = conn.prepare(
         "SELECT id, subject_id, name, glyph, position, tags FROM topics
          WHERE subject_id=?1 ORDER BY position, created_at",
     )?;
-    let rows = stmt.query_map(params![subject_id], |r| {
-        Ok(Topic {
-            id: r.get(0)?,
-            subject_id: r.get(1)?,
-            name: r.get(2)?,
-            glyph: r.get(3)?,
-            position: r.get(4)?,
-            tags: text_to_tags(r.get(5)?),
-            sources: Vec::new(),
-        })
-    })?;
+    let rows = stmt.query_map(params![subject_id], map_topic)?;
     let mut topics: Vec<Topic> = rows.collect::<rusqlite::Result<_>>()?;
+
+    // All topic-filed sources of this subject in one query instead of one per topic.
+    let sql = format!(
+        "SELECT {SOURCE_COLS} FROM sources \
+         WHERE subject_id=?1 AND topic_id IS NOT NULL ORDER BY created_at"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![subject_id], map_source)?;
+    let mut by_topic = group_sources_by_topic(rows, tags_by_source(conn, Some(subject_id))?)?;
     for t in &mut topics {
-        t.sources = list_sources_for_topic(conn, &t.id)?;
+        t.sources = by_topic.remove(&t.id).unwrap_or_default();
     }
     Ok(topics)
+}
+
+/// Every subject's topics (with their sources + tags) in 3 fixed queries,
+/// grouped by subject id. Backs the sidebar tree via `list_subjects`.
+fn topics_grouped(conn: &Connection) -> Result<HashMap<String, Vec<Topic>>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, subject_id, name, glyph, position, tags FROM topics
+         ORDER BY position, created_at",
+    )?;
+    let rows = stmt.query_map([], map_topic)?;
+    let topics: Vec<Topic> = rows.collect::<rusqlite::Result<_>>()?;
+
+    let sql = format!(
+        "SELECT {SOURCE_COLS} FROM sources WHERE topic_id IS NOT NULL ORDER BY created_at"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], map_source)?;
+    let mut by_topic = group_sources_by_topic(rows, tags_by_source(conn, None)?)?;
+
+    let mut out: HashMap<String, Vec<Topic>> = HashMap::new();
+    for mut t in topics {
+        t.sources = by_topic.remove(&t.id).unwrap_or_default();
+        out.entry(t.subject_id.clone()).or_default().push(t);
+    }
+    Ok(out)
+}
+
+/// Collect mapped source rows into topic_id → sources, attaching tags from a
+/// prefetched map. Row order (created_at) is preserved within each topic.
+fn group_sources_by_topic(
+    rows: impl Iterator<Item = rusqlite::Result<Source>>,
+    mut tags: HashMap<String, Vec<String>>,
+) -> Result<HashMap<String, Vec<Source>>> {
+    let mut by_topic: HashMap<String, Vec<Source>> = HashMap::new();
+    for row in rows {
+        let mut s = row?;
+        s.tags = tags.remove(&s.id).unwrap_or_default();
+        if let Some(tid) = s.topic_id.clone() {
+            by_topic.entry(tid).or_default().push(s);
+        }
+    }
+    Ok(by_topic)
 }
 
 // ---- sources -----------------------------------------------------------
@@ -287,18 +361,25 @@ pub fn list_sources(conn: &Connection, subject_id: &str) -> Result<Vec<Source>> 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![subject_id], map_source)?;
     let mut out: Vec<Source> = rows.collect::<rusqlite::Result<_>>()?;
+    let mut tags = tags_by_source(conn, Some(subject_id))?;
     for s in &mut out {
-        s.tags = source_tags(conn, &s.id)?;
+        s.tags = tags.remove(&s.id).unwrap_or_default();
     }
     Ok(out)
 }
 
-fn list_sources_for_topic(conn: &Connection, topic_id: &str) -> Result<Vec<Source>> {
+/// Sources that didn't ingest cleanly: hard failures (`error`) and audio that
+/// produced no transcript (`draft` with an error recorded). Used to auto-retry
+/// ingestion on app launch so transient failures (offline, model not yet set up)
+/// resolve themselves once conditions are right.
+pub fn list_failed_sources(conn: &Connection) -> Result<Vec<Source>> {
     let sql = format!(
-        "SELECT {SOURCE_COLS} FROM sources WHERE topic_id=?1 ORDER BY created_at"
+        "SELECT {SOURCE_COLS} FROM sources \
+         WHERE status='error' OR (status='draft' AND error IS NOT NULL) \
+         ORDER BY updated_at"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![topic_id], map_source)?;
+    let rows = stmt.query_map([], map_source)?;
     let mut out: Vec<Source> = rows.collect::<rusqlite::Result<_>>()?;
     for s in &mut out {
         s.tags = source_tags(conn, &s.id)?;
@@ -379,6 +460,121 @@ pub fn source_tags(conn: &Connection, source_id: &str) -> Result<Vec<String>> {
     )?;
     let rows = stmt.query_map(params![source_id], |r| r.get::<_, String>(0))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Tag names for many sources at once (source_id → sorted names), optionally
+/// restricted to one subject. One query instead of one per source.
+fn tags_by_source(
+    conn: &Connection,
+    subject_id: Option<&str>,
+) -> Result<HashMap<String, Vec<String>>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    let base = "SELECT st.source_id, t.name FROM source_tags st \
+                JOIN tags t ON t.id=st.tag_id";
+    let mut collect = |rows: &mut dyn Iterator<Item = rusqlite::Result<(String, String)>>| {
+        for row in rows {
+            let (sid, name) = row?;
+            out.entry(sid).or_default().push(name);
+        }
+        Ok::<_, Error>(())
+    };
+    match subject_id {
+        Some(sub) => {
+            let sql = format!(
+                "{base} JOIN sources s ON s.id=st.source_id \
+                 WHERE s.subject_id=?1 ORDER BY t.name"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let mut rows =
+                stmt.query_map(params![sub], |r| Ok((r.get::<_, String>(0)?, r.get(1)?)))?;
+            collect(&mut rows)?;
+        }
+        None => {
+            let sql = format!("{base} ORDER BY t.name");
+            let mut stmt = conn.prepare(&sql)?;
+            let mut rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get(1)?)))?;
+            collect(&mut rows)?;
+        }
+    }
+    Ok(out)
+}
+
+// ---- global text search --------------------------------------------------
+
+/// Case-insensitive substring matches across sources, notes, events and
+/// materials (up to `per_kind` each), normalized into SearchHits for the
+/// global Ctrl+K overlay. Semantic chunk search complements this in
+/// commands::global_search.
+pub fn text_search(conn: &Connection, query: &str, per_kind: usize) -> Result<Vec<SearchHit>> {
+    let pat = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
+    let mut out: Vec<SearchHit> = Vec::new();
+
+    let mut stmt = conn.prepare(
+        "SELECT id, subject_id, name, COALESCE(meta,'') FROM sources \
+         WHERE name LIKE ?1 ESCAPE '\\' ORDER BY updated_at DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![pat, per_kind as i64], |r| {
+        Ok(SearchHit {
+            kind: "source".into(),
+            id: r.get(0)?,
+            subject_id: Some(r.get(1)?),
+            title: r.get(2)?,
+            snippet: r.get(3)?,
+            score: 0.0,
+        })
+    })?;
+    out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+    let mut stmt = conn.prepare(
+        "SELECT id, subject_id, title, substr(body, 1, 160) FROM notes \
+         WHERE title LIKE ?1 ESCAPE '\\' OR body LIKE ?1 ESCAPE '\\' \
+         ORDER BY updated_at DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![pat, per_kind as i64], |r| {
+        Ok(SearchHit {
+            kind: "note".into(),
+            id: r.get(0)?,
+            subject_id: r.get(1)?,
+            title: r.get(2)?,
+            snippet: r.get(3)?,
+            score: 0.0,
+        })
+    })?;
+    out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+    let mut stmt = conn.prepare(
+        "SELECT id, subject_id, title, COALESCE(location, '') FROM events \
+         WHERE title LIKE ?1 ESCAPE '\\' ORDER BY start_ms DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![pat, per_kind as i64], |r| {
+        Ok(SearchHit {
+            kind: "event".into(),
+            id: r.get(0)?,
+            subject_id: r.get(1)?,
+            title: r.get(2)?,
+            snippet: r.get(3)?,
+            score: 0.0,
+        })
+    })?;
+    out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+    let mut stmt = conn.prepare(
+        "SELECT id, subject_id, title, kind FROM materials \
+         WHERE title LIKE ?1 ESCAPE '\\' ORDER BY created_at DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![pat, per_kind as i64], |r| {
+        Ok(SearchHit {
+            kind: "material".into(),
+            id: r.get(0)?,
+            subject_id: Some(r.get(1)?),
+            title: r.get(2)?,
+            snippet: r.get::<_, String>(3)?,
+            score: 0.0,
+        })
+    })?;
+    out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+    Ok(out)
 }
 
 // ---- chunks ------------------------------------------------------------
@@ -805,6 +1001,7 @@ pub fn get_cheatsheet_sections(
             state: r.get(2)?,
             items,
             image: r.get(4)?,
+            image_query: None, // transient; never stored
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -971,6 +1168,133 @@ pub fn get_material(conn: &Connection, id: &str) -> Result<MaterialRec> {
     )
     .optional()?
     .ok_or_else(|| Error::NotFound(format!("material {id}")))
+}
+
+// ---- exams (timed, locally-graded practice exams) ---------------------
+
+/// Map one `exams` row (the canonical 13-column SELECT order) to an `ExamRec`.
+/// JSON columns are parsed leniently — a corrupt/empty value yields `Null` (or an
+/// empty topic list) rather than failing the whole query.
+fn row_to_exam(r: &rusqlite::Row) -> rusqlite::Result<ExamRec> {
+    let topic_ids: Option<String> = r.get(2)?;
+    let answers: Option<String> = r.get(6)?;
+    let results: Option<String> = r.get(7)?;
+    Ok(ExamRec {
+        id: r.get(0)?,
+        subject_id: r.get(1)?,
+        topic_ids: topic_ids
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default(),
+        title: r.get(3)?,
+        duration_min: r.get(4)?,
+        questions: serde_json::from_str(&r.get::<_, String>(5)?)
+            .unwrap_or(serde_json::Value::Null),
+        answers: answers
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::Value::Null),
+        results: results
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::Value::Null),
+        status: r.get(8)?,
+        started_ms: r.get(9)?,
+        score: r.get(10)?,
+        created_at: r.get(11)?,
+        updated_at: r.get(12)?,
+    })
+}
+
+const EXAM_COLS: &str = "id, subject_id, topic_ids, title, duration_min, questions, \
+    answers, results, status, started_ms, score, created_at, updated_at";
+
+/// Persist a freshly-generated exam (status 'ready') and return its id.
+pub fn insert_exam(
+    conn: &Connection,
+    subject_id: &str,
+    topic_ids: &[String],
+    title: &str,
+    duration_min: i64,
+    questions: &serde_json::Value,
+) -> Result<String> {
+    let id = new_id();
+    let ts = now_ms();
+    let topics_json = serde_json::to_string(topic_ids).unwrap_or_else(|_| "[]".into());
+    conn.execute(
+        "INSERT INTO exams (id, subject_id, topic_ids, title, duration_min, questions, \
+         status, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'ready', ?7, ?7)",
+        params![id, subject_id, topics_json, title, duration_min, questions.to_string(), ts],
+    )?;
+    Ok(id)
+}
+
+/// Fetch a single exam by id. Errors if not found.
+pub fn get_exam(conn: &Connection, id: &str) -> Result<ExamRec> {
+    conn.query_row(
+        &format!("SELECT {EXAM_COLS} FROM exams WHERE id=?1"),
+        params![id],
+        row_to_exam,
+    )
+    .optional()?
+    .ok_or_else(|| Error::NotFound(format!("exam {id}")))
+}
+
+/// A subject's exams, newest first (drives the setup screen's past-exam list).
+pub fn list_exams(conn: &Connection, subject_id: &str) -> Result<Vec<ExamRec>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {EXAM_COLS} FROM exams WHERE subject_id=?1 ORDER BY created_at DESC"
+    ))?;
+    let rows = stmt.query_map(params![subject_id], row_to_exam)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Mark an exam started: status 'in_progress' + the start timestamp (idempotent —
+/// re-starting keeps the original start time so the countdown stays honest).
+pub fn start_exam(conn: &Connection, id: &str) -> Result<()> {
+    let ts = now_ms();
+    let n = conn.execute(
+        "UPDATE exams SET status='in_progress', \
+         started_ms=COALESCE(started_ms, ?2), updated_at=?2 \
+         WHERE id=?1 AND status<>'graded'",
+        params![id, ts],
+    )?;
+    if n == 0 {
+        // Either no such exam, or it's already graded — surface a clear error only
+        // when the row is genuinely missing.
+        let exists: bool = conn
+            .query_row("SELECT 1 FROM exams WHERE id=?1", params![id], |_| Ok(true))
+            .optional()?
+            .unwrap_or(false);
+        if !exists {
+            return Err(Error::NotFound(format!("exam {id}")));
+        }
+    }
+    Ok(())
+}
+
+/// Persist a graded submission: the student's answers, the grading results, the
+/// final score %, and status 'graded'.
+pub fn finalize_exam(
+    conn: &Connection,
+    id: &str,
+    answers: &serde_json::Value,
+    results: &serde_json::Value,
+    score: f64,
+) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE exams SET answers=?2, results=?3, score=?4, status='graded', updated_at=?5 \
+         WHERE id=?1",
+        params![id, answers.to_string(), results.to_string(), score, now_ms()],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound(format!("exam {id}")));
+    }
+    Ok(())
+}
+
+/// Delete an exam.
+pub fn delete_exam(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM exams WHERE id=?1", params![id])?;
+    Ok(())
 }
 
 // ---- chat history (multiple conversation threads per subject) ----------
@@ -1428,13 +1752,16 @@ fn map_event(r: &rusqlite::Row) -> rusqlite::Result<CalEvent> {
         google_id: r.get(13)?,
         tags: text_to_tags(r.get(16)?),
         checklist: text_to_ids(r.get(17)?),
+        priority: r.get(18)?,
+        topic_ids: text_to_tags(r.get(19)?),
         created_at: r.get(14)?,
         updated_at: r.get(15)?,
     })
 }
 
 const EVENT_COLS: &str = "id, subject_id, title, description, location, color, start_ms, end_ms, \
-    all_day, kind, done, reminder_ms, notified, google_id, created_at, updated_at, tags, checklist";
+    all_day, kind, done, reminder_ms, notified, google_id, created_at, updated_at, tags, checklist, \
+    priority, topic_ids";
 
 #[allow(clippy::too_many_arguments)]
 pub fn insert_event(
@@ -1450,17 +1777,21 @@ pub fn insert_event(
     kind: &str,
     reminder_ms: Option<i64>,
     tags: &[String],
+    priority: Option<&str>,
+    topic_ids: &[String],
 ) -> Result<String> {
     let id = new_id();
     let ts = now_ms();
     conn.execute(
         "INSERT INTO events
             (id, subject_id, title, description, location, color, start_ms, end_ms,
-             all_day, kind, done, reminder_ms, notified, created_at, updated_at, tags)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, 0, ?12, ?12, ?13)",
+             all_day, kind, done, reminder_ms, notified, created_at, updated_at, tags,
+             priority, topic_ids)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, 0, ?12, ?12, ?13, ?14, ?15)",
         params![
             id, subject_id, title, description, location, color, start_ms, end_ms,
-            all_day as i64, kind, reminder_ms, ts, tags_to_text(tags)
+            all_day as i64, kind, reminder_ms, ts, tags_to_text(tags),
+            priority, tags_to_text(topic_ids)
         ],
     )?;
     Ok(id)
@@ -1505,16 +1836,20 @@ pub fn update_event(
     kind: &str,
     reminder_ms: Option<i64>,
     tags: &[String],
+    priority: Option<&str>,
+    topic_ids: &[String],
 ) -> Result<()> {
     // Editing an event resets its notified flag so a moved reminder fires again.
     let n = conn.execute(
         "UPDATE events SET
             title=?2, description=?3, location=?4, color=?5, start_ms=?6, end_ms=?7,
-            all_day=?8, kind=?9, reminder_ms=?10, notified=0, updated_at=?11, tags=?12
+            all_day=?8, kind=?9, reminder_ms=?10, notified=0, updated_at=?11, tags=?12,
+            priority=?13, topic_ids=?14
          WHERE id=?1",
         params![
             id, title, description, location, color, start_ms, end_ms,
-            all_day as i64, kind, reminder_ms, now_ms(), tags_to_text(tags)
+            all_day as i64, kind, reminder_ms, now_ms(), tags_to_text(tags),
+            priority, tags_to_text(topic_ids)
         ],
     )?;
     if n == 0 {
@@ -1688,12 +2023,65 @@ pub fn wrong_items(conn: &Connection, subject_id: &str, kind: &str) -> Result<Ve
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-// ---- SM-2 spaced repetition -------------------------------------------
+// ---- FSRS spaced repetition -------------------------------------------
+//
+// FSRS-4.5 (open spaced-repetition scheduler): each card carries a memory
+// `stability` (days until recall probability drops to 90%) and `difficulty`
+// (1-10). Replaces SM-2, whose fixed 1→6→×ease ladder badly over/under-spaces
+// real retention. Default published parameters; same grading API as before.
 
-/// Grade a card with the SM-2 algorithm and upsert its schedule. `quality` is
-/// 0-5 (Again≈1, Hard≈3, Good≈4, Easy≈5). Also logs an `attempts` row (correct =
-/// quality >= 3) so the legacy "review missed" set keeps working. Returns the new
-/// schedule. SM-2 reference: ease' = ease + (0.1 - (5-q)(0.08 + (5-q)0.02)), min 1.3.
+const FSRS_W: [f64; 17] = [
+    0.4872, 1.4003, 3.7145, 13.8206, 5.1618, 1.2298, 0.8975, 0.0310, 1.6474,
+    0.1367, 1.0461, 2.1072, 0.0793, 0.3246, 1.5870, 0.2272, 2.8755,
+];
+const FSRS_DECAY: f64 = -0.5;
+const FSRS_FACTOR: f64 = 19.0 / 81.0;
+const FSRS_RETENTION: f64 = 0.9; // schedule reviews at the 90% recall point
+
+/// First-review stability for grade `g` (1=Again … 4=Easy).
+fn fsrs_init_stability(g: usize) -> f64 {
+    FSRS_W[g - 1].max(0.1)
+}
+fn fsrs_init_difficulty(g: usize) -> f64 {
+    (FSRS_W[4] - (g as f64 - 3.0) * FSRS_W[5]).clamp(1.0, 10.0)
+}
+fn fsrs_next_difficulty(d: f64, g: usize) -> f64 {
+    let next = d - FSRS_W[6] * (g as f64 - 3.0);
+    // mean-reverts toward the initial "Easy" difficulty so D can't run away
+    (FSRS_W[7] * fsrs_init_difficulty(4) + (1.0 - FSRS_W[7]) * next).clamp(1.0, 10.0)
+}
+/// Probability of recall after `elapsed_d` days at stability `s`.
+fn fsrs_retrievability(elapsed_d: f64, s: f64) -> f64 {
+    (1.0 + FSRS_FACTOR * elapsed_d / s.max(0.1)).powf(FSRS_DECAY)
+}
+fn fsrs_next_stability(d: f64, s: f64, r: f64, g: usize) -> f64 {
+    if g == 1 {
+        // post-lapse stability: shrinks, never exceeds what it was
+        let sf = FSRS_W[11]
+            * d.powf(-FSRS_W[12])
+            * ((s + 1.0).powf(FSRS_W[13]) - 1.0)
+            * (FSRS_W[14] * (1.0 - r)).exp();
+        sf.min(s).max(0.1)
+    } else {
+        let hard = if g == 2 { FSRS_W[15] } else { 1.0 };
+        let easy = if g == 4 { FSRS_W[16] } else { 1.0 };
+        let grow = FSRS_W[8].exp()
+            * (11.0 - d)
+            * s.powf(-FSRS_W[9])
+            * ((FSRS_W[10] * (1.0 - r)).exp() - 1.0);
+        (s * (1.0 + grow * hard * easy)).max(0.1)
+    }
+}
+/// Days until recall probability decays to FSRS_RETENTION.
+fn fsrs_interval(s: f64) -> i64 {
+    let days = s / FSRS_FACTOR * (FSRS_RETENTION.powf(1.0 / FSRS_DECAY) - 1.0);
+    (days.round() as i64).clamp(1, 36_500)
+}
+
+/// Grade a card with FSRS and upsert its schedule. `quality` is 0-5 from the
+/// existing UI (Again≈1, Hard≈3, Good≈4, Easy≈5), mapped to FSRS's four grades.
+/// Also logs an `attempts` row (correct = quality >= 3) so the legacy "review
+/// missed" set keeps working. Returns the new schedule.
 pub fn srs_grade(
     conn: &Connection,
     subject_id: &str,
@@ -1706,31 +2094,49 @@ pub fn srs_grade(
     let q = quality.clamp(0, 5);
     let now = now_ms();
 
-    // Current schedule for this item, or SM-2 defaults for a brand-new card.
-    let existing: Option<(f64, i64, i64, i64)> = conn
+    // Current schedule, or defaults for a brand-new card. stability/difficulty
+    // are NULL on rows last scheduled under SM-2 — seeded below.
+    #[allow(clippy::type_complexity)]
+    let existing: Option<(f64, i64, i64, i64, Option<f64>, Option<f64>, i64)> = conn
         .query_row(
-            "SELECT ease, interval_d, reps, lapses FROM srs_cards
-             WHERE subject_id=?1 AND kind=?2 AND item_key=?3",
+            "SELECT ease, interval_d, reps, lapses, stability, difficulty, updated_at
+             FROM srs_cards WHERE subject_id=?1 AND kind=?2 AND item_key=?3",
             params![subject_id, kind, item_key],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
         )
         .optional()?;
-    let (mut ease, mut interval_d, mut reps, mut lapses) = existing.unwrap_or((2.5, 0, 0, 0));
+    let is_new = existing.is_none();
+    let (mut ease, mut interval_d, mut reps, mut lapses, stability, difficulty, last_seen) =
+        existing.unwrap_or((2.5, 0, 0, 0, None, None, now));
 
-    if q < 3 {
-        // Lapse: reset reps, relearn tomorrow.
+    let g: usize = match q {
+        0..=2 => 1, // Again
+        3 => 2,     // Hard
+        4 => 3,     // Good
+        _ => 4,     // Easy
+    };
+    let (s, d) = if is_new {
+        (fsrs_init_stability(g), fsrs_init_difficulty(g))
+    } else {
+        // SM-2 rows seed FSRS from their interval (≈ stability at 90% retention)
+        // and a rough ease→difficulty mapping; FSRS self-corrects from there.
+        let s0 = stability.unwrap_or((interval_d as f64).max(0.5));
+        let d0 = difficulty.unwrap_or((11.0 - 3.0 * ease).clamp(1.0, 10.0));
+        let elapsed_d = ((now - last_seen) as f64 / 86_400_000.0).max(0.0);
+        let r = fsrs_retrievability(elapsed_d, s0);
+        (fsrs_next_stability(d0, s0, r, g), fsrs_next_difficulty(d0, g))
+    };
+
+    if g == 1 {
+        // Lapse: relearn tomorrow (stability already shrunk by the forget branch).
         reps = 0;
         interval_d = 1;
         lapses += 1;
     } else {
         reps += 1;
-        interval_d = match reps {
-            1 => 1,
-            2 => 6,
-            _ => ((interval_d as f64) * ease).round() as i64,
-        }
-        .max(1);
+        interval_d = fsrs_interval(s);
     }
+    // Keep the SM-2 ease as a legacy display value so existing UI stays stable.
     let qf = q as f64;
     ease = (ease + (0.1 - (5.0 - qf) * (0.08 + (5.0 - qf) * 0.02))).max(1.3);
     let due_at = now + interval_d * 86_400_000;
@@ -1738,16 +2144,18 @@ pub fn srs_grade(
     conn.execute(
         "INSERT INTO srs_cards
             (id, subject_id, material_id, kind, item_index, item_key,
-             ease, interval_d, reps, lapses, last_grade, due_at, created_at, updated_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13)
+             ease, interval_d, reps, lapses, last_grade, due_at, created_at, updated_at,
+             stability, difficulty)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13,?14,?15)
          ON CONFLICT(subject_id, kind, item_key) DO UPDATE SET
             material_id=excluded.material_id, item_index=excluded.item_index,
             ease=excluded.ease, interval_d=excluded.interval_d, reps=excluded.reps,
             lapses=excluded.lapses, last_grade=excluded.last_grade,
-            due_at=excluded.due_at, updated_at=excluded.updated_at",
+            due_at=excluded.due_at, updated_at=excluded.updated_at,
+            stability=excluded.stability, difficulty=excluded.difficulty",
         params![
             new_id(), subject_id, material_id, kind, item_index, item_key,
-            ease, interval_d, reps, lapses, q, due_at, now
+            ease, interval_d, reps, lapses, q, due_at, now, s, d
         ],
     )?;
 
@@ -1897,6 +2305,460 @@ pub fn move_source(
     Ok(())
 }
 
+// ---- pomodoro sessions + study analytics ------------------------------
+
+/// Record one study segment. `kind` is "work" (a finished pomodoro focus
+/// phase), "break" (logged for completeness), or "app" (passive focused
+/// in-app time, accumulated while the window is visible+focused). Both "work"
+/// and "app" rows count toward study minutes in the analytics dashboard.
+pub fn insert_pomodoro_session(
+    conn: &Connection,
+    subject_id: Option<&str>,
+    kind: &str,
+    started_ms: i64,
+    ended_ms: i64,
+) -> Result<String> {
+    let id = new_id();
+    conn.execute(
+        "INSERT INTO pomodoro_sessions
+            (id, subject_id, kind, started_ms, ended_ms, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![id, subject_id, kind, started_ms, ended_ms, now_ms()],
+    )?;
+    Ok(id)
+}
+
+/// Build the whole Study Analytics dashboard in one pass.
+///
+/// `days` bounds the per-day charts (study minutes, reviews/accuracy) and the
+/// per-subject roll-up. Per-day buckets use the LOCAL calendar date so they
+/// match what the user sees, not UTC midnight. SQL returns only days/subjects
+/// with activity; we fill the gaps (and the 7-day due forecast) in Rust so the
+/// charts always span a contiguous range. Everything runs on the single
+/// connection the caller already holds — one lock for the whole dashboard.
+pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummary> {
+    let days = days.clamp(1, 365);
+    let today_floor = day_floor_ms(now_ms());
+    // Inclusive window start at local midnight, `days` days ago (so a 30-day
+    // window covers today plus the previous 29 days).
+    let since_ms = today_floor - (days - 1) * DAY_MS;
+    // The heatmap always spans a full rolling year (366 days, leap-safe).
+    let year_since_ms = today_floor - (YEAR_DAYS - 1) * DAY_MS;
+
+    // ── per-day study minutes (work + passive app segments) ──
+    // Minutes are summed from each segment's own duration so a partially-skipped
+    // session still contributes its real elapsed time. "app" rows are passive
+    // focused in-app time (e.g. studying the cheatsheet) so study time isn't 0
+    // for users who never run a pomodoro. We query the FULL YEAR once and derive
+    // both the windowed `minutes_per_day` and the year-long heatmap from it.
+    let mut stmt = conn.prepare(
+        "SELECT date(started_ms/1000, 'unixepoch', 'localtime') AS d,
+                SUM(ended_ms - started_ms) AS ms
+         FROM pomodoro_sessions
+         WHERE kind IN ('work','app') AND started_ms >= ?1
+         GROUP BY d",
+    )?;
+    let mut minutes_by_day: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for row in stmt.query_map(params![year_since_ms], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })? {
+        let (d, ms) = row?;
+        minutes_by_day.insert(d, ms / 60_000);
+    }
+
+    // Full-year daily series for the contributions heatmap (oldest → newest).
+    let mut year_minutes = Vec::with_capacity(YEAR_DAYS as usize);
+    for i in 0..YEAR_DAYS {
+        let day = local_day_str(year_since_ms + i * DAY_MS);
+        let minutes = *minutes_by_day.get(&day).unwrap_or(&0);
+        year_minutes.push(DayMinutes { day, minutes });
+    }
+
+    // ── per-day reviews + accuracy (attempts) ──
+    let mut stmt = conn.prepare(
+        "SELECT date(created_at/1000, 'unixepoch', 'localtime') AS d,
+                COUNT(*) AS n,
+                SUM(correct) AS ok
+         FROM attempts
+         WHERE created_at >= ?1
+         GROUP BY d",
+    )?;
+    let mut reviews_by_day: std::collections::HashMap<String, (i64, i64)> =
+        std::collections::HashMap::new();
+    for row in stmt.query_map(params![since_ms], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+    })? {
+        let (d, n, ok) = row?;
+        reviews_by_day.insert(d, (n, ok));
+    }
+
+    // Walk the contiguous day range oldest → newest, filling zeros for gaps.
+    let mut minutes_per_day = Vec::with_capacity(days as usize);
+    let mut reviews_per_day = Vec::with_capacity(days as usize);
+    for i in 0..days {
+        let day = local_day_str(since_ms + i * DAY_MS);
+        let minutes = *minutes_by_day.get(&day).unwrap_or(&0);
+        minutes_per_day.push(DayMinutes { day: day.clone(), minutes });
+        let (reviews, correct) = *reviews_by_day.get(&day).unwrap_or(&(0, 0));
+        let accuracy = if reviews > 0 { correct as f64 / reviews as f64 } else { 0.0 };
+        reviews_per_day.push(DayReviews { day, reviews, correct, accuracy });
+    }
+
+    // ── current streak: consecutive days ending today with ANY activity ──
+    let today = local_day_str(now_ms());
+    let mut streak = 0i64;
+    let mut cursor = day_floor_ms(now_ms());
+    loop {
+        let day = local_day_str(cursor);
+        let had_work = *minutes_by_day.get(&day).unwrap_or(&0) > 0;
+        let had_review = reviews_by_day.get(&day).map(|(n, _)| *n > 0).unwrap_or(false);
+        if had_work || had_review {
+            streak += 1;
+            cursor -= DAY_MS;
+        } else {
+            // Today with no activity yet doesn't break a streak earned yesterday:
+            // skip today once, then require unbroken activity backward.
+            if day == today {
+                cursor -= DAY_MS;
+                continue;
+            }
+            break;
+        }
+        // Stop once we walk past the full-year window (no data beyond it). The
+        // year of study-minute data is loaded above, so a long streak counts.
+        if cursor < year_since_ms {
+            break;
+        }
+    }
+
+    // ── per-subject roll-up (minutes + reviews + accuracy) over the window ──
+    // Two grouped queries merged by subject id; avoids a cross-join double count.
+    let mut subj: std::collections::HashMap<String, SubjectStat> = std::collections::HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT subject_id, SUM(ended_ms - started_ms) AS ms
+         FROM pomodoro_sessions
+         WHERE kind IN ('work','app') AND started_ms >= ?1 AND subject_id IS NOT NULL
+         GROUP BY subject_id",
+    )?;
+    for row in stmt.query_map(params![since_ms], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })? {
+        let (sid, ms) = row?;
+        subj.entry(sid.clone())
+            .or_insert_with(|| SubjectStat {
+                subject_id: sid,
+                minutes: 0,
+                reviews: 0,
+                correct: 0,
+                accuracy: 0.0,
+            })
+            .minutes = ms / 60_000;
+    }
+    let mut stmt = conn.prepare(
+        "SELECT subject_id, COUNT(*) AS n, SUM(correct) AS ok
+         FROM attempts
+         WHERE created_at >= ?1
+         GROUP BY subject_id",
+    )?;
+    for row in stmt.query_map(params![since_ms], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+    })? {
+        let (sid, n, ok) = row?;
+        let e = subj.entry(sid.clone()).or_insert_with(|| SubjectStat {
+            subject_id: sid,
+            minutes: 0,
+            reviews: 0,
+            correct: 0,
+            accuracy: 0.0,
+        });
+        e.reviews = n;
+        e.correct = ok;
+    }
+    let mut per_subject: Vec<SubjectStat> = subj.into_values().collect();
+    for s in per_subject.iter_mut() {
+        s.accuracy = if s.reviews > 0 { s.correct as f64 / s.reviews as f64 } else { 0.0 };
+    }
+    // Most-studied first, then most-reviewed — stable, useful ordering for a table.
+    per_subject.sort_by(|a, b| {
+        b.minutes
+            .cmp(&a.minutes)
+            .then(b.reviews.cmp(&a.reviews))
+            .then(a.subject_id.cmp(&b.subject_id))
+    });
+
+    // ── due forecast: cards becoming due each of the next 7 days ──
+    let mut stmt = conn.prepare(
+        "SELECT date(due_at/1000, 'unixepoch', 'localtime') AS d, COUNT(*) AS n
+         FROM srs_cards
+         WHERE due_at >= ?1 AND due_at < ?2
+         GROUP BY d",
+    )?;
+    let forecast_start = day_floor_ms(now_ms());
+    let forecast_end = forecast_start + 7 * DAY_MS;
+    let mut due_by_day: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for row in stmt.query_map(params![forecast_start, forecast_end], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })? {
+        let (d, n) = row?;
+        due_by_day.insert(d, n);
+    }
+    let mut due_forecast = Vec::with_capacity(7);
+    for i in 0..7 {
+        let day = local_day_str(forecast_start + i * DAY_MS);
+        let due = *due_by_day.get(&day).unwrap_or(&0);
+        due_forecast.push(DueDay { day, due });
+    }
+
+    // ── FSRS totals (all scheduled cards, not windowed) ──
+    let cards: i64 = conn.query_row("SELECT COUNT(*) FROM srs_cards", [], |r| r.get(0))?;
+    let lapses: i64 = conn
+        .query_row("SELECT COALESCE(SUM(lapses), 0) FROM srs_cards", [], |r| r.get(0))?;
+    // Only average over cards that actually carry an FSRS stability (legacy SM-2
+    // rows have NULL until first re-graded under FSRS).
+    let avg_stability: f64 = conn
+        .query_row(
+            "SELECT COALESCE(AVG(stability), 0.0) FROM srs_cards WHERE stability IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )?;
+    let fsrs = FsrsTotals { cards, avg_stability, lapses };
+
+    // ── rolling 7-day headline figures ──
+    let week_start = day_floor_ms(now_ms()) - 6 * DAY_MS;
+    let minutes_week: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(ended_ms - started_ms), 0) / 60000
+         FROM pomodoro_sessions WHERE kind IN ('work','app') AND started_ms >= ?1",
+        params![week_start],
+        |r| r.get(0),
+    )?;
+    let (reviews_week, correct_week): (i64, i64) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(correct), 0) FROM attempts WHERE created_at >= ?1",
+        params![week_start],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let accuracy_week = if reviews_week > 0 {
+        correct_week as f64 / reviews_week as f64
+    } else {
+        0.0
+    };
+
+    let weak_topics = weak_topics(conn, since_ms)?;
+
+    Ok(AnalyticsSummary {
+        minutes_per_day,
+        year_minutes,
+        reviews_per_day,
+        due_forecast,
+        per_subject,
+        weak_topics,
+        fsrs,
+        streak,
+        minutes_week,
+        reviews_week,
+        accuracy_week,
+    })
+}
+
+/// Rank topics that need the most work, blending low review accuracy, high
+/// lapses, and low FSRS stability. Attribution flows attempts/cards → materials
+/// → topics: rows whose material has no `topic_id` (or no material) are simply
+/// skipped — we never guess. Returns the weakest ~8 across all subjects.
+fn weak_topics(conn: &Connection, since_ms: i64) -> Result<Vec<WeakTopic>> {
+    // Accumulator keyed by topic id, carrying its subject + name and the merged
+    // attempt/card signals.
+    struct Acc {
+        subject_id: String,
+        topic_name: String,
+        reviews: i64,
+        correct: i64,
+        lapses: i64,
+        stab_sum: f64,
+        stab_n: i64,
+    }
+    let mut by_topic: std::collections::HashMap<String, Acc> = std::collections::HashMap::new();
+
+    // ── review attempts attributed via the answered material's topic ──
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.subject_id, t.name, COUNT(*) AS n, SUM(a.correct) AS ok
+         FROM attempts a
+         JOIN materials m ON m.id = a.material_id
+         JOIN topics t ON t.id = m.topic_id
+         WHERE a.created_at >= ?1 AND m.topic_id IS NOT NULL
+         GROUP BY t.id",
+    )?;
+    for row in stmt.query_map(params![since_ms], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, i64>(4)?,
+        ))
+    })? {
+        let (tid, sid, name, n, ok) = row?;
+        let e = by_topic.entry(tid).or_insert_with(|| Acc {
+            subject_id: sid,
+            topic_name: name,
+            reviews: 0,
+            correct: 0,
+            lapses: 0,
+            stab_sum: 0.0,
+            stab_n: 0,
+        });
+        e.reviews += n;
+        e.correct += ok;
+    }
+
+    // ── FSRS lapses + stability attributed via each card's material topic ──
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.subject_id, t.name,
+                COALESCE(SUM(c.lapses), 0) AS lapses,
+                COALESCE(SUM(c.stability), 0.0) AS stab_sum,
+                COUNT(c.stability) AS stab_n
+         FROM srs_cards c
+         JOIN materials m ON m.id = c.material_id
+         JOIN topics t ON t.id = m.topic_id
+         WHERE m.topic_id IS NOT NULL
+         GROUP BY t.id",
+    )?;
+    for row in stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, f64>(4)?,
+            r.get::<_, i64>(5)?,
+        ))
+    })? {
+        let (tid, sid, name, lapses, stab_sum, stab_n) = row?;
+        let e = by_topic.entry(tid).or_insert_with(|| Acc {
+            subject_id: sid,
+            topic_name: name,
+            reviews: 0,
+            correct: 0,
+            lapses: 0,
+            stab_sum: 0.0,
+            stab_n: 0,
+        });
+        e.lapses += lapses;
+        e.stab_sum += stab_sum;
+        e.stab_n += stab_n;
+    }
+
+    // Score each topic: higher == weaker. Three independent signals, each scaled
+    // to ~0..1 so none dominates, then summed:
+    //   • inaccuracy  = 1 - accuracy            (only meaningful with reviews)
+    //   • lapse load  = lapses / (lapses + 3)   (saturating, so 1 lapse ≠ 10)
+    //   • fragility   = 1 - stability/(stability+14)  (low stability → high)
+    let mut scored: Vec<(f64, WeakTopic)> = by_topic
+        .into_iter()
+        .map(|(topic_id, a)| {
+            let accuracy = if a.reviews > 0 { a.correct as f64 / a.reviews as f64 } else { 0.0 };
+            let avg_stability = if a.stab_n > 0 { a.stab_sum / a.stab_n as f64 } else { 0.0 };
+
+            let inaccuracy = if a.reviews > 0 { 1.0 - accuracy } else { 0.0 };
+            let lapse_load = a.lapses as f64 / (a.lapses as f64 + 3.0);
+            // Only penalize fragility when we actually have a stability reading.
+            let fragility = if a.stab_n > 0 {
+                1.0 - avg_stability / (avg_stability + 14.0)
+            } else {
+                0.0
+            };
+            let score = inaccuracy + lapse_load + fragility;
+
+            // A short, human reason naming the dominant weakness(es).
+            let mut bits: Vec<String> = Vec::new();
+            if a.reviews > 0 && accuracy < 0.7 {
+                bits.push(format!("{}% accuracy", (accuracy * 100.0).round() as i64));
+            }
+            if a.lapses > 0 {
+                bits.push(format!("{} lapse{}", a.lapses, if a.lapses == 1 { "" } else { "s" }));
+            }
+            if a.stab_n > 0 && avg_stability < 7.0 {
+                bits.push("low retention".into());
+            }
+            let reason = if bits.is_empty() { "Needs review".into() } else { bits.join(" · ") };
+
+            (
+                score,
+                WeakTopic {
+                    subject_id: a.subject_id,
+                    topic_id,
+                    topic_name: a.topic_name,
+                    reviews: a.reviews,
+                    correct: a.correct,
+                    accuracy,
+                    lapses: a.lapses,
+                    avg_stability,
+                    reason,
+                },
+            )
+        })
+        // Drop topics with no weakness signal at all (perfect & stable → not "weak").
+        .filter(|(score, _)| *score > 0.0)
+        .collect();
+
+    // Weakest first; ties broken by topic name so ordering is stable run-to-run.
+    scored.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.1.topic_name.cmp(&b.1.topic_name))
+    });
+
+    Ok(scored.into_iter().take(8).map(|(_, wt)| wt).collect())
+}
+
+/// Milliseconds in a day — analytics steps the day cursor by this.
+const DAY_MS: i64 = 86_400_000;
+
+/// Days in the contributions heatmap window (a full rolling year, leap-safe).
+const YEAR_DAYS: i64 = 366;
+
+/// Local-midnight (ms epoch) of the day containing `ms`. Uses SQLite's own
+/// 'localtime' conversion via a tiny helper query so the day boundaries match
+/// the GROUP BY date() buckets exactly (same TZ rules), avoiding off-by-one
+/// drift between Rust and SQLite timezone handling.
+fn day_floor_ms(ms: i64) -> i64 {
+    // Fallback to a crude UTC floor only if the (always-available) datetime
+    // functions somehow fail; correctness here just affects bucket alignment.
+    LOCAL_MIDNIGHT
+        .with(|c| {
+            let conn = c.borrow();
+            conn.query_row(
+                "SELECT CAST(strftime('%s', date(?1/1000, 'unixepoch', 'localtime')) AS INTEGER) * 1000",
+                params![ms],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()
+        })
+        .unwrap_or_else(|| ms - ms.rem_euclid(DAY_MS))
+}
+
+/// Local-date string ("YYYY-MM-DD") for `ms` — matches the SQL date() buckets.
+fn local_day_str(ms: i64) -> String {
+    LOCAL_MIDNIGHT
+        .with(|c| {
+            let conn = c.borrow();
+            conn.query_row(
+                "SELECT date(?1/1000, 'unixepoch', 'localtime')",
+                params![ms],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+        })
+        .unwrap_or_default()
+}
+
+thread_local! {
+    // A scratch in-memory connection used purely for SQLite's date/time
+    // functions (timezone-correct day math). Cheap, thread-local, no schema —
+    // keeps the day-bucket helpers in lockstep with the GROUP BY queries above
+    // without borrowing the app connection (which the caller already holds).
+    static LOCAL_MIDNIGHT: std::cell::RefCell<Connection> =
+        std::cell::RefCell::new(Connection::open_in_memory().expect("scratch conn"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1921,37 +2783,59 @@ mod tests {
     }
 
     #[test]
-    fn srs_sm2_schedule_progresses_and_lapses() {
+    fn srs_fsrs_schedule_progresses_and_lapses() {
         let st = AppState::in_memory().unwrap();
         let c = st.db.lock().unwrap();
         let sid = insert_subject(&c, "Bio", None, None, None).unwrap();
         let key = "What is ATP?";
 
-        // First "Good" grade: a new card → interval 1 day, reps 1.
+        // First "Good" grade: new card → interval ≈ initial Good stability (~4d).
         let r1 = srs_grade(&c, &sid, None, "flashcard", 0, key, 4).unwrap();
         assert_eq!(r1.reps, 1);
-        assert_eq!(r1.interval_d, 1);
+        assert!(r1.interval_d >= 1, "got {}", r1.interval_d);
 
-        // Second "Good": SM-2 second step → interval 6 days, reps 2.
+        // Repeated grades at the SAME instant: retrievability is still 1.0, so
+        // FSRS (correctly) grants no stability gain — interval must not shrink.
+        // Growth-with-elapsed-time is asserted in fsrs_math_is_sane.
         let r2 = srs_grade(&c, &sid, None, "flashcard", 0, key, 4).unwrap();
         assert_eq!(r2.reps, 2);
-        assert_eq!(r2.interval_d, 6);
-
-        // Third "Good": interval = round(6 * ease) with ease > 1.3.
-        let r3 = srs_grade(&c, &sid, None, "flashcard", 0, key, 4).unwrap();
+        assert!(r2.interval_d >= r1.interval_d, "{} < {}", r2.interval_d, r1.interval_d);
+        let r3 = srs_grade(&c, &sid, None, "flashcard", 0, key, 5).unwrap();
         assert_eq!(r3.reps, 3);
-        assert!(r3.interval_d > 6, "interval should grow: {}", r3.interval_d);
+        assert!(r3.interval_d >= r2.interval_d, "{} < {}", r3.interval_d, r2.interval_d);
 
         // Exactly one schedule row (upsert, not insert-per-grade); 1 total card.
         assert_eq!(srs_stats(&c, &sid, "flashcard").unwrap().total, 1);
 
-        // "Again" lapse resets reps to 0 and interval back to 1 day.
+        // "Again" lapse resets reps to 0 and relearns tomorrow.
         let r4 = srs_grade(&c, &sid, None, "flashcard", 0, key, 1).unwrap();
         assert_eq!(r4.reps, 0);
         assert_eq!(r4.interval_d, 1);
 
         // The legacy "wrong items" set picks up the lapse (latest attempt wrong).
         assert_eq!(wrong_items(&c, &sid, "flashcard").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn fsrs_math_is_sane() {
+        // Initial stabilities are ordered Again < Hard < Good < Easy.
+        assert!(fsrs_init_stability(1) < fsrs_init_stability(2));
+        assert!(fsrs_init_stability(2) < fsrs_init_stability(3));
+        assert!(fsrs_init_stability(3) < fsrs_init_stability(4));
+        // Difficulty stays in [1,10] and Easy reduces it.
+        let d = fsrs_init_difficulty(3);
+        assert!((1.0..=10.0).contains(&d));
+        assert!(fsrs_next_difficulty(d, 4) < d);
+        assert!(fsrs_next_difficulty(d, 1) > d);
+        // Retrievability decays with elapsed time.
+        assert!(fsrs_retrievability(0.0, 5.0) > fsrs_retrievability(10.0, 5.0));
+        // Successful review grows stability; a lapse shrinks it.
+        let s = 10.0;
+        let r = fsrs_retrievability(10.0, s);
+        assert!(fsrs_next_stability(d, s, r, 3) > s);
+        assert!(fsrs_next_stability(d, s, r, 1) < s);
+        // At 90% retention the interval is ≈ the stability (FSRS design point).
+        assert_eq!(fsrs_interval(10.0), 10);
     }
 
     #[test]
@@ -2012,11 +2896,11 @@ mod tests {
         let st = AppState::in_memory().unwrap();
         let c = st.db.lock().unwrap();
         let due = insert_event(
-            &c, None, "Exam", None, None, None, 1_000, Some(2_000), false, "event", Some(500), &[],
+            &c, None, "Exam", None, None, None, 1_000, Some(2_000), false, "event", Some(500), &[], None, &[],
         )
         .unwrap();
         let _future = insert_event(
-            &c, None, "Later", None, None, None, 9_000, None, false, "task", Some(8_000), &[],
+            &c, None, "Later", None, None, None, 9_000, None, false, "task", Some(8_000), &[], None, &[],
         )
         .unwrap();
         // only the past-due, un-notified reminder comes back at now=1000
@@ -2063,5 +2947,84 @@ mod tests {
             )
             .unwrap();
         assert_eq!(scoped, 1);
+    }
+
+    #[test]
+    fn analytics_summary_rolls_up_minutes_reviews_and_streak() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let sid = insert_subject(&c, "Math", None, None, None).unwrap();
+
+        // A 25-minute work session + 10 minutes of passive app time, plus two
+        // answers. Anchor the segments to local MIDDAY today so they never cross
+        // a day boundary (a session that did would correctly bucket to its start
+        // day) — keeps the per-day assertions deterministic at any run time.
+        let midday = day_floor_ms(now_ms()) + 12 * 60 * 60_000;
+        insert_pomodoro_session(&c, Some(&sid), "work", midday, midday + 25 * 60_000).unwrap();
+        insert_pomodoro_session(&c, Some(&sid), "app", midday, midday + 10 * 60_000).unwrap();
+        // A break segment must NOT count toward study minutes.
+        insert_pomodoro_session(&c, Some(&sid), "break", midday, midday + 5 * 60_000).unwrap();
+        record_attempt(&c, &sid, None, "quiz", 0, "Q1", true).unwrap();
+        record_attempt(&c, &sid, None, "quiz", 1, "Q2", false).unwrap();
+
+        let s = analytics_summary(&c, 30).unwrap();
+        // 30-day window of contiguous days, today is the last bucket.
+        assert_eq!(s.minutes_per_day.len(), 30);
+        assert_eq!(s.minutes_per_day.last().unwrap().minutes, 35, "work + app, no break");
+        // The heatmap series always spans a full year, today last, same minutes.
+        assert_eq!(s.year_minutes.len(), 366);
+        assert_eq!(s.year_minutes.last().unwrap().minutes, 35, "today's bucket");
+        assert_eq!(
+            s.year_minutes.last().unwrap().day,
+            s.minutes_per_day.last().unwrap().day,
+            "both series end on today"
+        );
+        assert_eq!(s.minutes_week, 35);
+        assert_eq!(s.reviews_week, 2);
+        assert!((s.accuracy_week - 0.5).abs() < 1e-9, "1 of 2 correct");
+        assert_eq!(s.streak, 1, "today has activity");
+        assert_eq!(s.due_forecast.len(), 7);
+
+        // Per-subject roll-up carries both minutes and reviews for the subject.
+        assert_eq!(s.per_subject.len(), 1);
+        let ps = &s.per_subject[0];
+        assert_eq!(ps.subject_id, sid);
+        assert_eq!(ps.minutes, 35);
+        assert_eq!(ps.reviews, 2);
+        assert_eq!(ps.correct, 1);
+    }
+
+    #[test]
+    fn weak_topics_attributes_via_material_and_skips_unattributable() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let sid = insert_subject(&c, "Bio", None, None, None).unwrap();
+        let weak = insert_topic(&c, &sid, "Krebs cycle", None, &[]).unwrap();
+        let payload = serde_json::json!({});
+        let mat = save_material(&c, &sid, Some(&weak), "quiz", "Quiz", "", &payload).unwrap();
+
+        // Topic "Krebs cycle": mostly wrong + a lapse → should surface as weak.
+        // NB: srs_grade also records an attempt (q>=3 == correct), so the two
+        // grades below add two more attributable attempts on top of these three.
+        record_attempt(&c, &sid, Some(&mat), "quiz", 0, "Q1", false).unwrap();
+        record_attempt(&c, &sid, Some(&mat), "quiz", 1, "Q2", false).unwrap();
+        record_attempt(&c, &sid, Some(&mat), "quiz", 2, "Q3", true).unwrap();
+        srs_grade(&c, &sid, Some(&mat), "quiz", 0, "Q1", 4).unwrap(); // schedule (+1 correct attempt)
+        srs_grade(&c, &sid, Some(&mat), "quiz", 0, "Q1", 1).unwrap(); // lapse   (+1 wrong attempt)
+
+        // An attempt with NO material (unattributable) must be ignored, not crash.
+        record_attempt(&c, &sid, None, "quiz", 9, "Loose", false).unwrap();
+
+        let s = analytics_summary(&c, 30).unwrap();
+        assert_eq!(s.weak_topics.len(), 1, "only the attributable topic ranks");
+        let w = &s.weak_topics[0];
+        assert_eq!(w.topic_id, weak);
+        assert_eq!(w.topic_name, "Krebs cycle");
+        // 3 explicit + 2 from grading; 2 correct (Q3 + the grade-4); the loose
+        // material-less attempt is excluded.
+        assert_eq!(w.reviews, 5);
+        assert_eq!(w.correct, 2);
+        assert!(w.lapses >= 1, "the lapse is attributed to the topic");
+        assert!(!w.reason.is_empty());
     }
 }

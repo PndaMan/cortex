@@ -123,10 +123,38 @@
 .leader-item .lk { color: var(--mode-select); font-weight: 700; width: 15px; text-align: center; }
 .leader-item .ld { margin-left: auto; color: var(--fg-faint); font-size: var(--t-2xs); }
 
+/* ============ SHARED PAGE HEADER ============
+   One uniform identity for every navbar/sidebar page heading, matching the
+   Cheatsheet reference: a small mono uppercase accent eyebrow (.eyebrow, in
+   cortex.css) + a huge MONO display title + an optional faint mono meta line.
+   Every per-view title class below is mapped onto .page-title so they all read
+   identically. Keep titles capped at the cheatsheet's size (do not grow). */
+.page-title,
+.dash-title,
+.addsrc-title,
+.addpage-title,
+.notes-page-title,
+.set-title,
+.cs-title {
+  font-family: var(--font-mono);
+  font-size: clamp(1.5rem, 1.1rem + 1.5vw, 2.2rem);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--fg-bright);
+  font-weight: 600;
+  margin: 5px 0 7px;
+  overflow-wrap: break-word;
+}
+.page-sub {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+  line-height: 1.5;
+}
+
 /* ============ DASHBOARD ============ */
 .dash { max-width: 1120px; margin: 0 auto; padding: var(--sp-8) var(--sp-8) var(--sp-9); }
 .dash-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: var(--sp-7); }
-.dash-title { font-size: var(--r-2xl); color: var(--fg-bright); font-weight: 500; margin-top: 4px; }
 .subj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--sp-4); }
 .subj-card { text-align: left; display: flex; flex-direction: column; padding: var(--sp-4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--rad-4); cursor: pointer; transition: border-color var(--dur), background var(--dur), transform var(--dur); }
 .subj-card:hover { border-color: var(--border-strong); background: var(--surface-2); transform: translateY(-1px); }
@@ -149,9 +177,10 @@
 .subj-tabs { display: flex; align-items: center; gap: 3px; height: 50px; padding: 0 14px; border-bottom: 1px solid var(--border); flex: none; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
 .subj-tabs::-webkit-scrollbar { height: 0; width: 0; display: none; }
 .subj-tab { flex: none; }
-.st-id { display: flex; align-items: center; gap: 10px; padding-right: 14px; margin-right: 6px; border-right: 1px solid var(--border); }
-.st-name { font-size: var(--t-md); color: var(--fg-bright); font-weight: 600; }
-.st-code { font-size: var(--t-2xs); color: var(--fg-faint); }
+.st-id { display: flex; align-items: center; gap: 10px; padding-right: 14px; margin-right: 6px; border-right: 1px solid var(--border); flex: none; min-width: 0; max-width: 46vw; }
+.st-id > div { min-width: 0; }
+.st-name { font-size: var(--t-md); color: var(--fg-bright); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-code { font-size: var(--t-2xs); color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subj-tab { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px; border: none; background: none; color: var(--fg-muted); border-radius: var(--rad-2); cursor: pointer; font-size: var(--t-sm); position: relative; }
 .subj-tab:hover { background: var(--surface-2); color: var(--fg-bright); }
 .subj-tab.on { background: var(--surface-3); color: var(--fg-bright); }
@@ -181,7 +210,12 @@
 .recent-chat span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .sources-page { max-width: 960px; margin: 0 auto; padding: var(--sp-6) var(--sp-7) var(--sp-8); }
-.sources-toolbar { display: flex; align-items: center; gap: 9px; margin-bottom: var(--sp-5); }
+.sources-toolbar { display: flex; align-items: center; gap: 9px; margin-bottom: var(--sp-5); flex-wrap: wrap; }
+/* The leading caption shrinks/ellipsizes so the action buttons stay intact and
+   never overflow; once it can't, the whole toolbar wraps cleanly (gap keeps the
+   rhythm). Buttons never shrink/clip their labels. */
+.sources-toolbar > .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sources-toolbar > .btn { flex: none; }
 .src-topic { margin-bottom: var(--sp-6); }
 .src-topic-h { display: flex; align-items: center; gap: 7px; font-size: var(--t-sm); color: var(--fg-bright); font-weight: 500; margin-bottom: 11px; }
 .src-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 9px; }
@@ -195,7 +229,7 @@
 .src-bulkbar { display: flex; align-items: center; gap: 9px; margin-bottom: var(--sp-4); padding: 8px 11px; border: 1px solid var(--accent); border-radius: var(--rad-3); background: color-mix(in oklab, var(--accent) 8%, var(--surface)); }
 .stl-name { font-size: var(--t-sm); color: var(--fg-bright); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stl-meta { font-size: var(--t-2xs); color: var(--fg-faint); }
-.chats-tab { flex: 1; display: flex; min-height: 0; max-width: 820px; margin: 0 auto; width: 100%; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
+.chats-tab { flex: 1; display: flex; min-height: 0; max-width: min(1040px, 100%); margin: 0 auto; width: 100%; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
 .chats-tab .chatdock-inner { width: 100%; }
 
 /* ============ CHEATSHEET DOC ============ */
@@ -206,8 +240,8 @@
 /* Let the title/meta block grow to fill the row (minus the actions) instead of
    collapsing into a narrow left column. min-width:0 lets it actually take the space. */
 .cs-doc-head > div:first-child { min-width: 0; }
-.cs-title { font-size: clamp(1.5rem, 1.1rem + 1.5vw, 2.2rem); line-height: 1.15; color: var(--fg-bright); font-weight: 600; letter-spacing: -0.01em; margin: 5px 0 7px; overflow-wrap: break-word; }
-.cs-sub { font-size: var(--t-xs); color: var(--fg-faint); }
+/* .cs-title styled by the shared .page-title rule above. */
+.cs-sub { font-family: var(--font-mono); font-size: var(--t-xs); color: var(--fg-faint); }
 .cs-doc-actions { display: flex; gap: 8px; flex-wrap: wrap; align-self: flex-end; order: -1; }
 
 .draft-banner { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; padding: 14px 16px; margin-bottom: var(--sp-6); cursor: pointer; background: color-mix(in oklab, var(--accent) 9%, var(--surface)); border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent); border-radius: var(--rad-3); transition: background var(--dur); }
@@ -334,7 +368,10 @@
 .rec-led.live { background: var(--err); animation: recpulse 1.4s steps(1) infinite; }
 .rec-clock { font-size: var(--t-lg); color: var(--fg-bright); font-variant-numeric: tabular-nums; }
 .waveform { width: 100%; max-width: 560px; height: 160px; display: flex; align-items: center; justify-content: center; gap: 2px; position: relative; padding: 0 4px; }
-.wbar { flex: 1; max-width: 5px; background: var(--accent); border-radius: var(--rad-pill); transition: height 90ms linear, opacity 90ms linear; min-height: 3px; align-self: center; }
+/* Canvas waveform: drawn in rAF, colored via `color` (read by drawWave). The
+   old per-bar DOM spans with CSS transitions forced 72 animated layouts per
+   frame — unusably slow on WebKitGTK software rendering. */
+.wave-canvas { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--accent); }
 .wf-center { position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--border); }
 .rec-controls { display: flex; align-items: center; gap: 18px; }
 .rec-btn { width: 76px; height: 76px; border-radius: 50%; border: 2px solid var(--border-strong); background: var(--surface-2); cursor: pointer; display: grid; place-items: center; transition: transform var(--dur-fast), border-color var(--dur); }
@@ -447,22 +484,25 @@
 @keyframes chatSlide { from { transform: translateX(28px); } }
 .app-shell.compact .chat-backdrop { display: block; position: absolute; inset: 0; z-index: 58; background: color-mix(in oklab, var(--bg-sunken) 45%, transparent); }
 
-/* TIGHT: sidebar becomes a slide-in drawer */
-.app-shell.tight { grid-template-columns: 0 1fr; }
-.app-shell.tight .app-main { grid-column: 1 / -1; }
-.app-shell.tight .sidebar {
+/* DRAWER: sidebar becomes a slide-in overlay (whole sub-1080 band). The grid
+   collapses its rail column to 0 so the workspace owns the full width — this is
+   what stops the 760-1080 squash; the sidebar overlays on demand instead of
+   permanently stealing 248px. */
+.app-shell.drawer { grid-template-columns: 0 1fr; }
+.app-shell.drawer .app-main { grid-column: 1 / -1; }
+.app-shell.drawer .sidebar {
   position: fixed; left: 0; top: 0; bottom: 0; width: 256px; z-index: 74;
   transform: translateX(-101%); transition: transform var(--dur-slow) var(--ease);
   box-shadow: 14px 0 40px rgba(0,0,0,0.5);
 }
-.app-shell.tight.nav-open .sidebar { transform: translateX(0); }
-.app-shell.tight .nav-toggle { display: inline-flex; }
-.app-shell.tight.nav-open .nav-backdrop { display: block; position: fixed; inset: 0; z-index: 73; background: color-mix(in oklab, var(--bg-sunken) 55%, transparent); border: 0; padding: 0; cursor: default; }
+.app-shell.drawer.nav-open .sidebar { transform: translateX(0); }
+.app-shell.drawer .nav-toggle { display: inline-flex; }
+.app-shell.drawer.nav-open .nav-backdrop { display: block; position: fixed; inset: 0; z-index: 73; background: color-mix(in oklab, var(--bg-sunken) 55%, transparent); border: 0; padding: 0; cursor: default; }
 /* give headers room for the hamburger */
-.app-shell.tight .subj-tabs { padding-left: 50px; }
-.app-shell.tight .sv-head { padding-left: 50px; }
-.app-shell.tight .dash { padding-left: 56px; }
-.app-shell.tight .rec-stage { padding-top: 54px; }
+.app-shell.drawer .subj-tabs { padding-left: 50px; }
+.app-shell.drawer .sv-head { padding-left: 50px; }
+.app-shell.drawer .dash { padding-left: 56px; }
+.app-shell.drawer .rec-stage { padding-top: 54px; }
 
 /* very tight: collapse cheatsheet rail and single-column items */
 @media (max-width: 720px) {
@@ -605,7 +645,7 @@
 .addpage { max-width: 620px; margin: 0 auto; padding: var(--sp-8) var(--sp-7) var(--sp-9); }
 .addpage-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: var(--sp-7); }
 .addpage-head .btn { margin-top: 4px; }
-.addpage-title { font-size: var(--r-2xl); color: var(--fg-bright); font-weight: 500; letter-spacing: -0.01em; margin: 6px 0 4px; }
+/* .addpage-title styled by the shared .page-title rule above. */
 .add-methods { display: flex; flex-direction: column; gap: 9px; }
 .add-method { display: flex; align-items: center; gap: 14px; padding: 15px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--rad-3); cursor: pointer; text-align: left; transition: border-color var(--dur-fast), background var(--dur-fast); }
 .add-method:hover { border-color: var(--fg-faint); background: var(--surface-2); }
@@ -636,9 +676,16 @@
 html[data-read="sans"] .read, html[data-read="sans"] .cs-item dt, html[data-read="sans"] .cs-item dd,
 html[data-read="sans"] .bubble, html[data-read="sans"] .quiz-q, html[data-read="sans"] .mat-title,
 html[data-read="sans"] .fc-face p, html[data-read="sans"] .txt.read {
-  font-family: var(--font-mono) !important;
+  font-family: var(--font-sans) !important;
 }
 .cs-item dd, .bubble.assistant, .bubble.user { font-size: var(--read-size, 16.5px); }
+/* Compact density: tighten the spacing scale + reading size app-wide so the
+   whole UI gets denser, not just the cheatsheet gaps. */
+html[data-density="compact"] {
+  --sp-1: 3px;  --sp-2: 6px;  --sp-3: 9px;  --sp-4: 12px;
+  --sp-5: 15px; --sp-6: 18px; --sp-7: 24px; --sp-8: 30px;
+  --read-size: 15px;
+}
 html[data-density="compact"] .cs-list { gap: 10px; }
 html[data-density="compact"] .cs-sections { gap: var(--sp-6); }
 html[data-density="compact"] .mat-grid { gap: 7px; }
@@ -768,6 +815,7 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
 .picker-val.ph { color: var(--fg-faint); }
 .picker-back { position: fixed; inset: 0; z-index: 90; }
 .picker-menu { position: absolute; top: calc(100% + 5px); left: 0; right: 0; z-index: 91; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--rad-2); box-shadow: var(--shadow-pop); padding: 5px; max-height: 220px; overflow-y: auto; animation: popIn var(--dur-fast) var(--ease); }
+.picker-menu.up { top: auto; bottom: calc(100% + 5px); }
 .picker-item { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 9px; background: none; border: none; border-radius: var(--rad-2); color: var(--fg-muted); font-family: var(--font-mono); font-size: var(--t-sm); cursor: pointer; }
 .picker-item:hover { background: var(--surface-3); color: var(--fg-bright); }
 .picker-item.on { color: var(--fg-bright); }
@@ -872,13 +920,17 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
 .set-body { overflow-y: auto; min-height: 0; }
 .set-pane { max-width: 720px; margin: 0 auto; padding: var(--sp-8) var(--sp-7) var(--sp-9); }
 .set-head { margin-bottom: var(--sp-6); }
-.set-title { font-size: var(--r-2xl); color: var(--fg-bright); font-weight: 500; letter-spacing: -0.01em; margin: 6px 0 8px; }
+/* .set-title styled by the shared .page-title rule above. */
 .set-sub { font-size: var(--t-md); color: var(--fg-muted); line-height: 1.5; max-width: 560px; }
 
 .set-group { margin-bottom: var(--sp-7); }
 .set-group-h { margin-bottom: 12px; }
 .set-group-t { font-family: var(--font-mono); font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
 .set-group-d { font-size: var(--t-sm); color: var(--fg-muted); margin-top: 5px; }
+.set-group-h.svc-h { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.set-group-h.svc-h > div:first-child { min-width: 0; }
+.set-group-h.svc-h .status-pill { flex: none; margin-top: 2px; }
+.svc-tools { display: flex; gap: 8px; flex: none; margin-top: 2px; }
 .set-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--rad-3); overflow: hidden; }
 
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-5); padding: 13px 16px; border-top: 1px solid var(--border); }
@@ -983,6 +1035,12 @@ body.reorder-active, body.reorder-active * { cursor: grabbing !important; user-s
    window narrows tightens the whole app together — content stops getting cut off
    or squished instead of each screen needing its own rule. Pairs with the .tight
    (drawer) and .compact (chat overlay) shell modes wired in App.svelte. */
+/* 1080 is where the sidebar becomes a drawer; step the big paddings down one
+   notch so the freed width turns into breathing room, not a wide gutter. The
+   >1080 desktop look is untouched. */
+@media (max-width: 1080px) {
+  :root { --sp-7: 28px; --sp-8: 32px; --sp-9: 40px; --sp-10: 52px; }
+}
 @media (max-width: 900px) {
   :root { --sp-7: 24px; --sp-8: 28px; --sp-9: 36px; --sp-10: 44px; }
 }

@@ -34,7 +34,7 @@ NotebookLM is great, but it's a web product: your sources live on someone else's
 | Data location | Cloud | **100% local SQLite on your machine** |
 | AI model | Fixed | **Bring your own** — Gemini, OpenRouter, OpenAI, Claude, or local Ollama |
 | Structure | Flat notebooks | **Subjects → Topics → Sources** |
-| Study materials | Audio + notes | Cheatsheets, **SM-2 flashcards**, quizzes, audio, **infographics, mind maps**, slides |
+| Study materials | Audio + notes | Cheatsheets, **FSRS flashcards**, quizzes, **timed graded exams**, audio, **infographics, mind maps**, slides |
 | Citations & deadlines | — | **Built-in reference manager (APA/MLA) + exam/assignment tracking** |
 | Export | — | **Anki `.apkg`**, PDF, portable SQLite, encrypted backups |
 | Cost | Subscription | **Free & open source** (you pay only your own API usage) |
@@ -42,15 +42,16 @@ NotebookLM is great, but it's a web product: your sources live on someone else's
 ## Features
 
 ### Ingest anything
-- **Sources:** PDF, PPTX, DOCX, plain text/Markdown, web pages, YouTube, audio recordings, and images (via vision-model OCR).
+- **Sources:** PDF, PPTX, DOCX, plain text/Markdown, web pages, YouTube, audio recordings, and images via vision-model OCR — **including photographed handwritten notes**.
 - Office docs are rendered to PDF for faithful slide previews; PDFs use real text extraction.
 - Each source is parsed → chunked → embedded → stored with **live progress**, then becomes searchable and citable.
 
 ### Generate study material
 - **Cheatsheets** — exhaustive, exam-focused, completeness-checked synthesis with callouts, tables, and bar charts. Optional **web-sourced diagrams** per section, with versioned drafts and an approve-diff review flow.
-- **Flashcards** with real **SM-2 spaced repetition** ("Study due · N", Again/Hard/Good/Easy scheduling).
+- **Flashcards** with **FSRS spaced repetition** (the modern memory-model scheduler; Again/Hard/Good/Easy, "Study due · N").
+- **Exam mode** — timed mock papers (MCQ + written) generated from your sources; MCQs grade locally, written answers are graded by your model with a verify-before-score rubric, per-question feedback, weak-topic callouts, and a one-click **remark** that re-grades with the identical rubric.
 - **Quizzes** — multiple-choice with explanations.
-- **Audio overviews** — two-host, podcast-style spoken walkthroughs.
+- **Audio overviews** — two-host, podcast-style spoken walkthroughs, rendered to real audio via cloud TTS (on-device speech synthesis as fallback).
 - **Infographics** — detailed HTML posters with a **timeline of events**, key stats, and a takeaway.
 - **Mind maps** — hierarchical concept maps.
 - **Slideshows** — presentation outlines.
@@ -65,16 +66,21 @@ NotebookLM is great, but it's a web product: your sources live on someone else's
 - **Citation manager** — per-subject bibliography with APA/MLA/Harvard formatting and one-click copy.
 - **Deadlines & calendar** — track exams and assignments, with a deadline study checklist and two-way Citations ↔ Calendar sync.
 - **Tags** on topics and deadlines for cross-cutting organization.
-- **Notes**, a **lecture recorder** with an incremental live transcript, a **Pomodoro** focus timer, and background **music** with custom stations.
+- **Notes**, a **lecture recorder** with a near-real-time live transcript (~7s adaptive Whisper segments, silence-aware) and an **automatic lecture summary** saved to Notes after every recording.
+- **Insights** — a study-analytics dashboard: GitHub-style year heatmap of focus hours (pomodoro + passive in-app time), reviews/accuracy/streaks, a 7-day due forecast, and a "topics needing work" ranking.
+- **Global semantic search** (`Ctrl+K`) across notes, sources, transcripts, events, and materials — exact matches first, vector hits as related content.
+- A **Pomodoro** focus timer and background **music**: curated ad-free YouTube stations (lofi, synthwave, jazz, classical, rain, forest, 40 Hz) streamed through a headless mpv sidecar, plus your own custom stations.
 
 ### Own your data
-- **Anki `.apkg` export** for flashcard decks, **PDF export**, and a portable **SQLite dump**.
+- **Anki `.apkg` import _and_ export** for flashcard decks, **PDF export**, and a portable **SQLite dump**.
 - **Encrypted homelab backups** — snapshot → `age` encrypt → `rclone` upload.
 - Everything is local; AI is **bring-your-own-key**; web search is your **self-hosted SearXNG**.
 
 ### Built for power users
 - **Helix-style modal keyboard engine** with a command palette, leader keys, and fully customizable bindings.
 - **10 themes** and live re-skinning (designed to follow the Omarchy palette).
+- **Close-to-tray** — closing the window keeps ingest/generation/music running behind a tray icon (Open · Play/Pause · Quit); reminders become OS notifications while hidden.
+- A responsive shell that stays intentional when tiled narrow (drawer sidebar below 1080px).
 
 ## Quick start
 
@@ -98,12 +104,19 @@ bun run tauri build
 ### Optional integrations (enable the features you want)
 | Feature | Needs | Notes |
 |---|---|---|
-| Lecture transcription | [`openai-whisper`](https://github.com/openai/whisper) or whisper.cpp on `PATH` | local, free |
+| Lecture transcription | local [`openai-whisper`](https://github.com/openai/whisper) / whisper.cpp / auto `faster-whisper`, **or** a homelab Whisper URL | set the Whisper URL in Settings → Integrations to skip local setup |
 | Web search / images | a self-hosted [SearXNG](https://docs.searxng.org/) with JSON output enabled | set its URL in Settings |
+| Local models | [Ollama](https://ollama.com) (local or homelab) | keyless chat + embeddings |
 | Slide previews | LibreOffice (`soffice`) | renders PPTX/DOCX to PDF |
 | PDF text | `pdftotext` (poppler) | faster & cleaner than OCR |
 | Background music | [`mpv`](https://mpv.io/) | streams study stations |
 | Encrypted backups | [`age`](https://github.com/FiloSottile/age) + [`rclone`](https://rclone.org/) | configure in Settings → Backups |
+
+> **One-command homelab backend.** Don't want to set these up by hand? The
+> [`homelab/`](homelab/) folder has a `docker compose` stack that runs SearXNG,
+> an OpenAI-compatible Whisper server, and (optionally) Ollama. Bring it up,
+> expose it over a reverse proxy or VPN (Tailscale / Netbird), and point Cortex
+> at it in **Settings → Integrations**. See [homelab/README.md](homelab/README.md).
 
 ## Configuration
 
@@ -135,7 +148,8 @@ src-tauri/src/
   repo.rs                  all SQLite access
   anki.rs   backup.rs       .apkg export · encrypted backups
   google.rs  notes.rs       Google API helpers · notes
-  calendar.rs  review.rs    deadlines/calendar · SM-2 scheduling
+  calendar.rs  review.rs    deadlines/calendar · FSRS scheduling
+  exam.rs  analytics.rs   timed exams + grading · study analytics
   mpv.rs                   background music playback
   migrations/              versioned SQLite schema
 ```
@@ -151,7 +165,7 @@ See [`CORTEX_DESIGN_BRIEF.md`](CORTEX_DESIGN_BRIEF.md) for the full product visi
 
 ## Roadmap
 
-**Shipped (v1.0):** the Subjects→Topics→Sources core, the ingestion pipeline, all study-material generators (cheatsheets, flashcards, quizzes, audio, infographics, mind maps, slides), citation-grounded chat with web/image mode, SM-2 spaced repetition, Anki export, a citation manager + deadlines with calendar sync, tags, sqlite-vec search, encrypted backups, live lecture transcription, drag-and-drop reordering, and a responsive layout that scales toward mobile.
+**Shipped (v1.0):** the Subjects→Topics→Sources core, the ingestion pipeline, all study-material generators (cheatsheets, flashcards, quizzes, audio, infographics, mind maps, slides), citation-grounded chat with web/image mode, FSRS spaced repetition, Anki import/export, timed graded exams with remark, the Insights analytics dashboard (year focus heatmap, weak-topic ranking), global semantic search, auto lecture summaries, close-to-tray, a citation manager + deadlines with calendar sync, tags, sqlite-vec search, encrypted backups, live lecture transcription, drag-and-drop reordering, and a responsive layout that scales toward mobile.
 
 **Next:** accounts & sync (CRDT multi-device), a mobile build, and richer calendar/citation workflows.
 

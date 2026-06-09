@@ -16,7 +16,7 @@
     { id: "sources", label: "Sources", icon: "doc" },
     { id: "chats", label: "Chats", icon: "chat" },
     { id: "materials", label: "Materials", icon: "grid" },
-    { id: "citations", label: "Citations", icon: "book" },
+    { id: "citations", label: "Assignments", icon: "calendar" },
   ] as const;
 
   function kindLabel(kind: string): string {

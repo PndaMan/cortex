@@ -4,7 +4,7 @@
 
 import * as api from "./api";
 import type { Subject, Source } from "./api";
-import { music } from "./music";
+import { music, BUILTIN_STATION_IDS } from "./music";
 import { keybinds } from "./keybinds.svelte";
 
 export type View =
@@ -13,11 +13,12 @@ export type View =
   | "source"
   | "add-source"
   | "add-subject"
-  | "websearch"
   | "recorder"
   | "gen-material"
   | "notes"
   | "calendar"
+  | "analytics"
+  | "exam"
   | "settings";
 export type Mode = "NOR" | "INS" | "SEL";
 export type Toast = {
@@ -138,6 +139,12 @@ class PomoTimer {
   #lastAt = 0;
   #interval: ReturnType<typeof setInterval> | null = null;
   #onPhaseChange: ((to: PomoPhase) => void) | null = null;
+  // Wall-clock ms when the CURRENT phase's segment began — so a finished segment
+  // can be logged with real start/end timestamps for the analytics dashboard.
+  // 0 means "no segment in progress yet"; set on the first start of a phase and
+  // preserved across pause/resume (a paused segment is still the same segment).
+  #segmentStartedMs = 0;
+  #onSegmentDone: ((kind: PomoPhase, startedMs: number, endedMs: number) => void) | null = null;
 
   phaseMin(p: PomoPhase = this.phase): number {
     return p === "work" ? this.workMin : p === "long" ? this.longBreakMin : this.breakMin;
@@ -167,6 +174,10 @@ class PomoTimer {
   onPhaseChange(fn: (to: PomoPhase) => void) {
     this.#onPhaseChange = fn;
   }
+  /** Notified when a segment finishes, with its real wall-clock span (for analytics). */
+  onSegmentDone(fn: (kind: PomoPhase, startedMs: number, endedMs: number) => void) {
+    this.#onSegmentDone = fn;
+  }
 
   #ensureInterval() {
     if (this.#interval) return;
@@ -189,6 +200,12 @@ class PomoTimer {
 
   #advance() {
     const from = this.phase;
+    const endedMs = Date.now();
+    // Persist the segment that just finished (work counts as study time; breaks
+    // are logged for completeness). Only when we actually have a start anchor.
+    if (this.#segmentStartedMs > 0) {
+      this.#onSegmentDone?.(from, this.#segmentStartedMs, endedMs);
+    }
     if (from === "work") {
       this.completedSessions += 1;
       const isLong = this.cycle % this.sessionsBeforeLong === 0;
@@ -199,7 +216,8 @@ class PomoTimer {
       this.phase = "work";
     }
     this.remainingMs = this.totalMs();
-    this.#lastAt = Date.now();
+    this.#lastAt = endedMs;
+    this.#segmentStartedMs = endedMs; // the next phase's segment starts now
     this.running = true; // auto-continue into the next phase
     this.#onPhaseChange?.(this.phase);
   }
@@ -210,6 +228,9 @@ class PomoTimer {
     if (this.remainingMs <= 0) this.remainingMs = this.totalMs();
     this.running = true;
     this.#lastAt = Date.now();
+    // Anchor the segment on the first start; a resume after pause keeps the
+    // existing anchor so the logged span covers the whole phase.
+    if (this.#segmentStartedMs === 0) this.#segmentStartedMs = this.#lastAt;
     this.#ensureInterval();
   }
   pomoPause() {
@@ -221,6 +242,7 @@ class PomoTimer {
   pomoReset() {
     this.running = false;
     this.remainingMs = this.totalMs();
+    this.#segmentStartedMs = 0; // abandon the in-progress segment (don't log it)
     this.#stopInterval();
   }
   /** Skip to the next phase immediately (counts a completed focus session). */
@@ -260,6 +282,8 @@ class AppStore {
   // chrome / modal state
   mode = $state<Mode>("NOR");
   theme = $state<Theme>("osaka-jade");
+  // When true, Cortex mirrors the desktop's current Omarchy theme on launch.
+  followOmarchy = $state(false);
   cmdkOpen = $state(false);
   leaderOpen = $state(false);
   chatOpen = $state(false); // closed by default; user opens with `c`. Persists across views.
@@ -269,6 +293,120 @@ class AppStore {
   // and the Citations tab stay in sync both ways (each watches this nonce).
   eventsChangedNonce = $state(0);
   notifyEventsChanged() { this.eventsChangedNonce++; }
+
+  // When set, the Calendar view jumps to this day on mount — used by the
+  // Assignments list so clicking an assignment opens it on the calendar.
+  calendarFocusMs = $state<number | null>(null);
+  openCalendarAt(ms: number) {
+    this.calendarFocusMs = ms;
+    this.setView("calendar");
+  }
+
+  // ── chat generation (owned here so a reply survives the panel closing) ──────
+  // The request + typewriter used to live inside ChatPanel; closing the panel
+  // mid-answer unmounted them and the reply was lost ("it stops answering").
+  // Now the store drives generation: the panel just reads `chatStreaming` and
+  // reloads history when `chatMsgNonce` bumps, so closing/reopening the chat (or
+  // switching between the dock and the fullscreen Chats tab) never interrupts a
+  // reply — it keeps generating in the background and persists when done.
+  chatStreaming = $state<string | null>(null); // live typed-out text, or null
+  chatGenSubject = $state<string | null>(null); // subject the in-flight reply is for
+  chatBusy = $state(false);
+  chatMsgNonce = $state(0); // bump → open panels reload persisted history
+  chatSuggestions = $state<string[]>([]); // next-step chips from the last reply
+  chatLastImages = $state<api.WebImage[]>([]); // web-mode images from the last reply
+  #chatTypeIv: ReturnType<typeof setInterval> | null = null;
+  #chatCancelled = false;
+
+  #clearChatIv() {
+    if (this.#chatTypeIv) { clearInterval(this.#chatTypeIv); this.#chatTypeIv = null; }
+  }
+
+  // Peel the trailing "SUGGESTIONS: a | b | c" line off a reply; reject junk chips.
+  #splitChatSuggestions(full: string): { body: string; sugg: string[] } {
+    const m = full.match(/\n?\s*SUGGESTIONS:\s*(.+?)\s*$/i);
+    if (!m) return { body: full, sugg: [] };
+    const reject = new Set(["prompt", "a", "b", "c"]);
+    const sugg = m[1]
+      .split("|")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 1 && !/^[a-c]$/i.test(s) && !reject.has(s.toLowerCase()))
+      .slice(0, 3);
+    return { body: full.slice(0, m.index).trimEnd(), sugg };
+  }
+
+  #finishAssistant(subjectId: string, text: string, images: api.WebImage[], sugg: string[]) {
+    this.chatLastImages = images;
+    this.chatSuggestions = sugg;
+    api.addChatMessage(subjectId, "assistant", text).catch(() => {}); // persist
+    this.chatMsgNonce++;
+  }
+
+  // Generate a chat reply. Safe to call without awaiting; keeps running even if
+  // the ChatPanel that started it unmounts. Resolves once typed-out + persisted.
+  async sendChat(params: {
+    subjectId: string;
+    level: "subject" | "topic" | "source";
+    query: string;
+    sourceId?: string;
+    sourceIds?: string[];
+    web?: boolean;
+  }): Promise<void> {
+    const { subjectId, level, query, sourceId, sourceIds, web } = params;
+    this.#chatCancelled = false;
+    this.chatBusy = true;
+    this.chatGenSubject = subjectId;
+    this.chatStreaming = "";
+    this.chatSuggestions = [];
+    try {
+      const result = await api.chatAnswer(subjectId, level, query, sourceId, sourceIds, web);
+      if (this.#chatCancelled) return;
+      const imgs = result.images ?? [];
+      const { body, sugg } = this.#splitChatSuggestions(result.text);
+      await new Promise<void>((resolve) => {
+        let i = 0;
+        this.#chatTypeIv = setInterval(() => {
+          if (this.#chatCancelled) {
+            this.#clearChatIv();
+            this.#finishAssistant(subjectId, body.slice(0, i) || body, imgs, sugg);
+            resolve();
+            return;
+          }
+          i += 3;
+          this.chatStreaming = body.slice(0, i);
+          if (i >= body.length) {
+            this.#clearChatIv();
+            this.#finishAssistant(subjectId, body, imgs, sugg);
+            resolve();
+          }
+        }, 16);
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await api.addChatMessage(subjectId, "system", msg).catch(() => {}); // persist error
+      this.chatMsgNonce++;
+    } finally {
+      this.#clearChatIv();
+      this.chatStreaming = null;
+      this.chatGenSubject = null;
+      this.chatBusy = false;
+      this.#chatCancelled = false;
+    }
+  }
+
+  // Stop the current generation, keeping whatever has streamed so far. The
+  // running typewriter tick sees the flag, persists the partial, and resolves.
+  stopChat() {
+    if (!this.chatBusy) return;
+    this.#chatCancelled = true;
+    // If we're still waiting on the network (no partial yet), nothing to keep —
+    // the awaited result will hit the `#chatCancelled` guard and clean up.
+    if (this.chatStreaming && this.chatGenSubject && !this.#chatTypeIv) {
+      this.#finishAssistant(this.chatGenSubject, this.chatStreaming, [], []);
+      this.chatStreaming = null;
+      this.chatBusy = false;
+    }
+  }
   musicOpen = $state(false);
   diffOpen = $state(false);
   helpOpen = $state(false);
@@ -288,11 +426,19 @@ class AppStore {
   pending = $state(0); // cheatsheet draft sections awaiting review (real count set by Cheatsheet view)
   // playing starts false — browsers block autoplay until a user gesture.
   music = $state<Music>({ current: "lofi", playing: false, volume: 60 });
+  // True while a stream/mpv station is connecting, so the panel can show a
+  // buffering indicator instead of looking frozen.
+  musicBuffering = $state(false);
+  // Global semantic search overlay (Ctrl+K).
+  searchOpen = $state(false);
   // User-added YouTube/URL stations (streamed ad-free via the mpv sidecar).
   customStations = $state<api.CustomStation[]>([]);
   // Favourited station ids (built-in or custom), pinned to a "Favourites" group
   // in the music panel. Persisted as a JSON setting.
   stationFavs = $state<string[]>([]);
+  // Pull diagrams/images from the homelab SearXNG into cheatsheets & chat. On by
+  // default once a SearXNG server is connected; toggle lives in Settings → Homelab.
+  webImagesEnabled = $state(false);
 
   activeSubject = $derived(
     this.subjects.find((s) => s.id === this.activeSubjectId) ?? null
@@ -300,8 +446,27 @@ class AppStore {
 
   async init() {
     this.loading = true;
+    // Safety net: never let the window stay hidden if init stalls or throws
+    // before the normal reveal below.
+    setTimeout(() => void this.revealWindow(), 3000);
     // Surface stream/playback failures instead of swallowing them.
     music.onError = (m) => this.pushToast({ kind: "warning", title: "Music", body: m });
+    // The engine is the authority on playback state: a failed stream/mpv start
+    // flips the icon back to paused, and buffering drives the panel spinner.
+    music.onState = (s) => {
+      if (this.music.playing !== s.playing) this.music = { ...this.music, playing: s.playing };
+      this.musicBuffering = s.buffering;
+    };
+    // Tray menu "Play / pause music" (works while the window is hidden).
+    void api.onTrayMusicToggle(() => this.toggleMusic());
+    // Background auto-summary finished → tell the user where to find it.
+    void api.onNoteCreated(() => {
+      this.pushToast({
+        kind: "success",
+        title: "Lecture summary ready",
+        body: "Key points + terms saved to Notes.",
+      });
+    });
     // Toast on every focus↔break transition.
     this.pomo.onPhaseChange((to) => {
       if (to === "work") {
@@ -313,6 +478,16 @@ class AppStore {
           body: "Nice focus — step away for a bit.",
         });
       }
+    });
+    // Persist each finished segment so the analytics dashboard can chart study
+    // minutes per day/subject. Tagged with whatever subject is active right now;
+    // best-effort (a failed insert must never disrupt the timer).
+    this.pomo.onSegmentDone((kind, startedMs, endedMs) => {
+      // Only "work" counts as study time; both short and long breaks log as "break".
+      const segKind = kind === "work" ? "work" : "break";
+      api
+        .logPomodoroSession(this.activeSubjectId, segKind, startedMs, endedMs)
+        .catch(() => {});
     });
     try {
       // Start empty on a fresh install — no demo seeding. Every view renders a
@@ -328,9 +503,16 @@ class AppStore {
     // Restore preferences: theme, keybinds, and audio defaults.
     try {
       const all = await api.getAllSettings();
-      const savedTheme = all["theme"] as Theme | undefined;
-      if (savedTheme && THEMES.includes(savedTheme)) this.setTheme(savedTheme);
-      else this.applyTheme(this.theme);
+      // Follow Omarchy theme takes precedence when enabled — adopt the desktop's
+      // current palette on every launch (and fall through if it can't be read).
+      this.followOmarchy = all["follow_omarchy"] === "true";
+      let themed = false;
+      if (this.followOmarchy) themed = (await this.syncOmarchyTheme()) !== null;
+      if (!themed) {
+        const savedTheme = all["theme"] as Theme | undefined;
+        if (savedTheme && THEMES.includes(savedTheme)) this.setTheme(savedTheme);
+        else this.applyTheme(this.theme);
+      }
       // Appearance: reading typeface + density must be applied at startup, not
       // only while the Settings view is mounted (otherwise they reset on launch).
       if (all["reading_font"]) document.documentElement.setAttribute("data-read", all["reading_font"]);
@@ -338,6 +520,12 @@ class AppStore {
         "data-density",
         all["density"] === "compact" ? "compact" : "regular"
       );
+      // Appearance is fully applied (theme + reading font + density) and the shell
+      // has rendered — reveal the window now so the first frame the user sees is
+      // already correctly themed (no white flash, no default-theme flash). Use a
+      // macrotask (not rAF, which is throttled while the window is hidden) so any
+      // pending Svelte render flushes first, then map+paint the window once.
+      setTimeout(() => void this.revealWindow(), 0);
       await keybinds.load(all); // reuse the settings we already fetched
       // Reopen the last-viewed subject (its chat history loads with it).
       const last = all["last_subject_id"];
@@ -353,9 +541,38 @@ class AppStore {
           }
         } catch { /* ignore corrupt value */ }
       }
-      if (all["default_station"]) this.music = { ...this.music, current: all["default_station"] };
-      // Load user-added YouTube/URL stations so they show in the music panel.
+      // Web images (diagrams) default ON when a homelab SearXNG is connected; an
+      // explicit "false" from Settings → Homelab overrides that default.
+      {
+        const hasSearx = !!(all["searxng_url"] && all["searxng_url"].trim());
+        this.webImagesEnabled = all["web_images_enabled"] === "false"
+          ? false
+          : all["web_images_enabled"] === "true"
+            ? true
+            : hasSearx;
+      }
+      // Load user-added YouTube/URL stations so they show in the music panel —
+      // before restoring the default station, which may be one of them.
       this.customStations = await api.listCustomStations().catch(() => []);
+      // Restore the saved default station only if it still exists (a deleted
+      // custom station would otherwise silently fall back mid-playback).
+      {
+        const saved = all["default_station"];
+        if (
+          saved &&
+          (BUILTIN_STATION_IDS.includes(saved) || this.customStations.some((s) => s.id === saved))
+        ) {
+          this.music = { ...this.music, current: saved };
+        }
+      }
+      // Restore the saved volume (previously reset to 60% on every launch).
+      {
+        const vol = parseInt(all["music_volume"] ?? "", 10);
+        if (Number.isFinite(vol) && vol >= 0 && vol <= 100) {
+          this.music = { ...this.music, volume: vol };
+          music.setVolume(vol / 100);
+        }
+      }
       try {
         const favs = JSON.parse(all["station_favs"] ?? "[]");
         this.stationFavs = Array.isArray(favs) ? favs.filter((x) => typeof x === "string") : [];
@@ -369,7 +586,48 @@ class AppStore {
     } catch {
       this.applyTheme(this.theme);
     }
+    void this.revealWindow(); // ensure the window shows even if settings failed
     this.startReminderPolling();
+    this.startAppTimeTracking();
+    void this.loadSyncStatus(); // learn whether homelab sync is on (drives the pill)
+    // Auto-retry sources that failed to ingest last time (offline, model not set
+    // up, transient errors). Fire-and-forget so it never blocks first render.
+    void this.retryFailedSources();
+  }
+
+  /** Re-ingest sources stuck in error/draft, one at a time so we don't hammer
+   *  the embedding/LLM providers. Runs in the background on launch. */
+  #retriedFailed = false;
+  async retryFailedSources() {
+    if (this.#retriedFailed) return; // once per session
+    this.#retriedFailed = true;
+    let failed: api.Source[] = [];
+    try {
+      failed = await api.listFailedSources();
+    } catch {
+      return; // command unavailable / db locked — skip silently
+    }
+    if (!failed.length) return;
+    // Cap per launch so a pile of permanently-broken sources can't spin forever.
+    const batch = failed.slice(0, 12);
+    this.pushToast({
+      kind: "info",
+      title: "Retrying failed sources",
+      body: `${batch.length} source${batch.length === 1 ? "" : "s"} from a previous session…`,
+    });
+    let fixed = 0;
+    for (const src of batch) {
+      try {
+        const res = await api.reingestSource(src.id);
+        if (res?.source?.status === "ready") fixed++;
+      } catch {
+        /* still failing — leave it for next launch */
+      }
+    }
+    if (fixed > 0) {
+      await this.refresh();
+      this.pushToast({ kind: "success", title: "Sources recovered", body: `${fixed} re-ingested successfully.` });
+    }
   }
 
   // ---- calendar reminders (in-app notifications) ----
@@ -378,8 +636,11 @@ class AppStore {
     if (this.#reminderTimer) return; // single poller
     const tick = async () => {
       try {
-        const due = await api.checkReminders();
+        // While the window is hidden (closed to tray), reminders surface as
+        // system notifications from the backend instead of in-app toasts.
+        const due = await api.checkReminders(document.hidden);
         for (const e of due) {
+          if (document.hidden) continue;
           this.pushToast({
             kind: "info",
             title: `⏰ ${e.title}`,
@@ -394,11 +655,134 @@ class AppStore {
     this.#reminderTimer = setInterval(tick, 60_000);
   }
 
+  // ---- passive study-time tracking ----
+  // Most studying happens just reading the cheatsheet, not via the pomodoro
+  // timer, so focus minutes would otherwise read 0. Accumulate focused in-app
+  // time and flush it as "app" pomodoro_sessions rows attributed to the active
+  // subject. We only count time while the window is visible AND focused, and
+  // NOT while a pomodoro WORK session is running (that span is already logged as
+  // "work" — counting both would double it).
+  #appSegStart = 0; // wall-clock ms the current accumulating segment began (0 = idle)
+  #appSegSubject: string | null = null; // subject the current segment is attributed to
+  #appFlushTimer: ReturnType<typeof setInterval> | null = null;
+  #appFocused = true;
+  // Don't log sub-minute noise (tab flicks, quick window switches).
+  static #APP_MIN_MS = 60_000;
+  static #APP_FLUSH_MS = 5 * 60_000;
+
+  /** Should we be accumulating right now? Visible + focused + not in a pomodoro
+   *  work session (whose time is logged separately as "work"). */
+  #appShouldAccumulate(): boolean {
+    const hidden = typeof document !== "undefined" && document.hidden;
+    const pomoWork = this.pomo.running && this.pomo.phase === "work";
+    return this.#appFocused && !hidden && !pomoWork;
+  }
+
+  /** Flush the in-progress segment (if long enough) and stop accumulating. */
+  #appFlush() {
+    if (this.#appSegStart === 0) return;
+    const start = this.#appSegStart;
+    const end = Date.now();
+    const subject = this.#appSegSubject;
+    this.#appSegStart = 0;
+    this.#appSegSubject = null;
+    if (end - start >= AppStore.#APP_MIN_MS) {
+      api.logPomodoroSession(subject, "app", start, end).catch(() => {});
+    }
+  }
+
+  /** Begin a fresh accumulation segment for the current subject, if eligible. */
+  #appStartSegment() {
+    if (this.#appSegStart !== 0) return; // already running
+    if (!this.#appShouldAccumulate()) return;
+    this.#appSegStart = Date.now();
+    this.#appSegSubject = this.activeSubjectId;
+  }
+
+  /** Re-evaluate: start, stop, or re-attribute the segment as conditions change. */
+  #appReconcile() {
+    if (!this.#appShouldAccumulate()) {
+      this.#appFlush();
+      return;
+    }
+    // Active subject changed mid-segment → close the old one, open a new one so
+    // minutes land on the right subject.
+    if (this.#appSegStart !== 0 && this.#appSegSubject !== this.activeSubjectId) {
+      this.#appFlush();
+    }
+    this.#appStartSegment();
+  }
+
+  startAppTimeTracking() {
+    if (this.#appFlushTimer || typeof window === "undefined") return; // once
+    this.#appFocused = document.hasFocus?.() ?? true;
+    window.addEventListener("focus", () => { this.#appFocused = true; this.#appReconcile(); });
+    window.addEventListener("blur", () => { this.#appFocused = false; this.#appReconcile(); });
+    document.addEventListener("visibilitychange", () => this.#appReconcile());
+    // Best-effort final flush when the window/app goes away.
+    window.addEventListener("beforeunload", () => this.#appFlush());
+    window.addEventListener("pagehide", () => this.#appFlush());
+    // Periodic flush so long uninterrupted sessions still land rows (and so the
+    // dashboard updates without waiting for a blur). Each flush rolls straight
+    // into a new segment via reconcile.
+    this.#appFlushTimer = setInterval(() => {
+      this.#appFlush();
+      this.#appReconcile();
+    }, AppStore.#APP_FLUSH_MS);
+    // Keep attribution correct when the user switches subjects without blurring.
+    $effect.root(() => {
+      $effect(() => {
+        void this.activeSubjectId;
+        void this.pomo.running;
+        void this.pomo.phase;
+        this.#appReconcile();
+      });
+    });
+    this.#appReconcile(); // start now if eligible
+  }
+
   async refresh() {
     this.subjects = await api.listSubjects();
     if (this.activeSource) {
       this.activeSource =
         (await api.getSource(this.activeSource.id).catch(() => null)) ?? this.activeSource;
+    }
+    this.scheduleSync(); // data changed → push to homelab (debounced)
+  }
+
+  // ---- live homelab sync (last-write-wins DB snapshot) ----
+  // "off" until we learn sync is enabled; then idle/syncing/synced/error.
+  syncState = $state<"off" | "idle" | "syncing" | "synced" | "error">("off");
+  syncLastAt = $state(0);
+  #syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async loadSyncStatus() {
+    try {
+      const s = await api.syncStatus();
+      this.syncState = s.enabled && s.configured ? "idle" : "off";
+      this.syncLastAt = s.last_at;
+    } catch {
+      this.syncState = "off";
+    }
+  }
+
+  /** Debounced push after a change — the "auto store" half of live sync. */
+  scheduleSync() {
+    if (this.syncState === "off") return;
+    if (this.#syncTimer) clearTimeout(this.#syncTimer);
+    this.#syncTimer = setTimeout(() => void this.syncNow(), 5000);
+  }
+
+  /** Push immediately (used by the debounce and the Settings "Sync now" button). */
+  async syncNow() {
+    if (this.syncState === "off") return;
+    if (this.#syncTimer) { clearTimeout(this.#syncTimer); this.#syncTimer = null; }
+    this.syncState = "syncing";
+    try {
+      this.syncLastAt = await api.syncPush();
+      this.syncState = "synced";
+    } catch {
+      this.syncState = "error";
     }
   }
 
@@ -650,6 +1034,25 @@ class AppStore {
     }
   }
 
+  // ---- window reveal ----
+  // The window boots hidden (tauri.conf `visible:false`) so the user never sees
+  // the white webview flash or the brief default-theme paint before the real
+  // theme loads. We show it once appearance (theme/font/density) is applied.
+  // Idempotent + has a safety timeout so the window can never stay stuck hidden.
+  #revealed = false;
+  async revealWindow() {
+    if (this.#revealed) return;
+    this.#revealed = true;
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const w = getCurrentWindow();
+      await w.show();
+      await w.setFocus();
+    } catch {
+      /* not running under Tauri (e.g. browser dev) — nothing to reveal */
+    }
+  }
+
   // ---- theme ----
   applyTheme(t: Theme) {
     document.documentElement.setAttribute("data-theme", t);
@@ -658,6 +1061,33 @@ class AppStore {
     this.theme = t;
     this.applyTheme(t);
     api.setSetting("theme", t).catch(() => {});
+  }
+  /** Read the desktop's current Omarchy theme and adopt it if it maps to one of
+   *  Cortex's palettes. Returns the matched theme, or null if none/unavailable.
+   *  Persists the theme but NOT via setTheme's own path so the follow flag stays
+   *  the source of truth. */
+  async syncOmarchyTheme(): Promise<Theme | null> {
+    const name = (await api.omarchyTheme().catch(() => null))?.trim().toLowerCase();
+    if (!name) return null;
+    // Omarchy theme dir names line up with Cortex ids for the shared palettes;
+    // normalise a couple of known aliases.
+    const alias: Record<string, Theme> = {
+      "tokyo-night": "tokyo-night",
+      "catppuccin-mocha": "catppuccin",
+      "rose-pine": "rose-pine",
+    };
+    const match = (alias[name] ?? name) as Theme;
+    if (!THEMES.includes(match)) return null;
+    this.theme = match;
+    this.applyTheme(match);
+    api.setSetting("theme", match).catch(() => {});
+    return match;
+  }
+  /** Toggle "follow Omarchy theme" and persist it; syncs immediately when on. */
+  async setFollowOmarchy(on: boolean): Promise<Theme | null> {
+    this.followOmarchy = on;
+    api.setSetting("follow_omarchy", on ? "true" : "false").catch(() => {});
+    return on ? await this.syncOmarchyTheme() : null;
   }
   cycleTheme() {
     const next = THEMES[(THEMES.indexOf(this.theme) + 1) % THEMES.length];
@@ -682,9 +1112,15 @@ class AppStore {
     if (cs) music.playYoutube(id, cs.url);
     else music.play(id);
   }
+  #volumeTimer: ReturnType<typeof setTimeout> | null = null;
   setVolume(v: number) {
     this.music = { ...this.music, volume: v };
     music.setVolume(v / 100);
+    // Persist (debounced — the slider fires continuously while dragging).
+    if (this.#volumeTimer) clearTimeout(this.#volumeTimer);
+    this.#volumeTimer = setTimeout(() => {
+      api.setSetting("music_volume", String(Math.round(v))).catch(() => {});
+    }, 500);
   }
 
   /** Add a user station that streams from a pasted URL (YouTube video/live). */

@@ -50,7 +50,7 @@
       </button>
       <div>
         <div class="eyebrow">New subject</div>
-        <h1 class="addpage-title read">Create a subject</h1>
+        <h1 class="addpage-title">Create a subject</h1>
         <div class="mono faint" style="font-size:var(--t-xs)">holds topics, sources and one living cheatsheet</div>
       </div>
     </div>

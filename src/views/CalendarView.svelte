@@ -29,6 +29,17 @@
     selectedDay = d;
     mode = "day";
   }
+
+  // Arriving from the Assignments list ("open in calendar") — jump to that day.
+  $effect(() => {
+    const ms = app.calendarFocusMs;
+    if (ms == null) return;
+    app.calendarFocusMs = null;
+    const d = new Date(ms);
+    year = d.getFullYear();
+    month = d.getMonth();
+    openDayView(d);
+  });
   function backToMonth() {
     mode = "month";
   }

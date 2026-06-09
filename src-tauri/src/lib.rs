@@ -1,6 +1,7 @@
 //! Cortex backend library. Wires the SQLite-backed AppState into Tauri and
 //! registers the command surface consumed by the Svelte frontend.
 
+mod analytics;
 mod anki;
 mod backup;
 mod calendar;
@@ -8,6 +9,7 @@ mod commands;
 mod db;
 mod embed;
 mod error;
+mod exam;
 mod google;
 mod ingest;
 mod llm;
@@ -16,10 +18,20 @@ mod mpv;
 mod notes;
 mod repo;
 mod review;
+mod sync;
 mod vector;
 
 use db::AppState;
 use tauri::Manager;
+
+/// Reveal (and focus) the main window — used by the tray's Open and left-click.
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -34,8 +46,54 @@ pub fn run() {
                 .expect("resolve app data dir");
             std::fs::create_dir_all(&dir).expect("create app data dir");
             let db_path = dir.join("cortex.db");
+            // Live sync: if the homelab holds a newer snapshot, pull it BEFORE
+            // opening the DB (best-effort; never blocks startup on failure).
+            sync::pull_on_launch(&db_path);
             let state = AppState::new(&db_path).expect("init database");
             app.manage(state);
+
+            // If a previous session crashed, its mpv music sidecar is still
+            // alive and streaming — quit it before this session starts its own.
+            mpv::cleanup_stale(app.handle());
+
+            // Tray icon: lets the app keep working (ingest, generation, music)
+            // after the window is closed. Left-click or "Open" reopens it.
+            {
+                use tauri::menu::{Menu, MenuItem};
+                use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+                let open = MenuItem::with_id(app, "open", "Open Cortex", true, None::<&str>)?;
+                let music =
+                    MenuItem::with_id(app, "music", "Play / pause music", true, None::<&str>)?;
+                let quit = MenuItem::with_id(app, "quit", "Quit Cortex", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&open, &music, &quit])?;
+                let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?;
+                TrayIconBuilder::with_id("cortex-tray")
+                    .icon(icon)
+                    .tooltip("Cortex")
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_menu_event(|app, event| match event.id.as_ref() {
+                        "open" => show_main_window(app),
+                        "music" => {
+                            use tauri::Emitter;
+                            let _ = app.emit("tray-music-toggle", ());
+                        }
+                        "quit" => app.exit(0),
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            show_main_window(tray.app_handle());
+                        }
+                    })
+                    .build(app)?;
+            }
 
             // On Linux (WebKitGTK) getUserMedia is denied by default, which
             // surfaces as NotAllowedError in the recorder. Auto-grant audio
@@ -58,11 +116,51 @@ pub fn run() {
                                 false
                             }
                         });
+
+                        // WebKitGTK's built-in find-in-page grabs Ctrl/Ctrl+F at the
+                        // GTK level — BELOW the webview's JS — so a JS capture-phase
+                        // handler can't stop it, and it steals Ctrl+C/Ctrl+V (the
+                        // user can't copy/paste). Intercept Ctrl+F here: block the
+                        // native handler and open OUR find bar via a synthetic event.
+                        // All other keys (incl. copy/paste) pass straight through.
+                        use gtk::prelude::WidgetExt;
+                        wv.connect_key_press_event(|wv: &webkit2gtk::WebView, ev: &gdk::EventKey| {
+                            let ctrl = ev.state().contains(gdk::ModifierType::CONTROL_MASK);
+                            let key = ev.keyval().name().map(|s| s.to_string()).unwrap_or_default();
+                            if ctrl && (key == "f" || key == "F") {
+                                wv.run_javascript(
+                                    "window.dispatchEvent(new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true}))",
+                                    None::<&webkit2gtk::gio::Cancellable>,
+                                    |_| {},
+                                );
+                                return gtk::glib::Propagation::Stop;
+                            }
+                            gtk::glib::Propagation::Proceed
+                        });
                     });
                 }
             }
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Close-to-tray (Settings → "close to tray", default ON): hide the
+            // window instead of exiting so ingest/generation/music continue.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let close_to_tray = {
+                    let state = window.state::<AppState>();
+                    let c = state.db.lock().unwrap();
+                    repo::get_setting(&c, "close_to_tray")
+                        .ok()
+                        .flatten()
+                        .as_deref()
+                        != Some("false")
+                };
+                if close_to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_subjects,
@@ -76,6 +174,7 @@ pub fn run() {
             commands::reorder_subjects,
             commands::reorder_topics,
             commands::list_sources,
+            commands::list_failed_sources,
             commands::get_source,
             commands::update_source,
             commands::delete_source,
@@ -86,6 +185,7 @@ pub fn run() {
             commands::add_source,
             commands::reingest_source,
             commands::search_chunks,
+            commands::global_search,
             commands::seed_demo,
             commands::env_probe,
             commands::chat_answer,
@@ -105,10 +205,12 @@ pub fn run() {
             commands::export_pdf,
             commands::export_database,
             commands::export_anki,
+            commands::import_anki,
             backup::backup_status,
             backup::backup_now,
             commands::optimize_db,
             commands::generate_material,
+            commands::synthesize_overview,
             commands::list_materials,
             commands::delete_material,
             commands::rename_material,
@@ -138,7 +240,11 @@ pub fn run() {
             commands::db_stats,
             commands::delete_all_data,
             commands::ping_url,
+            commands::omarchy_theme,
             commands::fetch_page,
+            sync::sync_status,
+            sync::sync_test,
+            sync::sync_push,
             // notes
             notes::create_note,
             notes::list_notes,
@@ -160,6 +266,17 @@ pub fn run() {
             review::srs_grade,
             review::srs_due,
             review::srs_stats,
+            // study analytics
+            analytics::log_pomodoro_session,
+            analytics::analytics_summary,
+            // exam mode
+            exam::generate_exam,
+            exam::start_exam,
+            exam::submit_exam,
+            exam::remark_exam,
+            exam::list_exams,
+            exam::get_exam,
+            exam::delete_exam,
             // google calendar
             google::google_status,
             google::google_connect,

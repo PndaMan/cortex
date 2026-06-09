@@ -629,14 +629,26 @@ pub fn html_to_pdf(html: &str, dest: &Path) -> Result<()> {
 }
 
 pub fn which(cmd: &str) -> Option<String> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let full = dir.join(cmd);
-        if full.is_file() {
-            return Some(full.to_string_lossy().into_owned());
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let full = dir.join(cmd);
+            if full.is_file() {
+                return Some(full.to_string_lossy().into_owned());
+            }
         }
     }
-    None
+    // Desktop launchers often start the app with a minimal PATH that misses
+    // the user's shell additions — probe the standard install dirs too.
+    let mut cands: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(h) = std::env::var("HOME") {
+        cands.push(std::path::Path::new(&h).join(".local/bin").join(cmd));
+    }
+    cands.push(std::path::Path::new("/usr/local/bin").join(cmd));
+    cands.push(std::path::Path::new("/usr/bin").join(cmd));
+    cands
+        .into_iter()
+        .find(|p| p.is_file())
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Split text into bounded, overlapping chunks on word boundaries.

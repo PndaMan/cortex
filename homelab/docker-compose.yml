@@ -1,0 +1,91 @@
+# Cortex homelab backend
+# ----------------------
+# One command brings up the optional services Cortex can offload to:
+#   • SearXNG  — web search for cheatsheet diagrams / chat enrichment (port 8080)
+#   • Whisper  — OpenAI-compatible lecture transcription                (port 9009)
+#   • Ollama   — local LLM + embeddings (OPTIONAL, profile "ollama")    (port 11434)
+#
+#   docker compose up -d                 # SearXNG + Whisper
+#   docker compose --profile ollama up -d   # also start Ollama
+#
+# Then point Cortex at this host in Settings → Integrations:
+#   SearXNG  → http://<host>:8080
+#   Whisper  → http://<host>:9009
+#   Ollama   → http://<host>:11434
+#
+# Expose it however you like: a reverse proxy (Caddy/Traefik/nginx) with TLS, or
+# a VPN (Tailscale / Netbird / WireGuard) so only your devices can reach it.
+# See README.md for examples.
+
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: cortex-searxng
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    environment:
+      # Public base URL SearXNG advertises. Set to your reverse-proxy URL when
+      # exposing it; the LAN/VPN IP is fine for local use.
+      - SEARXNG_BASE_URL=http://localhost:8080/
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+
+  whisper:
+    # Speaches (formerly faster-whisper-server): an OpenAI-compatible ASR server
+    # exposing POST /v1/audio/transcriptions — exactly what Cortex calls.
+    # Use the -cuda image instead of -cpu if the host has an NVIDIA GPU.
+    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    container_name: cortex-whisper
+    restart: unless-stopped
+    ports:
+      - "9009:8000"
+    volumes:
+      - whisper-models:/home/ubuntu/.cache/huggingface
+    environment:
+      # Preload a model so the first transcription isn't a cold download.
+      - WHISPER__MODEL=Systran/faster-whisper-base.en
+
+  sync:
+    # WebDAV target for Cortex live sync (last-write-wins DB snapshot). Cortex
+    # PUTs/GETs cortex.db + cortex.stamp here. Set credentials before exposing.
+    image: bytemark/webdav:latest
+    container_name: cortex-sync
+    restart: unless-stopped
+    ports:
+      - "9010:80"
+    environment:
+      - AUTH_TYPE=Basic
+      - USERNAME=cortex
+      - PASSWORD=change-me-sync-password
+    volumes:
+      - sync-data:/var/lib/dav
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: cortex-ollama
+    restart: unless-stopped
+    profiles: ["ollama"]   # only starts with `--profile ollama`
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    # Uncomment for an NVIDIA GPU (needs the NVIDIA container toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  whisper-models:
+  ollama-models:
+  sync-data:

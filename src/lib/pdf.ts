@@ -27,7 +27,8 @@ const EXPORT_CSS = `
 @page{size:A4;margin:16mm 15mm;}
 html,body{margin:0;padding:0;background:#fff;color:var(--fg);
   font-family:-apple-system,"Inter",Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-  font-size:13px;line-height:1.6;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  font-size:13px;line-height:1.6;-webkit-print-color-adjust:exact;print-color-adjust:exact;
+  orphans:3;widows:3;}
 .cs-doc{max-width:none;margin:0;padding:0;}
 .cs-doc + .cs-doc{margin-top:0;}
 .cs-export-sheet{break-after:page;}
@@ -40,12 +41,16 @@ html,body{margin:0;padding:0;background:#fff;color:var(--fg);
 .cs-sub{font-family:var(--font-mono);font-size:11px;color:var(--fg-muted);margin:0 0 18px;}
 .cs-doc-actions,.cs-tabs,.status-pill .dot{display:none !important;}
 
-/* sections */
+/* sections — note: NO break-inside:avoid here. Sections routinely run taller
+   than a page; avoiding breaks inside them makes Chromium shove each one onto a
+   fresh page (then break it anyway), stranding the prior page near-empty. We let
+   sections flow and instead keep the smaller units (items, tables, callouts)
+   together, and keep headings glued to what follows them. */
 .cs-sections{display:block;}
-.cs-section{break-inside:avoid;margin:0 0 22px;padding:0 0 4px;
-  border-bottom:1px solid var(--border);}
+.cs-section{margin:0 0 22px;padding:0 0 4px;border-bottom:1px solid var(--border);}
 .cs-section:last-child{border-bottom:none;}
-.cs-sec-head{display:flex;align-items:baseline;gap:10px;margin:0 0 12px;}
+.cs-sec-head{display:flex;align-items:baseline;gap:10px;margin:0 0 12px;
+  break-inside:avoid;break-after:avoid;}
 /* Section titles are the dominant headings — big mono uppercase accent, matching
    the on-screen cheatsheet identity. */
 .cs-sec-title{font-family:var(--font-mono);font-size:27px;font-weight:700;line-height:1.1;
@@ -62,17 +67,35 @@ html,body{margin:0;padding:0;background:#fff;color:var(--fg);
 .status-pill{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;
   letter-spacing:.04em;color:var(--warn);}
 
+/* topic dividers — present in the composed whole-subject sheet. Without these
+   rules the labels fell back to plain body text; mirror the on-screen accent
+   identity and keep each label glued to the topic it introduces. */
+.cs-topic-divider{display:flex;align-items:center;gap:12px;margin:26px 0 6px;
+  break-after:avoid;break-inside:avoid;}
+.cs-topic-divider:first-child{margin-top:0;}
+.cs-topic-divider::before,.cs-topic-divider::after{content:"";height:1px;flex:1;
+  background:var(--border-strong);}
+.cs-topic-divider-label{font-size:14px;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--accent);white-space:nowrap;}
+.cs-topic-subdiv{margin:24px 0 12px;padding-bottom:7px;
+  border-bottom:2px solid var(--accent);break-after:avoid;break-inside:avoid;}
+.cs-topic-subdiv:first-child{margin-top:4px;}
+.cs-topic-subdiv-label{display:block;font-family:var(--font-mono);font-size:20px;
+  font-weight:800;line-height:1.15;letter-spacing:.01em;color:var(--accent);
+  overflow-wrap:anywhere;}
+
 /* items */
 .cs-list{margin:0;}
 .cs-item{break-inside:avoid;margin:0 0 13px;}
-.cs-item dt{font-weight:650;color:var(--fg-bright);font-size:13.5px;margin:0 0 3px;}
+.cs-item dt{font-weight:650;color:var(--fg-bright);font-size:13.5px;margin:0 0 3px;
+  break-after:avoid;}
 .cs-item dd{margin:0 0 0 0;color:var(--fg);}
 
 /* ── RichText markup ───────────────────────────────────── */
 .richtext{line-height:1.6;}
 .rt-p{margin:0 0 9px;}.rt-p:last-child{margin-bottom:0;}
-.rt-h2{margin:14px 0 7px;font-size:14.5px;font-weight:600;color:var(--fg-bright);}
-.rt-h3{margin:12px 0 5px;font-size:13px;font-weight:600;color:var(--fg-bright);}
+.rt-h2{margin:14px 0 7px;font-size:14.5px;font-weight:600;color:var(--fg-bright);break-after:avoid;}
+.rt-h3{margin:12px 0 5px;font-size:13px;font-weight:600;color:var(--fg-bright);break-after:avoid;}
 .rt-h2:first-child,.rt-h3:first-child{margin-top:0;}
 .rt-hr{border:none;border-top:1px solid var(--border-strong);margin:13px 0;}
 .rt-ul,.rt-ol{margin:0 0 9px;padding-left:20px;}

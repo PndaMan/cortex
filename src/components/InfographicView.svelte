@@ -54,47 +54,49 @@
           </div>
         {/if}
 
-        {#if sections.length}
-          <div class="poster-grid">
-            {#each sections as sec, i (i)}
-              <section class="poster-card">
-                <div class="pc-head">
-                  {#if sec.emoji}<span class="pc-emoji" aria-hidden="true">{sec.emoji}</span>{/if}
-                  <h2 class="pc-heading">{sec.heading ?? ""}</h2>
-                </div>
-                {#if sec.stat?.value}
-                  <div class="pc-stat">
-                    <span class="pc-stat-val">{sec.stat.value}</span>
-                    {#if sec.stat.label}<span class="pc-stat-label">{sec.stat.label}</span>{/if}
+        <div class="poster-body" class:poster-body--split={sections.length > 0 && timeline.length > 0}>
+          {#if sections.length}
+            <div class="poster-grid">
+              {#each sections as sec, i (i)}
+                <section class="poster-card">
+                  <div class="pc-head">
+                    {#if sec.emoji}<span class="pc-emoji" aria-hidden="true">{sec.emoji}</span>{/if}
+                    <h2 class="pc-heading">{sec.heading ?? ""}</h2>
                   </div>
-                {/if}
-                {#if sec.points?.length}
-                  <ul class="pc-points">
-                    {#each sec.points as p (p)}<li>{p}</li>{/each}
-                  </ul>
-                {/if}
-              </section>
-            {/each}
-          </div>
-        {/if}
-
-        {#if timeline.length}
-          <section class="poster-timeline">
-            <h2 class="ptl-heading"><span aria-hidden="true">🕑</span> Timeline</h2>
-            <ol class="ptl-list">
-              {#each timeline as ev, i (i)}
-                <li class="ptl-item">
-                  <span class="ptl-node" aria-hidden="true"></span>
-                  <div class="ptl-body">
-                    {#if ev.date}<span class="ptl-date mono">{ev.date}</span>{/if}
-                    {#if ev.title}<span class="ptl-title">{ev.title}</span>{/if}
-                    {#if ev.detail}<p class="ptl-detail">{ev.detail}</p>{/if}
-                  </div>
-                </li>
+                  {#if sec.stat?.value}
+                    <div class="pc-stat">
+                      <span class="pc-stat-val">{sec.stat.value}</span>
+                      {#if sec.stat.label}<span class="pc-stat-label">{sec.stat.label}</span>{/if}
+                    </div>
+                  {/if}
+                  {#if sec.points?.length}
+                    <ul class="pc-points">
+                      {#each sec.points as p (p)}<li>{p}</li>{/each}
+                    </ul>
+                  {/if}
+                </section>
               {/each}
-            </ol>
-          </section>
-        {/if}
+            </div>
+          {/if}
+
+          {#if timeline.length}
+            <section class="poster-timeline">
+              <h2 class="ptl-heading"><span aria-hidden="true">🕑</span> Timeline</h2>
+              <ol class="ptl-track">
+                {#each timeline as ev, i (i)}
+                  <li class="ptl-item">
+                    <span class="ptl-node" aria-hidden="true"></span>
+                    <div class="ptl-body">
+                      {#if ev.date}<span class="ptl-date mono">{ev.date}</span>{/if}
+                      {#if ev.title}<span class="ptl-title">{ev.title}</span>{/if}
+                      {#if ev.detail}<p class="ptl-detail">{ev.detail}</p>{/if}
+                    </div>
+                  </li>
+                {/each}
+              </ol>
+            </section>
+          {/if}
+        </div>
       </div>
     {:else if legacySvg}
       <div class="infographic-canvas">{@html legacySvg}</div>
@@ -116,72 +118,113 @@
   .poster-img { max-width: 760px; width: 100%; height: auto; border-radius: var(--rad-3); box-shadow: var(--shadow-2); }
 
   /* ── structured poster ───────────────────────────────────── */
-  .poster { max-width: 1100px; margin: 0 auto; width: 100%; }
-  .poster-head { text-align: center; margin-bottom: var(--sp-6); padding-bottom: var(--sp-4); border-bottom: 2px solid color-mix(in oklab, var(--accent) 50%, transparent); }
-  .poster-title { font-size: clamp(26px, 4vw, 44px); font-weight: 700; color: var(--fg-bright); margin: 0 0 6px; line-height: 1.05; }
+  /* Single dense "poster" that aims to fit a 1080p viewport. We use a
+     container query (poster is the query root) so the sections/timeline
+     split reacts to the poster's own width, not the global viewport. */
+  .poster { max-width: 1280px; margin: 0 auto; width: 100%; container-type: inline-size; }
+  .poster-head { text-align: center; margin-bottom: var(--sp-4); padding-bottom: var(--sp-3); border-bottom: 2px solid color-mix(in oklab, var(--accent) 50%, transparent); }
+  .poster-title { font-size: clamp(24px, 3.4vw, 38px); font-weight: 700; color: var(--fg-bright); margin: 0 0 4px; line-height: 1.05; }
   .poster-sub { font-size: var(--t-sm); color: var(--accent); letter-spacing: 0.04em; }
+
+  /* On wide posters, lay sections and timeline side-by-side. Sections get
+     the larger share; the timeline becomes a tight rail on the right. */
+  .poster-body { display: flex; flex-direction: column; gap: var(--sp-5); }
+  @container (min-width: 760px) {
+    .poster-body--split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(280px, 1fr);
+      gap: var(--sp-5);
+      align-items: start;
+    }
+  }
 
   .poster-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
     align-items: start;
   }
   .poster-card {
     background: color-mix(in oklab, var(--accent) 7%, var(--surface));
     border: 1px solid color-mix(in oklab, var(--accent) 28%, var(--border));
     border-radius: var(--rad-4);
-    padding: 16px 16px 14px;
+    padding: 12px 13px 11px;
     break-inside: avoid;
   }
-  .pc-head { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
-  .pc-emoji { font-size: 22px; line-height: 1; flex: none; }
-  .pc-heading { font-size: 16px; font-weight: 650; color: var(--fg-bright); margin: 0; }
-  .pc-stat { display: flex; align-items: baseline; gap: 8px; margin: 0 0 10px; }
-  .pc-stat-val { font-size: 30px; font-weight: 750; color: var(--accent); line-height: 1; letter-spacing: -0.01em; }
+  .pc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .pc-emoji { font-size: 19px; line-height: 1; flex: none; }
+  .pc-heading { font-size: 15px; font-weight: 650; color: var(--fg-bright); margin: 0; line-height: 1.2; }
+  .pc-stat { display: flex; align-items: baseline; gap: 7px; margin: 0 0 8px; }
+  .pc-stat-val { font-size: 26px; font-weight: 750; color: var(--accent); line-height: 1; letter-spacing: -0.01em; }
   .pc-stat-label { font-size: var(--t-xs); color: var(--fg-muted); }
-  .pc-points { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
-  .pc-points li { font-size: 13.5px; line-height: 1.45; color: var(--fg); }
+  .pc-points { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px; }
+  .pc-points li { font-size: 13px; line-height: 1.4; color: var(--fg); }
   .pc-points li::marker { color: var(--accent); }
 
   /* ── key takeaway banner ─────────────────────────────────── */
   .poster-takeaway {
-    margin: 0 0 var(--sp-5);
-    padding: 14px 18px;
+    margin: 0 0 var(--sp-4);
+    padding: 11px 16px;
     border-radius: var(--rad-4);
     background: color-mix(in oklab, var(--accent) 12%, var(--surface));
     border: 1px solid color-mix(in oklab, var(--accent) 34%, var(--border));
     border-left: 3px solid var(--accent);
   }
-  .ptk-label { display: block; font-size: var(--t-xs); letter-spacing: 0.08em; color: var(--accent); margin-bottom: 3px; }
-  .ptk-text { margin: 0; font-size: 15px; line-height: 1.5; color: var(--fg-bright); font-weight: 500; }
+  .ptk-label { display: block; font-size: var(--t-xs); letter-spacing: 0.08em; color: var(--accent); margin-bottom: 2px; }
+  .ptk-text { margin: 0; font-size: 14.5px; line-height: 1.45; color: var(--fg-bright); font-weight: 500; }
 
-  /* ── timeline ────────────────────────────────────────────── */
-  .poster-timeline { margin-top: var(--sp-6); }
+  /* ── timeline (compact, horizontal-wrapping rail) ─────────── */
+  .poster-timeline { margin: 0; min-width: 0; }
   .ptl-heading {
-    font-size: 18px; font-weight: 700; color: var(--fg-bright);
-    margin: 0 0 var(--sp-4); display: flex; align-items: center; gap: 8px;
+    font-size: 16px; font-weight: 700; color: var(--fg-bright);
+    margin: 0 0 var(--sp-3); display: flex; align-items: center; gap: 7px;
   }
-  .ptl-list { list-style: none; margin: 0; padding: 0 0 0 4px; position: relative; }
-  /* vertical connecting line running through all nodes */
-  .ptl-list::before {
-    content: ""; position: absolute; left: 7px; top: 6px; bottom: 6px;
-    width: 2px; background: color-mix(in oklab, var(--accent) 35%, var(--border));
+  /* Wrapping grid of uniform event chips — reads left-to-right, top-to-bottom,
+     so most/all events are visible without a long vertical scroll. */
+  .ptl-track {
+    list-style: none; margin: 0; padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
   }
-  .ptl-item { position: relative; padding: 0 0 var(--sp-4) 30px; }
-  .ptl-item:last-child { padding-bottom: 0; }
+  /* In the split (side-by-side) layout the timeline column is narrow, so keep
+     events stacked in a single tidy column there. */
+  @container (min-width: 760px) {
+    .poster-body--split .ptl-track { grid-template-columns: 1fr; gap: 8px; }
+  }
+  .ptl-item {
+    position: relative;
+    padding: 9px 11px 9px 22px;
+    border: 1px solid color-mix(in oklab, var(--accent) 22%, var(--border));
+    border-radius: var(--rad-3);
+    background: color-mix(in oklab, var(--accent) 5%, var(--surface));
+    min-width: 0;
+  }
   .ptl-node {
-    position: absolute; left: 1px; top: 4px; width: 14px; height: 14px;
+    position: absolute; left: 9px; top: 13px; width: 9px; height: 9px;
     border-radius: 50%; background: var(--accent);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 18%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 16%, transparent);
   }
-  .ptl-body { display: flex; flex-direction: column; gap: 2px; }
-  .ptl-date { font-size: var(--t-xs); color: var(--accent); letter-spacing: 0.03em; }
-  .ptl-title { font-size: 14.5px; font-weight: 650; color: var(--fg-bright); line-height: 1.3; }
-  .ptl-detail { margin: 1px 0 0; font-size: 13px; line-height: 1.5; color: var(--fg-muted); }
+  .ptl-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .ptl-date { font-size: var(--t-2xs); color: var(--accent); letter-spacing: 0.03em; }
+  .ptl-title {
+    font-size: 13.5px; font-weight: 650; color: var(--fg-bright); line-height: 1.25;
+    overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .ptl-detail {
+    margin: 1px 0 0; font-size: 12px; line-height: 1.4; color: var(--fg-muted);
+    overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
+  }
+
+  @container (max-width: 759px) {
+    .poster-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  }
 
   @media (max-width: 600px) {
     .infographic-page { padding: var(--sp-5) var(--sp-4); }
     .poster-grid { grid-template-columns: 1fr; }
+    .ptl-track { grid-template-columns: 1fr; }
   }
 </style>

@@ -69,6 +69,16 @@ export interface ChunkHit {
   score: number;
 }
 
+/** One global-search (Ctrl+K) result. For "chunk" hits `id` is the source id. */
+export interface SearchHit {
+  kind: "chunk" | "source" | "note" | "event" | "material";
+  id: string;
+  subject_id: string | null;
+  title: string;
+  snippet: string;
+  score: number;
+}
+
 export interface IngestProgress {
   source_id: string;
   stage: string; // parsing | chunking | embedding | storing | done | error
@@ -170,6 +180,20 @@ export const updateSource = (
 export const deleteSource = (id: string) => invoke<void>("delete_source", { id });
 /** Re-run ingestion (re-OCR/re-chunk/re-embed) for an existing source in place. */
 export const reingestSource = (id: string) => invoke<IngestResult>("reingest_source", { id });
+/** Sources that failed to ingest (error / draft-with-error), across all subjects. */
+export const listFailedSources = () => invoke<Source[]>("list_failed_sources");
+
+// ---- live homelab sync (last-write-wins DB snapshot) ----
+export interface SyncStatus {
+  enabled: boolean;
+  configured: boolean;
+  last_at: number; // epoch-ms, 0 = never
+}
+export const syncStatus = () => invoke<SyncStatus>("sync_status");
+export const syncTest = (url: string, user: string, pass: string) =>
+  invoke<boolean>("sync_test", { url, user, pass });
+/** Push a snapshot of the local DB to the homelab; returns the push timestamp (ms). */
+export const syncPush = () => invoke<number>("sync_push");
 export const listChunks = (sourceId: string) =>
   invoke<ChunkInfo[]>("list_chunks", { sourceId });
 export const addSource = (input: AddSourceInput) =>
@@ -178,6 +202,9 @@ export const addSource = (input: AddSourceInput) =>
 // ---- search / settings / demo ----
 export const searchChunks = (query: string, subjectId?: string, k?: number) =>
   invoke<ChunkHit[]>("search_chunks", { query, subjectId, k });
+/** Global Ctrl+K search: semantic across all subjects + text over records. */
+export const globalSearch = (query: string) =>
+  invoke<SearchHit[]>("global_search", { query });
 export const getSetting = (key: string) => invoke<string | null>("get_setting", { key });
 export const setSetting = (key: string, value: string) =>
   invoke<void>("set_setting", { key, value });
@@ -218,6 +245,16 @@ export const exportDatabase = (dest: string) =>
 /** Export a flashcard material to an Anki `.apkg` deck at `dest`; returns card count. */
 export const exportAnki = (materialId: string, dest: string) =>
   invoke<number>("export_anki", { materialId, dest });
+/** Summary of an Anki `.apkg` import: decks created, cards stored, cards skipped. */
+export interface AnkiImportResult {
+  deck_count: number;
+  card_count: number;
+  skipped: number;
+}
+/** Import an Anki `.apkg` at `path` into a subject as flashcard materials (one
+ *  per deck). HTML-stripped, deduped vs existing decks in the subject. */
+export const importAnki = (subjectId: string, path: string, topicId?: string) =>
+  invoke<AnkiImportResult>("import_anki", { subjectId, topicId, path });
 // ---- encrypted homelab backups (age + rclone) ----
 export interface BackupStatus {
   age_found: boolean;
@@ -238,26 +275,77 @@ export const generateMaterial = (
   topicId?: string,
   title?: string,
   customPrompt?: string,
-  sourceIds?: string[]
-) => invoke<MaterialRec>("generate_material", { subjectId, kind, topicId, title, customPrompt, sourceIds });
+  sourceIds?: string[],
+  count?: number
+) => invoke<MaterialRec>("generate_material", { subjectId, kind, topicId, title, customPrompt, sourceIds, count });
+/** Synthesize a real audio-overview mp3 from the script segments via cloud TTS.
+ *  Returns the file path (serve to <audio> with convertFileSrc). Errors offline /
+ *  without an OpenAI key — caller falls back to on-device speech synthesis. */
+export const synthesizeOverview = (
+  materialId: string,
+  segments: { speaker: string; text: string }[],
+  force?: boolean
+) => invoke<string>("synthesize_overview", { materialId, segments, force });
 export const listMaterials = (subjectId: string) =>
   invoke<MaterialRec[]>("list_materials", { subjectId });
 export const deleteMaterial = (id: string) => invoke<void>("delete_material", { id });
 export const renameMaterial = (id: string, title: string) =>
   invoke<void>("rename_material", { id, title });
 
+// ---- exam mode (timed, locally-graded practice exams) ----
+// `questions`/`answers`/`results` are loosely-typed JSON (mirrors the backend's
+// serde_json::Value); ExamView narrows them at the point of use.
+export interface ExamRec {
+  id: string;
+  subject_id: string;
+  topic_ids: string[];
+  title: string;
+  duration_min: number;
+  questions: any;
+  answers: any;
+  results: any;
+  status: string; // ready | in_progress | graded
+  started_ms: number | null;
+  score: number | null;
+  created_at: number;
+  updated_at: number;
+}
+export interface ExamAnswerInput {
+  id: string;
+  choice?: number | null;
+  text?: string | null;
+}
+export const generateExam = (
+  subjectId: string,
+  topicIds: string[] | undefined,
+  durationMin: number,
+  mcqCount: number,
+  writtenCount: number
+) =>
+  invoke<ExamRec>("generate_exam", { subjectId, topicIds, durationMin, mcqCount, writtenCount });
+export const startExam = (id: string) => invoke<ExamRec>("start_exam", { id });
+export const submitExam = (id: string, answers: ExamAnswerInput[]) =>
+  invoke<any>("submit_exam", { id, answers });
+/** Re-grade a finished exam's stored answers (same pipeline/rubric as submit). */
+export const remarkExam = (id: string) => invoke<any>("remark_exam", { id });
+export const listExams = (subjectId: string) =>
+  invoke<ExamRec[]>("list_exams", { subjectId });
+export const getExam = (id: string) => invoke<ExamRec>("get_exam", { id });
+export const deleteExam = (id: string) => invoke<void>("delete_exam", { id });
+
 // ---- lecture recording (Whisper) ----
 export const saveRecording = (
   subjectId: string,
   name: string,
   audio: number[],
-  topicId?: string
-) => invoke<IngestResult>("save_recording", { subjectId, name, audio, topicId });
+  topicId?: string,
+  ext?: string
+) => invoke<IngestResult>("save_recording", { subjectId, name, audio, topicId, ext });
 
 // Near-live transcription: transcribe an audio slice and return its text (or ""
 // if no Whisper transcriber is installed). Used by the recorder's live panel.
-export const transcribePartial = (audio: number[]) =>
-  invoke<string>("transcribe_partial", { audio });
+export const transcribePartial = (audio: number[], ext?: string) =>
+  invoke<string>("transcribe_partial", { audio, ext });
 
 // ---- settings (bulk) ----
 export const getAllSettings = () => invoke<Record<string, string>>("get_all_settings");
@@ -292,6 +380,10 @@ export interface WebResult {
 }
 export const webSearch = (query: string, categories?: string) =>
   invoke<WebResult[]>("web_search", { query, categories });
+
+// Current Omarchy theme name (null if Omarchy isn't installed). Powers the
+// "Follow Omarchy theme" toggle in Appearance.
+export const omarchyTheme = () => invoke<string | null>("omarchy_theme");
 
 // ---- long-term memory (manual; injected into AI prompts) ----
 export interface Memory {
@@ -421,6 +513,8 @@ export interface CalEvent {
   google_id: string | null;
   tags: string[];
   checklist: string[]; // ticked topic ids (deadline study checklist)
+  priority: string | null; // assignment priority: low | med | high (null = normal)
+  topic_ids: string[]; // covered topic ids (assignments)
   created_at: number;
   updated_at: number;
 }
@@ -436,6 +530,8 @@ export const createEvent = (e: {
   kind?: string;
   reminderMs?: number | null;
   tags?: string[];
+  priority?: string | null;
+  topicIds?: string[];
 }) =>
   invoke<CalEvent>("create_event", {
     subjectId: e.subjectId,
@@ -449,6 +545,8 @@ export const createEvent = (e: {
     kind: e.kind,
     reminderMs: e.reminderMs,
     tags: e.tags,
+    priority: e.priority,
+    topicIds: e.topicIds,
   });
 export const listEvents = (
   subjectId?: string | null,
@@ -467,6 +565,10 @@ export const updateEvent = (e: {
   kind?: string;
   reminderMs?: number | null;
   tags?: string[];
+  /** Omit to keep the stored value; "none" clears. */
+  priority?: string | null;
+  /** Omit to keep the stored value. */
+  topicIds?: string[];
 }) =>
   invoke<CalEvent>("update_event", {
     id: e.id,
@@ -480,6 +582,8 @@ export const updateEvent = (e: {
     kind: e.kind,
     reminderMs: e.reminderMs,
     tags: e.tags,
+    priority: e.priority ?? undefined,
+    topicIds: e.topicIds,
   });
 export const deleteEvent = (id: string) => invoke<void>("delete_event", { id });
 export const setEventDone = (id: string, done: boolean) =>
@@ -487,7 +591,8 @@ export const setEventDone = (id: string, done: boolean) =>
 /** Set the deadline study checklist (ticked topic ids). */
 export const setEventChecklist = (id: string, topicIds: string[]) =>
   invoke<CalEvent>("set_event_checklist", { id, topicIds });
-export const checkReminders = () => invoke<CalEvent[]>("check_reminders");
+export const checkReminders = (systemNotify = false) =>
+  invoke<CalEvent[]>("check_reminders", { systemNotify });
 
 // ---- citations (per-subject bibliography) ----
 export interface Reference {
@@ -599,7 +704,61 @@ export const srsDue = (subjectId: string, kind: "quiz" | "flashcard") =>
 export const srsStats = (subjectId: string, kind: "quiz" | "flashcard") =>
   invoke<SrsStats>("srs_stats", { subjectId, kind });
 
+// ---- study analytics ----
+export interface DayMinutes { day: string; minutes: number }
+export interface DayReviews { day: string; reviews: number; correct: number; accuracy: number }
+export interface DueDay { day: string; due: number }
+export interface SubjectStat {
+  subject_id: string;
+  minutes: number;
+  reviews: number;
+  correct: number;
+  accuracy: number;
+}
+export interface FsrsTotals { cards: number; avg_stability: number; lapses: number }
+export interface WeakTopic {
+  subject_id: string;
+  topic_id: string;
+  topic_name: string;
+  reviews: number;
+  correct: number;
+  accuracy: number;
+  lapses: number;
+  avg_stability: number;
+  reason: string;
+}
+export interface AnalyticsSummary {
+  minutes_per_day: DayMinutes[];
+  /** A full rolling year (366 days) of daily study minutes for the heatmap. */
+  year_minutes: DayMinutes[];
+  reviews_per_day: DayReviews[];
+  due_forecast: DueDay[];
+  per_subject: SubjectStat[];
+  weak_topics: WeakTopic[];
+  fsrs: FsrsTotals;
+  streak: number;
+  minutes_week: number;
+  reviews_week: number;
+  accuracy_week: number;
+}
+/** Log a study segment: "work"/"break" (pomodoro) or "app" (passive focused time). */
+export const logPomodoroSession = (
+  subjectId: string | null,
+  kind: "work" | "break" | "app",
+  startedMs: number,
+  endedMs: number
+) => invoke<void>("log_pomodoro_session", { subjectId, kind, startedMs, endedMs });
+/** The whole Study Analytics dashboard in one call (default 30-day window). */
+export const analyticsSummary = (days?: number) =>
+  invoke<AnalyticsSummary>("analytics_summary", { days });
+
 // ---- events ----
 export const onIngestProgress = (
   cb: (p: IngestProgress) => void
 ): Promise<UnlistenFn> => listen<IngestProgress>("ingest:progress", (e) => cb(e.payload));
+/** Fired by the tray menu's "Play / pause music" item. */
+export const onTrayMusicToggle = (cb: () => void): Promise<UnlistenFn> =>
+  listen("tray-music-toggle", () => cb());
+/** Fired when a background job creates a note (e.g. auto lecture summary). */
+export const onNoteCreated = (cb: () => void): Promise<UnlistenFn> =>
+  listen("note:created", () => cb());
