@@ -1,7 +1,12 @@
 <script lang="ts">
-  // Themed standalone month/day calendar. Renders subjects' events & tasks as
-  // colored day-cell pills. No Google — pure local data via api.* calendar
-  // wrappers. Click a day cell to enter day view; click a pill to edit.
+  // Themed standalone month/week/day calendar. Renders subjects' events, tasks &
+  // deadlines as kind-colored chips (month) or positioned time-grid blocks
+  // (week/day). No Google — pure local data via api.* calendar wrappers.
+  //
+  // Layout: a single shared time-grid engine (layoutDay → lanes) powers both the
+  // week columns and the day column, so overlapping events split side-by-side
+  // instead of stacking/squashing. Click an empty slot to create; click an
+  // event to edit.
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import type { CalEvent } from "../lib/api";
@@ -16,18 +21,30 @@
   ];
   const DAYS_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-  // ---- visible month ----
+  // ---- visible month / view mode ----
   const today = new Date();
   let year = $state(today.getFullYear());
   let month = $state(today.getMonth()); // 0-11
 
-  // ---- view mode + day selection ----
-  let mode = $state<"month" | "day">("month");
-  let selectedDay = $state<Date | null>(null);
+  type Mode = "month" | "week" | "day";
+  let mode = $state<Mode>("month");
+  // The reference day for week/day views (anchors the grid + nav).
+  let selectedDay = $state<Date>(new Date());
 
   function openDayView(d: Date) {
-    selectedDay = d;
+    selectedDay = startOfDay(d);
+    year = d.getFullYear();
+    month = d.getMonth();
     mode = "day";
+  }
+  function setMode(m: Mode) {
+    mode = m;
+    if (m !== "month") {
+      // Keep the week/day anchor sensible when switching from month.
+      const d = new Date(selectedDay);
+      year = d.getFullYear();
+      month = d.getMonth();
+    }
   }
 
   // Arriving from the Assignments list ("open in calendar") — jump to that day.
@@ -36,127 +53,150 @@
     if (ms == null) return;
     app.calendarFocusMs = null;
     const d = new Date(ms);
-    year = d.getFullYear();
-    month = d.getMonth();
     openDayView(d);
   });
-  function backToMonth() {
-    mode = "month";
+
+  // ---- date helpers ----
+  function startOfDay(d: Date): Date {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
   }
-  function prevDay() {
-    if (!selectedDay) return;
-    const d = new Date(selectedDay);
-    d.setDate(d.getDate() - 1);
-    selectedDay = d;
-    // Keep month grid in sync so "Month" returns to the right month.
-    year = d.getFullYear();
-    month = d.getMonth();
+  function addDays(d: Date, n: number): Date {
+    const x = new Date(d);
+    x.setDate(x.getDate() + n);
+    return x;
   }
-  function nextDay() {
-    if (!selectedDay) return;
-    const d = new Date(selectedDay);
-    d.setDate(d.getDate() + 1);
-    selectedDay = d;
-    year = d.getFullYear();
-    month = d.getMonth();
+  function startOfWeek(d: Date): Date {
+    const x = startOfDay(d);
+    return addDays(x, -x.getDay()); // Sunday-based
+  }
+  function sameYMD(a: Date, b: Date): boolean {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  }
+  function dayKey(d: Date): string {
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
   }
 
-  const selectedDayLabel = $derived.by<string>(() => {
-    if (!selectedDay) return "";
-    return `${DAYS_LONG[selectedDay.getDay()]}, ${MONTHS[selectedDay.getMonth()]} ${selectedDay.getDate()} ${selectedDay.getFullYear()}`;
+  // ---- unified navigation ----
+  function prev() {
+    if (mode === "month") prevMonth();
+    else if (mode === "week") { selectedDay = addDays(selectedDay, -7); syncMonth(); }
+    else { selectedDay = addDays(selectedDay, -1); syncMonth(); }
+  }
+  function next() {
+    if (mode === "month") nextMonth();
+    else if (mode === "week") { selectedDay = addDays(selectedDay, 7); syncMonth(); }
+    else { selectedDay = addDays(selectedDay, 1); syncMonth(); }
+  }
+  function goToday() {
+    const n = new Date();
+    selectedDay = startOfDay(n);
+    year = n.getFullYear();
+    month = n.getMonth();
+  }
+  function syncMonth() {
+    year = selectedDay.getFullYear();
+    month = selectedDay.getMonth();
+  }
+  function prevMonth() {
+    if (month === 0) { month = 11; year -= 1; } else month -= 1;
+  }
+  function nextMonth() {
+    if (month === 11) { month = 0; year += 1; } else month += 1;
+  }
+
+  // ---- header title ----
+  const weekDays = $derived.by<Date[]>(() => {
+    const s = startOfWeek(selectedDay);
+    return Array.from({ length: 7 }, (_, i) => addDays(s, i));
+  });
+  const headerTitle = $derived.by<string>(() => {
+    if (mode === "month") return `${MONTHS[month]} ${year}`;
+    if (mode === "day") {
+      return `${DAYS_LONG[selectedDay.getDay()]}, ${MONTHS[selectedDay.getMonth()]} ${selectedDay.getDate()}`;
+    }
+    // week → "Jun 8 – 14, 2026" (compact, spanning months when needed)
+    const a = weekDays[0], b = weekDays[6];
+    const left = `${MONTHS[a.getMonth()].slice(0, 3)} ${a.getDate()}`;
+    const right = a.getMonth() === b.getMonth()
+      ? `${b.getDate()}`
+      : `${MONTHS[b.getMonth()].slice(0, 3)} ${b.getDate()}`;
+    return `${left} – ${right}, ${b.getFullYear()}`;
   });
 
   // ---- filter ----
   let filterSubjectId = $state<string>(""); // "" = all subjects
-
   const subjectOptions = $derived([
     { id: "", label: "All subjects" },
     ...app.subjects.map((s) => ({ id: s.id, label: s.name })),
   ]);
 
-  // ---- events ----
+  // ---- events + load window ----
   let events = $state<CalEvent[]>([]);
   let loading = $state(false);
 
-  // Inclusive-of-grid window: from the first visible (possibly trailing) day to
-  // the last, so events from adjacent months that show in the grid load too.
-  function monthWindow(): { fromMs: number; toMs: number } {
-    const first = new Date(year, month, 1);
-    const startOffset = first.getDay(); // days of previous month shown
-    const gridStart = new Date(year, month, 1 - startOffset);
-    gridStart.setHours(0, 0, 0, 0);
-    const gridEnd = new Date(gridStart);
-    gridEnd.setDate(gridEnd.getDate() + 42); // 6 weeks
-    gridEnd.setHours(0, 0, 0, 0);
-    return { fromMs: gridStart.getTime(), toMs: gridEnd.getTime() };
+  // Loads enough to cover whichever view is active (always the 6-week month grid,
+  // which comfortably spans the week/day anchors too since they sync the month).
+  function loadWindow(): { fromMs: number; toMs: number } {
+    if (mode === "month") {
+      const first = new Date(year, month, 1);
+      const gridStart = addDays(first, -first.getDay());
+      gridStart.setHours(0, 0, 0, 0);
+      const gridEnd = addDays(gridStart, 42);
+      return { fromMs: gridStart.getTime(), toMs: gridEnd.getTime() };
+    }
+    // week / day: load the whole surrounding week ± a day of slack.
+    const s = addDays(startOfWeek(selectedDay), -1);
+    const e = addDays(s, 9);
+    return { fromMs: s.getTime(), toMs: e.getTime() };
   }
 
-  // Reload whenever the visible month or subject filter changes, or an event is
-  // changed anywhere (e.g. a deadline created/ticked from the Citations tab).
   $effect(() => {
     void app.eventsChangedNonce;
+    void mode; void year; void month; void selectedDay;
     const sid = filterSubjectId || null;
-    const { fromMs, toMs } = monthWindow();
+    const { fromMs, toMs } = loadWindow();
     let cancelled = false;
     loading = true;
     api
       .listEvents(sid, fromMs, toMs)
-      .then((evs) => {
-        if (!cancelled) events = evs;
-      })
+      .then((evs) => { if (!cancelled) events = evs; })
       .catch((e) => {
         if (!cancelled) {
           events = [];
           app.pushToast({ kind: "error", title: "Failed to load events", body: String(e) });
         }
       })
-      .finally(() => {
-        if (!cancelled) loading = false;
-      });
-    return () => {
-      cancelled = true;
-    };
+      .finally(() => { if (!cancelled) loading = false; });
+    return () => { cancelled = true; };
   });
 
-  // ---- grid model ----
-  type Cell = { date: Date; key: string; inMonth: boolean; isToday: boolean };
-
+  // ---- month grid model ----
+  type Cell = { date: Date; key: string; inMonth: boolean; isToday: boolean; weekend: boolean };
   const cells = $derived.by<Cell[]>(() => {
     const first = new Date(year, month, 1);
-    const startOffset = first.getDay();
-    const start = new Date(year, month, 1 - startOffset);
+    const start = addDays(first, -first.getDay());
     const now = new Date();
-    const out: Cell[] = [];
-    for (let i = 0; i < 42; i++) {
-      const d = new Date(start);
-      d.setDate(start.getDate() + i);
-      out.push({
+    return Array.from({ length: 42 }, (_, i) => {
+      const d = addDays(start, i);
+      return {
         date: d,
         key: dayKey(d),
         inMonth: d.getMonth() === month,
-        isToday:
-          d.getFullYear() === now.getFullYear() &&
-          d.getMonth() === now.getMonth() &&
-          d.getDate() === now.getDate(),
-      });
-    }
-    return out;
+        isToday: sameYMD(d, now),
+        weekend: d.getDay() === 0 || d.getDay() === 6,
+      };
+    });
   });
 
-  function dayKey(d: Date): string {
-    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-  }
-
-  // Bucket events by their LOCAL start day — the same key the day cells and
-  // selectedDay lookups use (dayKey). Bucketing all-day events by a *different*
-  // (UTC) key than the lookup was why they never appeared. One key everywhere.
+  // Bucket events by LOCAL start day — one key everywhere (cells + lookups).
   const byDay = $derived.by<Record<string, CalEvent[]>>(() => {
     const map: Record<string, CalEvent[]> = {};
     for (const e of events) {
       const k = dayKey(new Date(e.start_ms));
       (map[k] ??= []).push(e);
     }
-    // All-day items first, then by start time, so the strip mirrors order.
     for (const k in map)
       map[k].sort((a, b) =>
         a.all_day === b.all_day ? a.start_ms - b.start_ms : a.all_day ? -1 : 1
@@ -164,110 +204,143 @@
     return map;
   });
 
-  // Events for the day-view (byDay buckets are already sorted by start_ms).
-  const selectedDayEvents = $derived<CalEvent[]>(
-    selectedDay ? (byDay[dayKey(selectedDay)] ?? []) : []
-  );
+  // Month chips overflow cap.
+  const MONTH_CHIP_CAP = 3;
 
-  // ---- day-view timeline geometry ----
+  // ---- shared time-grid geometry ----
   const HOURS = Array.from({ length: 24 }, (_, h) => h);
-  const HOUR_PX = 52; // height of one hour row
-  const MIN_BLOCK_PX = 24;
+  const HOUR_PX = 58; // tall enough to breathe
+  const MIN_BLOCK_PX = 26; // always fits title + time
 
-  // Label for an hour gutter row (am/pm, reusing the same formatting style).
   function hourLabel(h: number): string {
+    if (h === 0) return "12 am";
+    if (h === 12) return "12 pm";
     const ap = h >= 12 ? "pm" : "am";
-    const hh = h % 12 || 12;
-    return `${hh} ${ap}`;
+    return `${h % 12} ${ap}`;
   }
 
-  // Split the day's events into the all-day strip vs. positioned timed blocks.
-  const allDayEvents = $derived<CalEvent[]>(
-    selectedDayEvents.filter((e) => e.all_day)
-  );
-
-  type TimedBlock = { e: CalEvent; top: number; height: number };
-  const timedBlocks = $derived.by<TimedBlock[]>(() => {
-    if (!selectedDay) return [];
-    const dayStart = new Date(selectedDay);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayStartMs = dayStart.getTime();
+  // ---- time-grid layout engine (overlap → lanes) ----
+  // For a given day's events, returns positioned blocks with left/width as
+  // fractions of the column, splitting overlapping events into side-by-side
+  // lanes via a greedy interval-graph colouring.
+  type Block = { e: CalEvent; top: number; height: number; left: number; width: number };
+  function layoutDay(day: Date, dayEvents: CalEvent[]): Block[] {
+    const dayStartMs = startOfDay(day).getTime();
     const dayMs = 24 * 60 * 60 * 1000;
-    const out: TimedBlock[] = [];
-    for (const e of selectedDayEvents) {
+    // Build timed intervals (skip all-day), clamped to the visible day.
+    type Iv = { e: CalEvent; start: number; end: number; top: number; height: number; lane: number; lanes: number };
+    const ivs: Iv[] = [];
+    for (const e of dayEvents) {
       if (e.all_day) continue;
-      // Minutes from start of day for the start; clamp to the visible day.
       const startOff = Math.max(0, e.start_ms - dayStartMs);
+      const endRaw = e.end_ms != null ? e.end_ms : e.start_ms + 60 * 60 * 1000;
+      const endOff = Math.min(dayMs, endRaw - dayStartMs);
       const startMin = startOff / 60000;
-      const endMsRaw = e.end_ms != null ? e.end_ms : e.start_ms + 60 * 60 * 1000;
-      const endOff = Math.min(dayMs, endMsRaw - dayStartMs);
-      const durMin = Math.max(0, endOff / 60000 - startMin);
       const top = (startMin / 60) * HOUR_PX;
-      const height = Math.max(MIN_BLOCK_PX, (durMin / 60) * HOUR_PX);
-      out.push({ e, top, height });
+      const height = Math.max(MIN_BLOCK_PX, ((endOff / 60000 - startMin) / 60) * HOUR_PX);
+      ivs.push({ e, start: top, end: top + height, top, height, lane: 0, lanes: 1 });
     }
+    ivs.sort((a, b) => a.start - b.start || a.end - b.end);
+
+    // Greedy lane assignment within connected overlap clusters.
+    const out: Block[] = [];
+    let cluster: Iv[] = [];
+    let clusterEnd = -1;
+    const flush = () => {
+      if (!cluster.length) return;
+      // Assign each interval the first free lane (one that ended before it starts).
+      const laneEnds: number[] = [];
+      for (const iv of cluster) {
+        let placed = -1;
+        for (let l = 0; l < laneEnds.length; l++) {
+          if (laneEnds[l] <= iv.start + 0.01) { placed = l; break; }
+        }
+        if (placed === -1) { placed = laneEnds.length; laneEnds.push(0); }
+        iv.lane = placed;
+        laneEnds[placed] = iv.end;
+      }
+      const lanes = laneEnds.length;
+      for (const iv of cluster) {
+        out.push({
+          e: iv.e,
+          top: iv.top,
+          height: iv.height,
+          left: iv.lane / lanes,
+          width: 1 / lanes,
+        });
+      }
+      cluster = [];
+      clusterEnd = -1;
+    };
+    for (const iv of ivs) {
+      if (cluster.length && iv.start >= clusterEnd) flush();
+      cluster.push(iv);
+      clusterEnd = Math.max(clusterEnd, iv.end);
+    }
+    flush();
     return out;
-  });
+  }
 
-  // ---- red current-time line ----
+  // Day-view: blocks + all-day for the single selected day.
+  const dayEventsList = $derived<CalEvent[]>(byDay[dayKey(selectedDay)] ?? []);
+  const dayAllDay = $derived<CalEvent[]>(dayEventsList.filter((e) => e.all_day));
+  const dayBlocks = $derived.by<Block[]>(() => layoutDay(selectedDay, dayEventsList));
+
+  // Week-view: per-column blocks + per-column all-day, plus whether any all-day
+  // exists (so the pinned strip only takes space when needed).
+  type WeekCol = { date: Date; isToday: boolean; weekend: boolean; allDay: CalEvent[]; blocks: Block[] };
+  const weekCols = $derived.by<WeekCol[]>(() => {
+    const now = new Date();
+    return weekDays.map((d) => {
+      const evs = byDay[dayKey(d)] ?? [];
+      return {
+        date: d,
+        isToday: sameYMD(d, now),
+        weekend: d.getDay() === 0 || d.getDay() === 6,
+        allDay: evs.filter((e) => e.all_day),
+        blocks: layoutDay(d, evs),
+      };
+    });
+  });
+  const weekHasAllDay = $derived(weekCols.some((c) => c.allDay.length > 0));
+
+  // ---- now-line ----
   let nowMs = $state(Date.now());
-
-  const selectedIsToday = $derived.by<boolean>(() => {
-    if (!selectedDay) return false;
-    const n = new Date(nowMs);
-    return (
-      selectedDay.getFullYear() === n.getFullYear() &&
-      selectedDay.getMonth() === n.getMonth() &&
-      selectedDay.getDate() === n.getDate()
-    );
+  $effect(() => {
+    const id = setInterval(() => { nowMs = Date.now(); }, 60000);
+    return () => clearInterval(id);
   });
-
-  // Vertical offset (px) of the now-line within the grid.
   const nowTop = $derived.by<number>(() => {
     const n = new Date(nowMs);
     return ((n.getHours() * 60 + n.getMinutes()) / 60) * HOUR_PX;
   });
+  const dayIsToday = $derived(sameYMD(selectedDay, new Date(nowMs)));
 
-  // Tick the clock every 60s while mounted; refreshes now-line + isToday.
-  $effect(() => {
-    const id = setInterval(() => {
-      nowMs = Date.now();
-    }, 60000);
-    return () => clearInterval(id);
-  });
-
-  // Auto-scroll the timeline so the current hour (or 8 AM) is in view whenever
-  // we (re)enter day view or change the selected day.
+  // Auto-scroll the active time-grid to the current hour (or 8am) on open / change.
   let gridEl = $state<HTMLDivElement | null>(null);
   $effect(() => {
-    if (mode !== "day" || !selectedDay || !gridEl) return;
-    // Track selectedDay so switching days re-scrolls.
-    void selectedDay;
+    if (mode === "month" || !gridEl) return;
+    void selectedDay; void mode;
     const el = gridEl;
-    const hour = selectedIsToday ? new Date(nowMs).getHours() : 8;
-    const target = Math.max(0, hour * HOUR_PX - HOUR_PX); // a little context above
-    queueMicrotask(() => {
-      el.scrollTo({ top: target });
-    });
+    const anchorToday = mode === "day" ? dayIsToday : weekCols.some((c) => c.isToday);
+    const hour = anchorToday ? new Date(nowMs).getHours() : 8;
+    const target = Math.max(0, hour * HOUR_PX - HOUR_PX);
+    queueMicrotask(() => el.scrollTo({ top: target }));
   });
 
-  // Create an event prefilled to a clicked hour on the selected day.
-  function openCreateAtHour(h: number) {
-    if (!selectedDay) return;
-    const d = new Date(selectedDay);
-    d.setHours(h, 0, 0, 0);
+  // ---- create at slot ----
+  function openCreateAtHour(d: Date, h: number) {
+    const x = new Date(d);
+    x.setHours(h, 0, 0, 0);
     editEvent = null;
-    modalDefaultMs = d.getTime();
+    modalDefaultMs = x.getTime();
     modalOpen = true;
   }
 
-  // Precomputed subject→color map so pill rendering is a constant-time lookup
-  // (rather than a linear find per pill on every re-render).
+  // ---- colors / kinds ----
   const subjectColorMap = $derived(
     Object.fromEntries(app.subjects.map((s) => [s.id, app.subjectColor(s)]))
   );
-
-  // Deadline family (typed) — these get their own colour + a tick-to-complete box.
   const DEADLINE_KINDS = ["exam", "assignment", "project", "deadline"];
   function isDeadline(e: CalEvent): boolean { return DEADLINE_KINDS.includes(e.kind); }
   function completable(e: CalEvent): boolean { return e.kind === "task" || isDeadline(e); }
@@ -289,11 +362,18 @@
       default: return "";
     }
   }
-
-  // Color for an event: explicit color, else deadline-kind color, else its
-  // subject color, else accent.
+  // Priority outranks subject color for assignments (so high-priority pops).
+  function priorityColor(p: string | null): string | null {
+    switch (p) {
+      case "high": return "var(--err)";
+      case "med": return "var(--warn)";
+      case "low": return "var(--ok)";
+      default: return null;
+    }
+  }
   function pillColor(e: CalEvent): string {
     if (e.color) return e.color;
+    if (e.kind === "assignment") return priorityColor(e.priority) ?? "var(--accent)";
     if (isDeadline(e)) return kindColor(e.kind) ?? "var(--warn)";
     if (e.subject_id && subjectColorMap[e.subject_id]) return subjectColorMap[e.subject_id];
     return "var(--accent)";
@@ -307,31 +387,11 @@
     h = h % 12 || 12;
     return m === 0 ? `${h}${ap}` : `${h}:${String(m).padStart(2, "0")}${ap}`;
   }
-
-  function timeLabel(e: CalEvent): string {
-    return e.all_day ? "" : fmtMs(e.start_ms);
-  }
-
-  function timeLabelEnd(e: CalEvent): string {
-    return e.all_day || e.end_ms == null ? "" : fmtMs(e.end_ms);
-  }
-
-  // ---- navigation (month) ----
-  function prevMonth() {
-    if (month === 0) {
-      month = 11;
-      year -= 1;
-    } else month -= 1;
-  }
-  function nextMonth() {
-    if (month === 11) {
-      month = 0;
-      year += 1;
-    } else month += 1;
-  }
-  function goToday() {
-    year = today.getFullYear();
-    month = today.getMonth();
+  function timeLabel(e: CalEvent): string { return e.all_day ? "" : fmtMs(e.start_ms); }
+  function timeRange(e: CalEvent): string {
+    if (e.all_day) return "";
+    const s = fmtMs(e.start_ms);
+    return e.end_ms != null ? `${s} – ${fmtMs(e.end_ms)}` : s;
   }
 
   // ---- modal ----
@@ -355,10 +415,8 @@
     editEvent = null;
   }
   function reload() {
-    // Refetch the current window directly after a save/delete (the load $effect
-    // only re-runs on month/filter changes, not on event mutations).
     const sid = filterSubjectId || null;
-    const { fromMs, toMs } = monthWindow();
+    const { fromMs, toMs } = loadWindow();
     api
       .listEvents(sid, fromMs, toMs)
       .then((evs) => (events = evs))
@@ -377,34 +435,34 @@
       app.pushToast({ kind: "error", title: "Update failed", body: String(err) });
     }
   }
+
+  // The "add" button target date for the current view.
+  function addTarget(): Date {
+    if (mode === "month") return new Date(year, month, 1);
+    return new Date(selectedDay);
+  }
 </script>
 
 <div class="cal">
-  <!-- ===== SHARED HEADER ===== -->
+  <!-- ===== HEADER ===== -->
   <div class="cal-head">
     <div class="cal-nav">
-      {#if mode === "month"}
-        <button class="btn btn--ghost btn--icon btn--sm" type="button" aria-label="Previous month" onclick={prevMonth}>
-          <Icon name="chevron" size={12} style="transform:rotate(180deg)" />
-        </button>
-        <div class="cal-monthyear">{MONTHS[month]} {year}</div>
-        <button class="btn btn--ghost btn--icon btn--sm" type="button" aria-label="Next month" onclick={nextMonth}>
-          <Icon name="chevron" size={12} />
-        </button>
-        <button class="btn btn--sm cal-today" type="button" onclick={goToday}>Today</button>
-      {:else}
-        <button class="btn btn--ghost btn--icon btn--sm" type="button" aria-label="Previous day" onclick={prevDay}>
-          <Icon name="chevron" size={12} style="transform:rotate(180deg)" />
-        </button>
-        <div class="cal-monthyear cal-daydate">{selectedDayLabel}</div>
-        <button class="btn btn--ghost btn--icon btn--sm" type="button" aria-label="Next day" onclick={nextDay}>
-          <Icon name="chevron" size={12} />
-        </button>
-        <button class="btn btn--sm cal-today" type="button" onclick={backToMonth}>Month</button>
-      {/if}
+      <button class="btn btn--ghost btn--icon btn--sm" type="button" aria-label="Previous" onclick={prev}>
+        <Icon name="chevron" size={12} style="transform:rotate(180deg)" />
+      </button>
+      <button class="btn btn--sm cal-today" type="button" onclick={goToday}>Today</button>
+      <button class="btn btn--ghost btn--icon btn--sm" type="button" aria-label="Next" onclick={next}>
+        <Icon name="chevron" size={12} />
+      </button>
+      <div class="cal-title">{headerTitle}</div>
     </div>
 
     <div class="cal-head-r">
+      <div class="seg cal-modeseg" role="group" aria-label="Calendar view">
+        <button type="button" class={"seg-opt" + (mode === "month" ? " on" : "")} onclick={() => setMode("month")}>Month</button>
+        <button type="button" class={"seg-opt" + (mode === "week" ? " on" : "")} onclick={() => setMode("week")}>Week</button>
+        <button type="button" class={"seg-opt" + (mode === "day" ? " on" : "")} onclick={() => setMode("day")}>Day</button>
+      </div>
       <div class="picker-wrap">
         <Picker
           value={filterSubjectId}
@@ -414,73 +472,67 @@
           placeholder="All subjects"
         />
       </div>
-      {#if mode === "month"}
-        <button class="btn btn--primary btn--sm" type="button" onclick={() => openCreate(new Date(year, month, 1))}>
-          <Icon name="plus" size={12} />
-          <span>New</span>
-        </button>
-      {:else}
-        <button class="btn btn--primary btn--sm" type="button" onclick={() => selectedDay && openCreate(selectedDay)}>
-          <Icon name="plus" size={12} />
-          <span>Add</span>
-        </button>
-      {/if}
+      <button class="btn btn--primary btn--sm" type="button" onclick={() => openCreate(addTarget())}>
+        <Icon name="plus" size={12} />
+        <span>New</span>
+      </button>
     </div>
   </div>
 
   {#if mode === "month"}
     <!-- ===== MONTH GRID ===== -->
     <div class="cal-dow">
-      {#each DOW as d}
-        <div class="cal-dow-cell">{d}</div>
+      {#each DOW as d, i}
+        <div class={"cal-dow-cell" + (i === 0 || i === 6 ? " weekend" : "")}>{d}</div>
       {/each}
     </div>
 
     <div class="cal-grid">
       {#each cells as c (c.key)}
         {@const dayEvents = byDay[c.key] ?? []}
+        {@const overflow = dayEvents.length - MONTH_CHIP_CAP}
         <div
-          class={"cal-cell" + (c.inMonth ? "" : " out") + (c.isToday ? " today" : "")}
+          class={"cal-cell" + (c.inMonth ? "" : " out") + (c.isToday ? " today" : "") + (c.weekend ? " weekend" : "")}
           role="button"
           tabindex="0"
           onclick={() => openDayView(c.date)}
           onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDayView(c.date); } }}
         >
-          <div class="cal-daynum">{c.date.getDate()}</div>
-          <div class="cal-pills">
-            {#each dayEvents as e (e.id)}
+          <div class="cal-cell-head">
+            <span class="cal-daynum">{c.date.getDate()}</span>
+          </div>
+          <div class="cal-chips">
+            {#each dayEvents.slice(0, MONTH_CHIP_CAP) as e (e.id)}
               <button
                 type="button"
-                class={"pill" + (completable(e) && e.done ? " done" : "")}
-                style:--pill-color={pillColor(e)}
+                class={"chip" + (completable(e) && e.done ? " done" : "")}
+                style:--chip-color={pillColor(e)}
                 onclick={(ev) => openEdit(e, ev)}
                 title={e.title}
               >
-                <div class="pill-row">
-                  {#if completable(e)}
-                    <span
-                      class={"pill-check" + (e.done ? " on" : "")}
-                      role="checkbox"
-                      aria-checked={e.done}
-                      aria-label="Toggle done"
-                      tabindex="-1"
-                      onclick={(ev) => toggleDone(e, ev)}
-                      onkeydown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleDone(e, ev); } }}
-                    >
-                      {#if e.done}<Icon name="check" size={9} />{/if}
-                    </span>
-                  {:else}
-                    <span class="pill-dot"></span>
-                  {/if}
-                  {#if isDeadline(e)}<span class="pill-glyph" aria-hidden="true" title={e.kind}>{kindGlyph(e.kind)}</span>{/if}
-                  {#if !e.all_day}<span class="pill-time">{timeLabel(e)}</span>{/if}
-                  <span class="pill-title">{e.title}</span>
-                </div>
-                {#if e.location}
-                  <div class="pill-loc">{e.location}</div>
+                {#if completable(e)}
+                  <span
+                    class={"chip-check" + (e.done ? " on" : "")}
+                    role="checkbox"
+                    aria-checked={e.done}
+                    aria-label="Toggle done"
+                    tabindex="-1"
+                    onclick={(ev) => toggleDone(e, ev)}
+                    onkeydown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleDone(e, ev); } }}
+                  >
+                    {#if e.done}<Icon name="check" size={8} />{/if}
+                  </span>
+                {:else}
+                  <span class="chip-dot"></span>
                 {/if}
+                {#if isDeadline(e)}<span class="chip-glyph" aria-hidden="true">{kindGlyph(e.kind)}</span>{/if}
+                {#if !e.all_day}<span class="chip-time">{timeLabel(e)}</span>{/if}
+                <span class="chip-title">{e.title}</span>
               </button>
             {/each}
+            {#if overflow > 0}
+              <button type="button" class="chip-more" onclick={() => openDayView(c.date)}>+{overflow} more</button>
+            {/if}
           </div>
         </div>
       {/each}
@@ -490,15 +542,109 @@
       <div class="cal-empty">No events — click a day to view or add one.</div>
     {/if}
 
+  {:else if mode === "week"}
+    <!-- ===== WEEK GRID (7-column time-grid) ===== -->
+    <div class="cal-grid-wrap">
+      <!-- weekday header strip -->
+      <div class="tg-colhead">
+        <div class="tg-gutter-head"></div>
+        {#each weekCols as c (c.date.getTime())}
+          <button
+            type="button"
+            class={"tg-day-head" + (c.isToday ? " today" : "") + (c.weekend ? " weekend" : "")}
+            onclick={() => openDayView(c.date)}
+          >
+            <span class="tg-dow">{DOW[c.date.getDay()]}</span>
+            <span class="tg-dnum">{c.date.getDate()}</span>
+          </button>
+        {/each}
+      </div>
+
+      <!-- all-day strip (only when present) -->
+      {#if weekHasAllDay}
+        <div class="tg-allday">
+          <div class="tg-gutter-lbl">All day</div>
+          {#each weekCols as c (c.date.getTime())}
+            <div class={"tg-allday-col" + (c.weekend ? " weekend" : "")}>
+              {#each c.allDay as e (e.id)}
+                <button
+                  type="button"
+                  class={"ad-pill" + (completable(e) && e.done ? " done" : "")}
+                  style:--blk-color={pillColor(e)}
+                  onclick={(ev) => openEdit(e, ev)}
+                  title={e.title}
+                >
+                  {#if isDeadline(e)}<span class="ad-glyph" aria-hidden="true">{kindGlyph(e.kind)}</span>{/if}
+                  <span class="ad-title">{e.title}</span>
+                </button>
+              {/each}
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <!-- scrollable hour grid -->
+      <div class="tg-scroll" bind:this={gridEl}>
+        <div class="tg-body" style:height={`${HOUR_PX * 24}px`}>
+          <!-- hour rules + gutter -->
+          {#each HOURS as h (h)}
+            <div class="tg-hour" style:top={`${h * HOUR_PX}px`} style:height={`${HOUR_PX}px`}>
+              <div class="tg-hour-lbl">{h === 0 ? "" : hourLabel(h)}</div>
+            </div>
+          {/each}
+
+          <!-- 7 day columns -->
+          <div class="tg-cols">
+            {#each weekCols as c (c.date.getTime())}
+              <div class={"tg-col" + (c.weekend ? " weekend" : "")}>
+                <!-- click targets per hour -->
+                {#each HOURS as h (h)}
+                  <button
+                    type="button"
+                    class="tg-slot"
+                    style:top={`${h * HOUR_PX}px`}
+                    style:height={`${HOUR_PX}px`}
+                    aria-label={`Create event at ${hourLabel(h)}`}
+                    onclick={() => openCreateAtHour(c.date, h)}
+                  ></button>
+                {/each}
+                <!-- positioned blocks -->
+                {#each c.blocks as b (b.e.id)}
+                  {@const e = b.e}
+                  <button
+                    type="button"
+                    class={"blk blk--wk" + (completable(e) && e.done ? " blk--done" : "")}
+                    style:--blk-color={pillColor(e)}
+                    style:top={`${b.top}px`}
+                    style:height={`${b.height}px`}
+                    style:left={`calc(${b.left * 100}% + 1px)`}
+                    style:width={`calc(${b.width * 100}% - 2px)`}
+                    onclick={(ev) => openEdit(e, ev)}
+                  >
+                    <span class="blk-title">{e.title}</span>
+                    {#if b.height > 34}<span class="blk-time">{timeLabel(e)}</span>{/if}
+                  </button>
+                {/each}
+                <!-- now-line within today's column -->
+                {#if c.isToday}
+                  <div class="now-line" style:top={`${nowTop}px`} aria-hidden="true"><span class="now-dot"></span></div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </div>
+      </div>
+    </div>
+
   {:else}
-    <!-- ===== DAY VIEW (Google-style timeline) ===== -->
-    <div class="cal-day">
+    <!-- ===== DAY VIEW (single-column time-grid) ===== -->
+    <div class="cal-grid-wrap">
       <!-- all-day strip -->
-      {#if allDayEvents.length > 0}
-        <div class="day-allday">
-          <div class="day-allday-lbl">All day</div>
+      {#if dayAllDay.length > 0}
+        <div class="tg-allday day-allday">
+          <div class="tg-gutter-lbl">All day</div>
           <div class="day-allday-list">
-            {#each allDayEvents as e (e.id)}
+            {#each dayAllDay as e (e.id)}
               <button
                 type="button"
                 class={"ad-pill" + (completable(e) && e.done ? " done" : "")}
@@ -508,7 +654,7 @@
               >
                 {#if completable(e)}
                   <span
-                    class={"pill-check ad-check" + (e.done ? " on" : "")}
+                    class={"ad-check" + (e.done ? " on" : "")}
                     role="checkbox"
                     aria-checked={e.done}
                     aria-label="Toggle done"
@@ -519,7 +665,7 @@
                     {#if e.done}<Icon name="check" size={9} />{/if}
                   </span>
                 {/if}
-                {#if isDeadline(e)}<span class="ad-glyph" aria-hidden="true" title={e.kind}>{kindGlyph(e.kind)}</span>{/if}
+                {#if isDeadline(e)}<span class="ad-glyph" aria-hidden="true">{kindGlyph(e.kind)}</span>{/if}
                 <span class="ad-title">{e.title}</span>
               </button>
             {/each}
@@ -528,63 +674,66 @@
       {/if}
 
       <!-- scrollable hour grid -->
-      <div class="day-grid-scroll" bind:this={gridEl}>
-        <div class="day-grid" style:height={`${HOUR_PX * 24}px`}>
-          <!-- hour rows / gutter -->
+      <div class="tg-scroll" bind:this={gridEl}>
+        <div class="tg-body" style:height={`${HOUR_PX * 24}px`}>
           {#each HOURS as h (h)}
-            <div class="day-hour" style:top={`${h * HOUR_PX}px`} style:height={`${HOUR_PX}px`}>
-              <div class="day-hour-lbl">{hourLabel(h)}</div>
-              <button
-                type="button"
-                class="day-hour-cell"
-                aria-label={`Create event at ${hourLabel(h)}`}
-                onclick={() => openCreateAtHour(h)}
-              ></button>
+            <div class="tg-hour" style:top={`${h * HOUR_PX}px`} style:height={`${HOUR_PX}px`}>
+              <div class="tg-hour-lbl">{h === 0 ? "" : hourLabel(h)}</div>
             </div>
           {/each}
 
-          <!-- timed event blocks -->
-          {#each timedBlocks as b (b.e.id)}
-            {@const e = b.e}
-            {@const startLbl = timeLabel(e)}
-            {@const endLbl = timeLabelEnd(e)}
-            <button
-              type="button"
-              class={"blk" + (completable(e) && e.done ? " blk--done" : "")}
-              style:--blk-color={pillColor(e)}
-              style:top={`${b.top}px`}
-              style:height={`${b.height}px`}
-              onclick={(ev) => openEdit(e, ev)}
-            >
-              <div class="blk-head">
-                {#if completable(e)}
-                  <span
-                    class={"pill-check blk-check" + (e.done ? " on" : "")}
-                    role="checkbox"
-                    aria-checked={e.done}
-                    aria-label="Toggle done"
-                    tabindex="-1"
-                    onclick={(ev) => toggleDone(e, ev)}
-                    onkeydown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleDone(e, ev); } }}
-                  >
-                    {#if e.done}<Icon name="check" size={10} />{/if}
-                  </span>
-                {/if}
-                <span class="blk-title">{e.title}</span>
-              </div>
-              <div class="blk-time">{startLbl}{endLbl ? ` – ${endLbl}` : ""}</div>
-              {#if e.location}
-                <div class="blk-loc">{e.location}</div>
+          <div class="tg-cols tg-cols--day">
+            <div class="tg-col">
+              {#each HOURS as h (h)}
+                <button
+                  type="button"
+                  class="tg-slot"
+                  style:top={`${h * HOUR_PX}px`}
+                  style:height={`${HOUR_PX}px`}
+                  aria-label={`Create event at ${hourLabel(h)}`}
+                  onclick={() => openCreateAtHour(selectedDay, h)}
+                ></button>
+              {/each}
+
+              {#each dayBlocks as b (b.e.id)}
+                {@const e = b.e}
+                <button
+                  type="button"
+                  class={"blk blk--day" + (completable(e) && e.done ? " blk--done" : "")}
+                  style:--blk-color={pillColor(e)}
+                  style:top={`${b.top}px`}
+                  style:height={`${b.height}px`}
+                  style:left={`calc(${b.left * 100}% + 1px)`}
+                  style:width={`calc(${b.width * 100}% - 2px)`}
+                  onclick={(ev) => openEdit(e, ev)}
+                >
+                  <div class="blk-head">
+                    {#if completable(e)}
+                      <span
+                        class={"blk-check" + (e.done ? " on" : "")}
+                        role="checkbox"
+                        aria-checked={e.done}
+                        aria-label="Toggle done"
+                        tabindex="-1"
+                        onclick={(ev) => toggleDone(e, ev)}
+                        onkeydown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleDone(e, ev); } }}
+                      >
+                        {#if e.done}<Icon name="check" size={10} />{/if}
+                      </span>
+                    {/if}
+                    {#if isDeadline(e)}<span class="blk-glyph" aria-hidden="true">{kindGlyph(e.kind)}</span>{/if}
+                    <span class="blk-title">{e.title}</span>
+                  </div>
+                  {#if b.height > 32}<div class="blk-time">{timeRange(e)}</div>{/if}
+                  {#if e.location && b.height > 56}<div class="blk-loc">{e.location}</div>{/if}
+                </button>
+              {/each}
+
+              {#if dayIsToday}
+                <div class="now-line" style:top={`${nowTop}px`} aria-hidden="true"><span class="now-dot"></span></div>
               {/if}
-            </button>
-          {/each}
-
-          <!-- red current-time line -->
-          {#if selectedIsToday}
-            <div class="now-line" style:top={`${nowTop}px`} aria-hidden="true">
-              <span class="now-dot"></span>
             </div>
-          {/if}
+          </div>
         </div>
       </div>
     </div>
@@ -609,6 +758,8 @@
     padding: 20px 24px;
     box-sizing: border-box;
   }
+
+  /* ===== HEADER ===== */
   .cal-head {
     display: flex;
     align-items: center;
@@ -620,67 +771,61 @@
   .cal-nav {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
-  .cal-monthyear {
+  .cal-today { margin: 0 2px; }
+  .cal-title {
     font-family: var(--font-mono);
-    font-size: var(--t-md, 14px);
+    font-size: var(--t-md);
     font-weight: 600;
     color: var(--fg-bright);
-    min-width: 168px;
-    text-align: center;
-  }
-  .cal-daydate {
-    min-width: 240px;
-    font-size: var(--t-sm, 12.5px);
-  }
-  .cal-today {
-    margin-left: 6px;
+    margin-left: 8px;
+    white-space: nowrap;
   }
   .cal-head-r {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
   }
-
-  /* subject filter picker wrapper — gives Picker a styled border container */
+  .cal-modeseg { flex: none; }
   .picker-wrap {
     border: 1px solid var(--border-strong);
-    border-radius: var(--r-lg, 12px);
+    border-radius: var(--rad-3);
     background: var(--surface-2);
     overflow: hidden;
-    min-width: 180px;
+    min-width: 170px;
   }
 
-  /* day-of-week header */
+  /* ===== MONTH ===== */
   .cal-dow {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
     border: 1px solid var(--border);
     border-bottom: none;
-    border-radius: var(--r-lg, 12px) var(--r-lg, 12px) 0 0;
+    border-radius: var(--rad-3) var(--rad-3) 0 0;
     overflow: hidden;
     background: var(--surface-2);
   }
   .cal-dow-cell {
-    padding: 7px 8px;
-    font-size: var(--t-2xs, 10.5px);
+    padding: 7px 9px;
+    font-size: var(--t-2xs);
     font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     text-align: left;
   }
+  .cal-dow-cell.weekend { color: var(--fg-faint); }
 
-  /* month grid */
   .cal-grid {
     flex: 1;
     min-height: 0;
     display: grid;
     grid-template-columns: repeat(7, 1fr);
-    grid-template-rows: repeat(6, 1fr);
+    grid-template-rows: repeat(6, minmax(0, 1fr));
     border: 1px solid var(--border);
-    border-radius: 0 0 var(--r-lg, 12px) var(--r-lg, 12px);
+    border-radius: 0 0 var(--rad-3) var(--rad-3);
     overflow: hidden;
   }
   .cal-cell {
@@ -697,321 +842,313 @@
     transition: background 0.1s ease;
     text-align: left;
   }
-  /* remove far-right / bottom doubled borders */
-  .cal-cell:nth-child(7n) {
-    border-right: none;
-  }
-  .cal-cell:nth-child(n + 36) {
-    border-bottom: none;
-  }
-  .cal-cell:hover {
-    background: var(--surface-2);
-  }
-  .cal-cell.out {
-    background: var(--bg);
-    color: var(--fg-faint);
-  }
-  .cal-cell.out:hover {
-    background: var(--surface);
-  }
+  .cal-cell:nth-child(7n) { border-right: none; }
+  .cal-cell:nth-child(n + 36) { border-bottom: none; }
+  .cal-cell:hover { background: var(--surface-2); }
+  .cal-cell.weekend { background: color-mix(in oklab, var(--bg) 35%, var(--surface)); }
+  .cal-cell.weekend:hover { background: var(--surface-2); }
+  .cal-cell.out { background: var(--bg); color: var(--fg-faint); }
+  .cal-cell.out:hover { background: var(--surface); }
+  /* today: accent ring inside the cell */
   .cal-cell.today {
-    background: color-mix(in oklab, var(--accent) 8%, var(--surface));
+    background: color-mix(in oklab, var(--accent) 7%, var(--surface));
+    box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--accent) 55%, transparent);
+  }
+
+  .cal-cell-head {
+    display: flex;
+    justify-content: flex-end;
+    flex: none;
   }
   .cal-daynum {
     font-family: var(--font-mono);
-    font-size: var(--t-xs, 11.5px);
+    font-size: var(--t-xs);
     color: var(--fg-muted);
-    align-self: flex-start;
-    width: 20px;
+    min-width: 19px;
     height: 18px;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 6px;
-    flex: none;
+    border-radius: var(--rad-2);
+    padding: 0 2px;
   }
-  .cal-cell.out .cal-daynum {
-    color: var(--fg-faint);
-    opacity: 0.6;
-  }
+  .cal-cell.out .cal-daynum { color: var(--fg-faint); opacity: 0.6; }
   .cal-cell.today .cal-daynum {
     background: var(--accent);
     color: var(--accent-fg);
     font-weight: 600;
   }
 
-  /* pills */
-  .cal-pills {
+  .cal-chips {
     display: flex;
     flex-direction: column;
     gap: 2px;
     overflow: hidden;
     min-height: 0;
   }
-  .pill {
+  /* compact single-line chip */
+  .chip {
     appearance: none;
     border: none;
     width: 100%;
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1px;
-    padding: 2px 5px;
-    border-radius: 5px;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 6px 2px 5px;
+    border-radius: var(--rad-2);
     cursor: pointer;
     text-align: left;
     font-family: var(--font-mono);
-    font-size: var(--t-2xs, 10.5px);
-    line-height: 1.3;
+    font-size: var(--t-2xs);
+    line-height: 1.45;
     color: var(--fg-bright);
-    background: color-mix(in oklab, var(--pill-color) 18%, var(--surface));
-    border-left: 2px solid var(--pill-color);
+    background: color-mix(in oklab, var(--chip-color) 16%, var(--surface));
+    border-left: 2px solid var(--chip-color);
     transition: background 0.1s ease;
-  }
-  .pill:hover {
-    background: color-mix(in oklab, var(--pill-color) 30%, var(--surface));
-  }
-  .pill.done {
-    opacity: 0.5;
-  }
-  .pill.done .pill-title {
-    text-decoration: line-through;
-  }
-  /* inner row: dot/check + time + title on one line */
-  .pill-row {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    width: 100%;
     min-width: 0;
   }
-  .pill-dot {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--pill-color);
-    flex: none;
+  .chip:hover { background: color-mix(in oklab, var(--chip-color) 30%, var(--surface)); }
+  .chip.done { opacity: 0.5; }
+  .chip.done .chip-title { text-decoration: line-through; }
+  .chip-dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--chip-color); flex: none;
   }
-  .pill-glyph, .ad-glyph {
-    flex: none;
-    font-size: 10px;
-    line-height: 1;
-    color: var(--pill-color, var(--blk-color));
+  .chip-glyph { flex: none; font-size: 9.5px; line-height: 1; color: var(--chip-color); }
+  .chip-check {
+    width: 11px; height: 11px; border-radius: 3px;
+    border: 1.5px solid var(--chip-color);
+    display: flex; align-items: center; justify-content: center;
+    flex: none; color: var(--accent-fg); cursor: pointer;
   }
-  .ad-glyph { color: var(--blk-color); }
-  .pill-check {
-    width: 12px;
-    height: 12px;
-    border-radius: 3px;
-    border: 1.5px solid var(--pill-color);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: none;
-    color: var(--accent-fg);
-    cursor: pointer;
+  .chip-check.on { background: var(--chip-color); }
+  .chip-time { color: var(--fg-muted); flex: none; }
+  .chip-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .chip-more {
+    appearance: none; border: none; background: transparent;
+    font-family: var(--font-mono); font-size: var(--t-2xs);
+    color: var(--fg-muted); cursor: pointer; text-align: left;
+    padding: 1px 5px; border-radius: var(--rad-2);
   }
-  .pill-check.on {
-    background: var(--pill-color);
-    color: var(--accent-fg);
-  }
-  .pill-time {
-    color: var(--fg-muted);
-    flex: none;
-  }
-  .pill-title {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-  /* location line beneath the main row */
-  .pill-loc {
-    font-size: calc(var(--t-2xs, 10.5px) - 0.5px);
-    color: var(--fg-faint);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    width: 100%;
-    padding-left: 9px; /* indent past dot/check */
-  }
+  .chip-more:hover { color: var(--fg-bright); background: var(--surface-2); }
 
   .cal-empty {
     margin-top: 12px;
     text-align: center;
-    font-size: var(--t-xs, 11.5px);
+    font-size: var(--t-xs);
     color: var(--fg-faint);
   }
 
-  /* ===== DAY VIEW (Google-style timeline) ===== */
-  .cal-day {
+  /* ===== SHARED TIME-GRID (week + day) ===== */
+  .cal-grid-wrap {
     flex: 1;
     min-height: 0;
     display: flex;
     flex-direction: column;
     border: 1px solid var(--border);
-    border-radius: var(--r-lg, 12px);
+    border-radius: var(--rad-3);
     overflow: hidden;
     background: var(--surface);
-  }
-
-  /* gutter width shared by the hour labels + the all-day strip label */
-  .cal-day {
     --gutter: 58px;
   }
 
-  /* all-day strip */
-  .day-allday {
-    display: flex;
-    align-items: flex-start;
-    gap: 0;
+  /* weekday column headers (week view) */
+  .tg-colhead {
+    display: grid;
+    grid-template-columns: var(--gutter) repeat(7, 1fr);
     border-bottom: 1px solid var(--border);
     background: var(--surface-2);
-    padding: 6px 0;
-    max-height: 96px;
+    flex: none;
+  }
+  .tg-gutter-head { border-right: 1px solid var(--border); }
+  .tg-day-head {
+    appearance: none;
+    border: none;
+    border-left: 1px solid var(--border);
+    background: transparent;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 7px 4px;
+    transition: background 0.1s ease;
+  }
+  .tg-day-head:hover { background: var(--surface-3); }
+  .tg-day-head.weekend { background: color-mix(in oklab, var(--bg) 30%, transparent); }
+  .tg-dow {
+    font-family: var(--font-mono);
+    font-size: var(--t-2xs);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+  }
+  .tg-day-head.weekend .tg-dow { color: color-mix(in oklab, var(--fg-faint) 75%, transparent); }
+  .tg-dnum {
+    font-family: var(--font-mono);
+    font-size: var(--t-md);
+    font-weight: 600;
+    color: var(--fg-muted);
+    width: 24px; height: 24px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: var(--rad-pill);
+  }
+  .tg-day-head.today .tg-dow { color: var(--accent); }
+  .tg-day-head.today .tg-dnum {
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+
+  /* all-day strip */
+  .tg-allday {
+    display: grid;
+    grid-template-columns: var(--gutter) repeat(7, 1fr);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    max-height: 92px;
     overflow-y: auto;
     flex: none;
   }
-  .day-allday-lbl {
-    width: var(--gutter);
-    flex: none;
-    padding: 2px 8px 0 0;
+  .day-allday { grid-template-columns: var(--gutter) 1fr; align-items: flex-start; padding: 6px 0; }
+  .tg-gutter-lbl {
+    grid-column: 1;
+    padding: 5px 8px 0 0;
     text-align: right;
     font-family: var(--font-mono);
-    font-size: var(--t-2xs, 10.5px);
+    font-size: var(--t-2xs);
     color: var(--fg-faint);
+    border-right: 1px solid var(--border);
   }
-  .day-allday-list {
-    flex: 1;
-    min-width: 0;
+  .day-allday .tg-gutter-lbl { border-right: none; padding-top: 2px; }
+  .tg-allday-col {
+    border-left: 1px solid var(--border);
+    padding: 5px 4px;
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    padding-right: 10px;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+  .tg-allday-col.weekend { background: color-mix(in oklab, var(--bg) 30%, transparent); }
+  .day-allday-list {
+    display: flex; flex-wrap: wrap; gap: 4px;
+    padding: 0 10px; min-width: 0;
   }
   .ad-pill {
-    appearance: none;
-    border: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
+    appearance: none; border: none;
+    display: inline-flex; align-items: center; gap: 5px;
     max-width: 100%;
     padding: 3px 8px;
-    border-radius: 6px;
+    border-radius: var(--rad-2);
     cursor: pointer;
     font-family: var(--font-mono);
-    font-size: var(--t-2xs, 10.5px);
+    font-size: var(--t-2xs);
     color: var(--fg-bright);
     background: color-mix(in oklab, var(--blk-color) 22%, var(--surface));
     border-left: 2px solid var(--blk-color);
     transition: background 0.1s ease;
-  }
-  .ad-pill:hover {
-    background: color-mix(in oklab, var(--blk-color) 34%, var(--surface));
-  }
-  .ad-pill.done {
-    opacity: 0.5;
-  }
-  .ad-pill.done .ad-title {
-    text-decoration: line-through;
-  }
-  .ad-title {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     min-width: 0;
   }
+  .ad-pill:hover { background: color-mix(in oklab, var(--blk-color) 34%, var(--surface)); }
+  .ad-pill.done { opacity: 0.5; }
+  .ad-pill.done .ad-title { text-decoration: line-through; }
+  .ad-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .ad-glyph { flex: none; font-size: 10px; line-height: 1; color: var(--blk-color); }
   .ad-check {
-    border-color: var(--blk-color);
+    width: 12px; height: 12px; border-radius: 3px;
+    border: 1.5px solid var(--blk-color);
+    display: flex; align-items: center; justify-content: center;
+    flex: none; color: var(--accent-fg); cursor: pointer;
   }
-  .ad-check.on {
-    background: var(--blk-color);
-  }
+  .ad-check.on { background: var(--blk-color); }
 
-  /* scrollable hour grid */
-  .day-grid-scroll {
+  /* scroll body */
+  .tg-scroll {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     position: relative;
   }
-  .day-grid {
-    position: relative;
-    width: 100%;
-  }
+  .tg-body { position: relative; width: 100%; }
 
-  /* one hour row: gutter label + clickable empty cell */
-  .day-hour {
+  /* hour rule + gutter label */
+  .tg-hour {
     position: absolute;
     left: 0;
     right: 0;
-    display: flex;
     border-top: 1px solid var(--border);
   }
-  .day-hour-lbl {
+  .tg-hour-lbl {
+    position: absolute;
+    left: 0;
+    top: -7px;
     width: var(--gutter);
-    flex: none;
-    padding: 2px 8px 0 0;
+    padding-right: 8px;
     text-align: right;
     font-family: var(--font-mono);
-    font-size: var(--t-2xs, 10.5px);
+    font-size: var(--t-2xs);
     color: var(--fg-faint);
-    transform: translateY(-7px); /* sit on the hour line */
     user-select: none;
   }
-  .day-hour-cell {
+
+  /* day columns layer (sits to the right of the gutter) */
+  .tg-cols {
+    position: absolute;
+    left: var(--gutter);
+    right: 0;
+    top: 0;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+  }
+  .tg-cols--day { grid-template-columns: 1fr; }
+  .tg-col {
+    position: relative;
+    border-left: 1px solid var(--border);
+    min-width: 0;
+  }
+  .tg-col.weekend { background: color-mix(in oklab, var(--bg) 22%, transparent); }
+
+  /* empty hour slot (click to create) */
+  .tg-slot {
     appearance: none;
     border: none;
     background: transparent;
-    flex: 1;
-    min-width: 0;
-    height: 100%;
+    position: absolute;
+    left: 0;
+    right: 0;
     cursor: pointer;
-    border-left: 1px solid var(--border);
     transition: background 0.1s ease;
   }
-  .day-hour-cell:hover {
-    background: color-mix(in oklab, var(--accent) 6%, transparent);
-  }
+  .tg-slot:hover { background: color-mix(in oklab, var(--accent) 7%, transparent); }
 
-  /* timed event block */
+  /* positioned event block */
   .blk {
     appearance: none;
     position: absolute;
-    left: calc(var(--gutter) + 4px);
-    right: 8px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: 1px;
-    padding: 3px 7px;
-    border-radius: 6px;
+    padding: 3px 6px;
+    border-radius: var(--rad-2);
     overflow: hidden;
     cursor: pointer;
     text-align: left;
     z-index: 2;
-    background: color-mix(in oklab, var(--blk-color) 24%, var(--surface));
+    background: color-mix(in oklab, var(--blk-color) 26%, var(--surface));
     border-left: 3px solid var(--blk-color);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
     transition: background 0.1s ease;
   }
-  .blk:hover {
-    background: color-mix(in oklab, var(--blk-color) 36%, var(--surface));
-  }
-  .blk--done {
-    opacity: 0.55;
-  }
-  .blk--done .blk-title {
-    text-decoration: line-through;
-  }
-  .blk-head {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-  }
+  .blk:hover { background: color-mix(in oklab, var(--blk-color) 38%, var(--surface)); z-index: 3; }
+  .blk--done { opacity: 0.55; }
+  .blk--done .blk-title { text-decoration: line-through; }
+  .blk--wk { padding: 2px 5px; }
+  .blk-head { display: flex; align-items: center; gap: 5px; min-width: 0; }
+  .blk-glyph { flex: none; font-size: 10px; line-height: 1; color: var(--blk-color); }
   .blk-title {
     font-family: var(--font-mono);
-    font-size: var(--t-xs, 11.5px);
+    font-size: var(--t-xs);
     font-weight: 600;
     color: var(--fg-bright);
     white-space: nowrap;
@@ -1019,45 +1156,54 @@
     text-overflow: ellipsis;
     min-width: 0;
   }
+  .blk--wk .blk-title { font-size: var(--t-2xs); }
   .blk-check {
-    border-color: var(--blk-color);
+    width: 13px; height: 13px; border-radius: 3px;
+    border: 1.5px solid var(--blk-color);
+    display: flex; align-items: center; justify-content: center;
+    flex: none; color: var(--accent-fg); cursor: pointer;
   }
-  .blk-check.on {
-    background: var(--blk-color);
-  }
+  .blk-check.on { background: var(--blk-color); }
   .blk-time {
     font-family: var(--font-mono);
-    font-size: var(--t-2xs, 10.5px);
+    font-size: var(--t-2xs);
     color: var(--fg-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .blk-loc {
-    font-size: var(--t-2xs, 10.5px);
+    font-size: var(--t-2xs);
     color: var(--fg-faint);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  /* red current-time line */
+  /* now-line */
   .now-line {
     position: absolute;
-    left: calc(var(--gutter) - 5px);
+    left: -1px;
     right: 0;
     height: 0;
-    border-top: 2px solid #ea4335;
+    border-top: 2px solid var(--err);
     z-index: 5;
     pointer-events: none;
   }
   .now-dot {
     position: absolute;
-    left: -1px;
+    left: -4px;
     top: -5px;
     width: 9px;
     height: 9px;
     border-radius: 50%;
-    background: #ea4335;
+    background: var(--err);
+  }
+
+  /* responsive: tighten gutter + header on narrow shells */
+  @media (max-width: 860px) {
+    .cal { padding: 16px; }
+    .cal-grid-wrap { --gutter: 48px; }
+    .cal-title { margin-left: 4px; font-size: var(--t-sm); }
   }
 </style>
