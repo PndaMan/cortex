@@ -1,6 +1,7 @@
 //! Cortex backend library. Wires the SQLite-backed AppState into Tauri and
 //! registers the command surface consumed by the Svelte frontend.
 
+mod analytics;
 mod anki;
 mod backup;
 mod calendar;
@@ -263,6 +264,9 @@ pub fn run() {
             review::srs_grade,
             review::srs_due,
             review::srs_stats,
+            // study analytics
+            analytics::log_pomodoro_session,
+            analytics::analytics_summary,
             // google calendar
             google::google_status,
             google::google_connect,

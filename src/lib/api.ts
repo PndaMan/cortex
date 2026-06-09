@@ -653,6 +653,40 @@ export const srsDue = (subjectId: string, kind: "quiz" | "flashcard") =>
 export const srsStats = (subjectId: string, kind: "quiz" | "flashcard") =>
   invoke<SrsStats>("srs_stats", { subjectId, kind });
 
+// ---- study analytics ----
+export interface DayMinutes { day: string; minutes: number }
+export interface DayReviews { day: string; reviews: number; correct: number; accuracy: number }
+export interface DueDay { day: string; due: number }
+export interface SubjectStat {
+  subject_id: string;
+  minutes: number;
+  reviews: number;
+  correct: number;
+  accuracy: number;
+}
+export interface FsrsTotals { cards: number; avg_stability: number; lapses: number }
+export interface AnalyticsSummary {
+  minutes_per_day: DayMinutes[];
+  reviews_per_day: DayReviews[];
+  due_forecast: DueDay[];
+  per_subject: SubjectStat[];
+  fsrs: FsrsTotals;
+  streak: number;
+  minutes_week: number;
+  reviews_week: number;
+  accuracy_week: number;
+}
+/** Log a finished pomodoro segment (work|break) with the subject active then. */
+export const logPomodoroSession = (
+  subjectId: string | null,
+  kind: "work" | "break",
+  startedMs: number,
+  endedMs: number
+) => invoke<void>("log_pomodoro_session", { subjectId, kind, startedMs, endedMs });
+/** The whole Study Analytics dashboard in one call (default 30-day window). */
+export const analyticsSummary = (days?: number) =>
+  invoke<AnalyticsSummary>("analytics_summary", { days });
+
 // ---- events ----
 export const onIngestProgress = (
   cb: (p: IngestProgress) => void

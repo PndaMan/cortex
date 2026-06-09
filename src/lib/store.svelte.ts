@@ -17,6 +17,7 @@ export type View =
   | "gen-material"
   | "notes"
   | "calendar"
+  | "analytics"
   | "settings";
 export type Mode = "NOR" | "INS" | "SEL";
 export type Toast = {
@@ -137,6 +138,12 @@ class PomoTimer {
   #lastAt = 0;
   #interval: ReturnType<typeof setInterval> | null = null;
   #onPhaseChange: ((to: PomoPhase) => void) | null = null;
+  // Wall-clock ms when the CURRENT phase's segment began — so a finished segment
+  // can be logged with real start/end timestamps for the analytics dashboard.
+  // 0 means "no segment in progress yet"; set on the first start of a phase and
+  // preserved across pause/resume (a paused segment is still the same segment).
+  #segmentStartedMs = 0;
+  #onSegmentDone: ((kind: PomoPhase, startedMs: number, endedMs: number) => void) | null = null;
 
   phaseMin(p: PomoPhase = this.phase): number {
     return p === "work" ? this.workMin : p === "long" ? this.longBreakMin : this.breakMin;
@@ -166,6 +173,10 @@ class PomoTimer {
   onPhaseChange(fn: (to: PomoPhase) => void) {
     this.#onPhaseChange = fn;
   }
+  /** Notified when a segment finishes, with its real wall-clock span (for analytics). */
+  onSegmentDone(fn: (kind: PomoPhase, startedMs: number, endedMs: number) => void) {
+    this.#onSegmentDone = fn;
+  }
 
   #ensureInterval() {
     if (this.#interval) return;
@@ -188,6 +199,12 @@ class PomoTimer {
 
   #advance() {
     const from = this.phase;
+    const endedMs = Date.now();
+    // Persist the segment that just finished (work counts as study time; breaks
+    // are logged for completeness). Only when we actually have a start anchor.
+    if (this.#segmentStartedMs > 0) {
+      this.#onSegmentDone?.(from, this.#segmentStartedMs, endedMs);
+    }
     if (from === "work") {
       this.completedSessions += 1;
       const isLong = this.cycle % this.sessionsBeforeLong === 0;
@@ -198,7 +215,8 @@ class PomoTimer {
       this.phase = "work";
     }
     this.remainingMs = this.totalMs();
-    this.#lastAt = Date.now();
+    this.#lastAt = endedMs;
+    this.#segmentStartedMs = endedMs; // the next phase's segment starts now
     this.running = true; // auto-continue into the next phase
     this.#onPhaseChange?.(this.phase);
   }
@@ -209,6 +227,9 @@ class PomoTimer {
     if (this.remainingMs <= 0) this.remainingMs = this.totalMs();
     this.running = true;
     this.#lastAt = Date.now();
+    // Anchor the segment on the first start; a resume after pause keeps the
+    // existing anchor so the logged span covers the whole phase.
+    if (this.#segmentStartedMs === 0) this.#segmentStartedMs = this.#lastAt;
     this.#ensureInterval();
   }
   pomoPause() {
@@ -220,6 +241,7 @@ class PomoTimer {
   pomoReset() {
     this.running = false;
     this.remainingMs = this.totalMs();
+    this.#segmentStartedMs = 0; // abandon the in-progress segment (don't log it)
     this.#stopInterval();
   }
   /** Skip to the next phase immediately (counts a completed focus session). */
@@ -455,6 +477,16 @@ class AppStore {
           body: "Nice focus — step away for a bit.",
         });
       }
+    });
+    // Persist each finished segment so the analytics dashboard can chart study
+    // minutes per day/subject. Tagged with whatever subject is active right now;
+    // best-effort (a failed insert must never disrupt the timer).
+    this.pomo.onSegmentDone((kind, startedMs, endedMs) => {
+      // Only "work" counts as study time; both short and long breaks log as "break".
+      const segKind = kind === "work" ? "work" : "break";
+      api
+        .logPomodoroSession(this.activeSubjectId, segKind, startedMs, endedMs)
+        .catch(() => {});
     });
     try {
       // Start empty on a fresh install — no demo seeding. Every view renders a

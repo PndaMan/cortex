@@ -157,6 +157,15 @@
     >
       <Icon name="calendar" size={14} /> Calendar <span class="nav-k">␣ a</span>
     </div>
+    <div
+      class="sb-nav-item{app.view === 'analytics' ? ' on' : ''}"
+      onclick={() => app.setView("analytics")}
+      role="button"
+      tabindex="0"
+      onkeydown={(e) => e.key === "Enter" && app.setView("analytics")}
+    >
+      <Icon name="chart" size={14} /> Insights
+    </div>
 
     <!-- Subjects section header -->
     <div class="sb-section-l">

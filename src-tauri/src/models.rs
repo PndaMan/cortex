@@ -423,3 +423,77 @@ pub struct IngestProgress {
     pub detail: String,
     pub pct: u8,
 }
+
+// ---- study analytics --------------------------------------------------
+//
+// One `analytics_summary` call returns the whole dashboard payload so the
+// frontend renders from a single round-trip / DB lock. Days are local-date
+// strings ("YYYY-MM-DD") computed in SQL so per-day buckets line up with the
+// user's calendar rather than UTC midnight.
+
+/// Study minutes on one local day (work pomodoro segments only).
+#[derive(Debug, Clone, Serialize)]
+pub struct DayMinutes {
+    pub day: String, // YYYY-MM-DD (local)
+    pub minutes: i64,
+}
+
+/// Reviews answered on one local day, with that day's accuracy.
+#[derive(Debug, Clone, Serialize)]
+pub struct DayReviews {
+    pub day: String, // YYYY-MM-DD (local)
+    pub reviews: i64,
+    pub correct: i64,
+    /// 0.0-1.0; 0 when no reviews that day.
+    pub accuracy: f64,
+}
+
+/// Cards becoming due on one upcoming local day (next-7-day forecast).
+#[derive(Debug, Clone, Serialize)]
+pub struct DueDay {
+    pub day: String, // YYYY-MM-DD (local)
+    pub due: i64,
+}
+
+/// Per-subject roll-up: study minutes, reviews, and accuracy.
+#[derive(Debug, Clone, Serialize)]
+pub struct SubjectStat {
+    pub subject_id: String,
+    pub minutes: i64,
+    pub reviews: i64,
+    pub correct: i64,
+    /// 0.0-1.0; 0 when no reviews for this subject.
+    pub accuracy: f64,
+}
+
+/// FSRS memory-state totals across all scheduled cards.
+#[derive(Debug, Clone, Serialize)]
+pub struct FsrsTotals {
+    pub cards: i64,
+    /// Mean stability in days over cards that have an FSRS stability set.
+    pub avg_stability: f64,
+    pub lapses: i64,
+}
+
+/// The whole Study Analytics dashboard, returned by `analytics_summary`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyticsSummary {
+    /// Per-day study minutes for the window (oldest → newest, gaps filled with 0).
+    pub minutes_per_day: Vec<DayMinutes>,
+    /// Per-day reviews + accuracy for the window (oldest → newest, gaps filled).
+    pub reviews_per_day: Vec<DayReviews>,
+    /// Cards due each of the next 7 days (today → today+6, gaps filled with 0).
+    pub due_forecast: Vec<DueDay>,
+    /// Per-subject totals over the window (only subjects with any activity).
+    pub per_subject: Vec<SubjectStat>,
+    /// FSRS state totals (all scheduled cards, not windowed).
+    pub fsrs: FsrsTotals,
+    /// Consecutive days ending today with ≥1 review attempt OR work session.
+    pub streak: i64,
+    /// Study minutes over the last 7 calendar days (rolling).
+    pub minutes_week: i64,
+    /// Reviews answered over the last 7 calendar days.
+    pub reviews_week: i64,
+    /// Accuracy over the last 7 calendar days (0.0-1.0).
+    pub accuracy_week: f64,
+}

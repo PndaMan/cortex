@@ -2178,6 +2178,286 @@ pub fn move_source(
     Ok(())
 }
 
+// ---- pomodoro sessions + study analytics ------------------------------
+
+/// Record one finished pomodoro segment. Called from the frontend when a work
+/// (or break) phase completes; only "work" rows count toward study minutes.
+pub fn insert_pomodoro_session(
+    conn: &Connection,
+    subject_id: Option<&str>,
+    kind: &str,
+    started_ms: i64,
+    ended_ms: i64,
+) -> Result<String> {
+    let id = new_id();
+    conn.execute(
+        "INSERT INTO pomodoro_sessions
+            (id, subject_id, kind, started_ms, ended_ms, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![id, subject_id, kind, started_ms, ended_ms, now_ms()],
+    )?;
+    Ok(id)
+}
+
+/// Build the whole Study Analytics dashboard in one pass.
+///
+/// `days` bounds the per-day charts (study minutes, reviews/accuracy) and the
+/// per-subject roll-up. Per-day buckets use the LOCAL calendar date so they
+/// match what the user sees, not UTC midnight. SQL returns only days/subjects
+/// with activity; we fill the gaps (and the 7-day due forecast) in Rust so the
+/// charts always span a contiguous range. Everything runs on the single
+/// connection the caller already holds — one lock for the whole dashboard.
+pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummary> {
+    let days = days.clamp(1, 365);
+    // Inclusive window start at local midnight, `days` days ago (so a 30-day
+    // window covers today plus the previous 29 days).
+    let since_ms = day_floor_ms(now_ms()) - (days - 1) * DAY_MS;
+
+    // ── per-day study minutes (work segments only) ──
+    // Minutes are summed from each segment's own duration so a partially-skipped
+    // session still contributes its real elapsed time.
+    let mut stmt = conn.prepare(
+        "SELECT date(started_ms/1000, 'unixepoch', 'localtime') AS d,
+                SUM(ended_ms - started_ms) AS ms
+         FROM pomodoro_sessions
+         WHERE kind='work' AND started_ms >= ?1
+         GROUP BY d",
+    )?;
+    let mut minutes_by_day: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for row in stmt.query_map(params![since_ms], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })? {
+        let (d, ms) = row?;
+        minutes_by_day.insert(d, ms / 60_000);
+    }
+
+    // ── per-day reviews + accuracy (attempts) ──
+    let mut stmt = conn.prepare(
+        "SELECT date(created_at/1000, 'unixepoch', 'localtime') AS d,
+                COUNT(*) AS n,
+                SUM(correct) AS ok
+         FROM attempts
+         WHERE created_at >= ?1
+         GROUP BY d",
+    )?;
+    let mut reviews_by_day: std::collections::HashMap<String, (i64, i64)> =
+        std::collections::HashMap::new();
+    for row in stmt.query_map(params![since_ms], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+    })? {
+        let (d, n, ok) = row?;
+        reviews_by_day.insert(d, (n, ok));
+    }
+
+    // Walk the contiguous day range oldest → newest, filling zeros for gaps.
+    let mut minutes_per_day = Vec::with_capacity(days as usize);
+    let mut reviews_per_day = Vec::with_capacity(days as usize);
+    for i in 0..days {
+        let day = local_day_str(since_ms + i * DAY_MS);
+        let minutes = *minutes_by_day.get(&day).unwrap_or(&0);
+        minutes_per_day.push(DayMinutes { day: day.clone(), minutes });
+        let (reviews, correct) = *reviews_by_day.get(&day).unwrap_or(&(0, 0));
+        let accuracy = if reviews > 0 { correct as f64 / reviews as f64 } else { 0.0 };
+        reviews_per_day.push(DayReviews { day, reviews, correct, accuracy });
+    }
+
+    // ── current streak: consecutive days ending today with ANY activity ──
+    let today = local_day_str(now_ms());
+    let mut streak = 0i64;
+    let mut cursor = day_floor_ms(now_ms());
+    loop {
+        let day = local_day_str(cursor);
+        let had_work = *minutes_by_day.get(&day).unwrap_or(&0) > 0;
+        let had_review = reviews_by_day.get(&day).map(|(n, _)| *n > 0).unwrap_or(false);
+        if had_work || had_review {
+            streak += 1;
+            cursor -= DAY_MS;
+        } else {
+            // Today with no activity yet doesn't break a streak earned yesterday:
+            // skip today once, then require unbroken activity backward.
+            if day == today {
+                cursor -= DAY_MS;
+                continue;
+            }
+            break;
+        }
+        // Stop once we walk past the queried window (no data beyond it).
+        if cursor < since_ms {
+            break;
+        }
+    }
+
+    // ── per-subject roll-up (minutes + reviews + accuracy) over the window ──
+    // Two grouped queries merged by subject id; avoids a cross-join double count.
+    let mut subj: std::collections::HashMap<String, SubjectStat> = std::collections::HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT subject_id, SUM(ended_ms - started_ms) AS ms
+         FROM pomodoro_sessions
+         WHERE kind='work' AND started_ms >= ?1 AND subject_id IS NOT NULL
+         GROUP BY subject_id",
+    )?;
+    for row in stmt.query_map(params![since_ms], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })? {
+        let (sid, ms) = row?;
+        subj.entry(sid.clone())
+            .or_insert_with(|| SubjectStat {
+                subject_id: sid,
+                minutes: 0,
+                reviews: 0,
+                correct: 0,
+                accuracy: 0.0,
+            })
+            .minutes = ms / 60_000;
+    }
+    let mut stmt = conn.prepare(
+        "SELECT subject_id, COUNT(*) AS n, SUM(correct) AS ok
+         FROM attempts
+         WHERE created_at >= ?1
+         GROUP BY subject_id",
+    )?;
+    for row in stmt.query_map(params![since_ms], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+    })? {
+        let (sid, n, ok) = row?;
+        let e = subj.entry(sid.clone()).or_insert_with(|| SubjectStat {
+            subject_id: sid,
+            minutes: 0,
+            reviews: 0,
+            correct: 0,
+            accuracy: 0.0,
+        });
+        e.reviews = n;
+        e.correct = ok;
+    }
+    let mut per_subject: Vec<SubjectStat> = subj.into_values().collect();
+    for s in per_subject.iter_mut() {
+        s.accuracy = if s.reviews > 0 { s.correct as f64 / s.reviews as f64 } else { 0.0 };
+    }
+    // Most-studied first, then most-reviewed — stable, useful ordering for a table.
+    per_subject.sort_by(|a, b| {
+        b.minutes
+            .cmp(&a.minutes)
+            .then(b.reviews.cmp(&a.reviews))
+            .then(a.subject_id.cmp(&b.subject_id))
+    });
+
+    // ── due forecast: cards becoming due each of the next 7 days ──
+    let mut stmt = conn.prepare(
+        "SELECT date(due_at/1000, 'unixepoch', 'localtime') AS d, COUNT(*) AS n
+         FROM srs_cards
+         WHERE due_at >= ?1 AND due_at < ?2
+         GROUP BY d",
+    )?;
+    let forecast_start = day_floor_ms(now_ms());
+    let forecast_end = forecast_start + 7 * DAY_MS;
+    let mut due_by_day: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for row in stmt.query_map(params![forecast_start, forecast_end], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })? {
+        let (d, n) = row?;
+        due_by_day.insert(d, n);
+    }
+    let mut due_forecast = Vec::with_capacity(7);
+    for i in 0..7 {
+        let day = local_day_str(forecast_start + i * DAY_MS);
+        let due = *due_by_day.get(&day).unwrap_or(&0);
+        due_forecast.push(DueDay { day, due });
+    }
+
+    // ── FSRS totals (all scheduled cards, not windowed) ──
+    let cards: i64 = conn.query_row("SELECT COUNT(*) FROM srs_cards", [], |r| r.get(0))?;
+    let lapses: i64 = conn
+        .query_row("SELECT COALESCE(SUM(lapses), 0) FROM srs_cards", [], |r| r.get(0))?;
+    // Only average over cards that actually carry an FSRS stability (legacy SM-2
+    // rows have NULL until first re-graded under FSRS).
+    let avg_stability: f64 = conn
+        .query_row(
+            "SELECT COALESCE(AVG(stability), 0.0) FROM srs_cards WHERE stability IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )?;
+    let fsrs = FsrsTotals { cards, avg_stability, lapses };
+
+    // ── rolling 7-day headline figures ──
+    let week_start = day_floor_ms(now_ms()) - 6 * DAY_MS;
+    let minutes_week: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(ended_ms - started_ms), 0) / 60000
+         FROM pomodoro_sessions WHERE kind='work' AND started_ms >= ?1",
+        params![week_start],
+        |r| r.get(0),
+    )?;
+    let (reviews_week, correct_week): (i64, i64) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(correct), 0) FROM attempts WHERE created_at >= ?1",
+        params![week_start],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let accuracy_week = if reviews_week > 0 {
+        correct_week as f64 / reviews_week as f64
+    } else {
+        0.0
+    };
+
+    Ok(AnalyticsSummary {
+        minutes_per_day,
+        reviews_per_day,
+        due_forecast,
+        per_subject,
+        fsrs,
+        streak,
+        minutes_week,
+        reviews_week,
+        accuracy_week,
+    })
+}
+
+/// Milliseconds in a day — analytics steps the day cursor by this.
+const DAY_MS: i64 = 86_400_000;
+
+/// Local-midnight (ms epoch) of the day containing `ms`. Uses SQLite's own
+/// 'localtime' conversion via a tiny helper query so the day boundaries match
+/// the GROUP BY date() buckets exactly (same TZ rules), avoiding off-by-one
+/// drift between Rust and SQLite timezone handling.
+fn day_floor_ms(ms: i64) -> i64 {
+    // Fallback to a crude UTC floor only if the (always-available) datetime
+    // functions somehow fail; correctness here just affects bucket alignment.
+    LOCAL_MIDNIGHT
+        .with(|c| {
+            let conn = c.borrow();
+            conn.query_row(
+                "SELECT CAST(strftime('%s', date(?1/1000, 'unixepoch', 'localtime')) AS INTEGER) * 1000",
+                params![ms],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()
+        })
+        .unwrap_or_else(|| ms - ms.rem_euclid(DAY_MS))
+}
+
+/// Local-date string ("YYYY-MM-DD") for `ms` — matches the SQL date() buckets.
+fn local_day_str(ms: i64) -> String {
+    LOCAL_MIDNIGHT
+        .with(|c| {
+            let conn = c.borrow();
+            conn.query_row(
+                "SELECT date(?1/1000, 'unixepoch', 'localtime')",
+                params![ms],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+        })
+        .unwrap_or_default()
+}
+
+thread_local! {
+    // A scratch in-memory connection used purely for SQLite's date/time
+    // functions (timezone-correct day math). Cheap, thread-local, no schema —
+    // keeps the day-bucket helpers in lockstep with the GROUP BY queries above
+    // without borrowing the app connection (which the caller already holds).
+    static LOCAL_MIDNIGHT: std::cell::RefCell<Connection> =
+        std::cell::RefCell::new(Connection::open_in_memory().expect("scratch conn"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2366,5 +2646,38 @@ mod tests {
             )
             .unwrap();
         assert_eq!(scoped, 1);
+    }
+
+    #[test]
+    fn analytics_summary_rolls_up_minutes_reviews_and_streak() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let sid = insert_subject(&c, "Math", None, None, None).unwrap();
+
+        // A 25-minute work session that ended just now, plus two answers.
+        let now = now_ms();
+        insert_pomodoro_session(&c, Some(&sid), "work", now - 25 * 60_000, now).unwrap();
+        // A break segment must NOT count toward study minutes.
+        insert_pomodoro_session(&c, Some(&sid), "break", now - 5 * 60_000, now).unwrap();
+        record_attempt(&c, &sid, None, "quiz", 0, "Q1", true).unwrap();
+        record_attempt(&c, &sid, None, "quiz", 1, "Q2", false).unwrap();
+
+        let s = analytics_summary(&c, 30).unwrap();
+        // 30-day window of contiguous days, today is the last bucket.
+        assert_eq!(s.minutes_per_day.len(), 30);
+        assert_eq!(s.minutes_per_day.last().unwrap().minutes, 25, "work only");
+        assert_eq!(s.minutes_week, 25);
+        assert_eq!(s.reviews_week, 2);
+        assert!((s.accuracy_week - 0.5).abs() < 1e-9, "1 of 2 correct");
+        assert_eq!(s.streak, 1, "today has activity");
+        assert_eq!(s.due_forecast.len(), 7);
+
+        // Per-subject roll-up carries both minutes and reviews for the subject.
+        assert_eq!(s.per_subject.len(), 1);
+        let ps = &s.per_subject[0];
+        assert_eq!(ps.subject_id, sid);
+        assert_eq!(ps.minutes, 25);
+        assert_eq!(ps.reviews, 2);
+        assert_eq!(ps.correct, 1);
     }
 }
