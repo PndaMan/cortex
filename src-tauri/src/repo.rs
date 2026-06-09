@@ -2338,15 +2338,19 @@ pub fn insert_pomodoro_session(
 /// connection the caller already holds — one lock for the whole dashboard.
 pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummary> {
     let days = days.clamp(1, 365);
+    let today_floor = day_floor_ms(now_ms());
     // Inclusive window start at local midnight, `days` days ago (so a 30-day
     // window covers today plus the previous 29 days).
-    let since_ms = day_floor_ms(now_ms()) - (days - 1) * DAY_MS;
+    let since_ms = today_floor - (days - 1) * DAY_MS;
+    // The heatmap always spans a full rolling year (366 days, leap-safe).
+    let year_since_ms = today_floor - (YEAR_DAYS - 1) * DAY_MS;
 
     // ── per-day study minutes (work + passive app segments) ──
     // Minutes are summed from each segment's own duration so a partially-skipped
     // session still contributes its real elapsed time. "app" rows are passive
     // focused in-app time (e.g. studying the cheatsheet) so study time isn't 0
-    // for users who never run a pomodoro.
+    // for users who never run a pomodoro. We query the FULL YEAR once and derive
+    // both the windowed `minutes_per_day` and the year-long heatmap from it.
     let mut stmt = conn.prepare(
         "SELECT date(started_ms/1000, 'unixepoch', 'localtime') AS d,
                 SUM(ended_ms - started_ms) AS ms
@@ -2355,11 +2359,19 @@ pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummar
          GROUP BY d",
     )?;
     let mut minutes_by_day: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    for row in stmt.query_map(params![since_ms], |r| {
+    for row in stmt.query_map(params![year_since_ms], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
     })? {
         let (d, ms) = row?;
         minutes_by_day.insert(d, ms / 60_000);
+    }
+
+    // Full-year daily series for the contributions heatmap (oldest → newest).
+    let mut year_minutes = Vec::with_capacity(YEAR_DAYS as usize);
+    for i in 0..YEAR_DAYS {
+        let day = local_day_str(year_since_ms + i * DAY_MS);
+        let minutes = *minutes_by_day.get(&day).unwrap_or(&0);
+        year_minutes.push(DayMinutes { day, minutes });
     }
 
     // ── per-day reviews + accuracy (attempts) ──
@@ -2412,8 +2424,9 @@ pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummar
             }
             break;
         }
-        // Stop once we walk past the queried window (no data beyond it).
-        if cursor < since_ms {
+        // Stop once we walk past the full-year window (no data beyond it). The
+        // year of study-minute data is loaded above, so a long streak counts.
+        if cursor < year_since_ms {
             break;
         }
     }
@@ -2533,6 +2546,7 @@ pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummar
 
     Ok(AnalyticsSummary {
         minutes_per_day,
+        year_minutes,
         reviews_per_day,
         due_forecast,
         per_subject,
@@ -2697,6 +2711,9 @@ fn weak_topics(conn: &Connection, since_ms: i64) -> Result<Vec<WeakTopic>> {
 
 /// Milliseconds in a day — analytics steps the day cursor by this.
 const DAY_MS: i64 = 86_400_000;
+
+/// Days in the contributions heatmap window (a full rolling year, leap-safe).
+const YEAR_DAYS: i64 = 366;
 
 /// Local-midnight (ms epoch) of the day containing `ms`. Uses SQLite's own
 /// 'localtime' conversion via a tiny helper query so the day boundaries match
@@ -2938,13 +2955,15 @@ mod tests {
         let c = st.db.lock().unwrap();
         let sid = insert_subject(&c, "Math", None, None, None).unwrap();
 
-        // A 25-minute work session + 10 minutes of passive app time, both ending
-        // just now, plus two answers. Work AND app both count toward study time.
-        let now = now_ms();
-        insert_pomodoro_session(&c, Some(&sid), "work", now - 25 * 60_000, now).unwrap();
-        insert_pomodoro_session(&c, Some(&sid), "app", now - 10 * 60_000, now).unwrap();
+        // A 25-minute work session + 10 minutes of passive app time, plus two
+        // answers. Anchor the segments to local MIDDAY today so they never cross
+        // a day boundary (a session that did would correctly bucket to its start
+        // day) — keeps the per-day assertions deterministic at any run time.
+        let midday = day_floor_ms(now_ms()) + 12 * 60 * 60_000;
+        insert_pomodoro_session(&c, Some(&sid), "work", midday, midday + 25 * 60_000).unwrap();
+        insert_pomodoro_session(&c, Some(&sid), "app", midday, midday + 10 * 60_000).unwrap();
         // A break segment must NOT count toward study minutes.
-        insert_pomodoro_session(&c, Some(&sid), "break", now - 5 * 60_000, now).unwrap();
+        insert_pomodoro_session(&c, Some(&sid), "break", midday, midday + 5 * 60_000).unwrap();
         record_attempt(&c, &sid, None, "quiz", 0, "Q1", true).unwrap();
         record_attempt(&c, &sid, None, "quiz", 1, "Q2", false).unwrap();
 
@@ -2952,6 +2971,14 @@ mod tests {
         // 30-day window of contiguous days, today is the last bucket.
         assert_eq!(s.minutes_per_day.len(), 30);
         assert_eq!(s.minutes_per_day.last().unwrap().minutes, 35, "work + app, no break");
+        // The heatmap series always spans a full year, today last, same minutes.
+        assert_eq!(s.year_minutes.len(), 366);
+        assert_eq!(s.year_minutes.last().unwrap().minutes, 35, "today's bucket");
+        assert_eq!(
+            s.year_minutes.last().unwrap().day,
+            s.minutes_per_day.last().unwrap().day,
+            "both series end on today"
+        );
         assert_eq!(s.minutes_week, 35);
         assert_eq!(s.reviews_week, 2);
         assert!((s.accuracy_week - 0.5).abs() < 1e-9, "1 of 2 correct");

@@ -717,6 +717,8 @@ export interface WeakTopic {
 }
 export interface AnalyticsSummary {
   minutes_per_day: DayMinutes[];
+  /** A full rolling year (366 days) of daily study minutes for the heatmap. */
+  year_minutes: DayMinutes[];
   reviews_per_day: DayReviews[];
   due_forecast: DueDay[];
   per_subject: SubjectStat[];

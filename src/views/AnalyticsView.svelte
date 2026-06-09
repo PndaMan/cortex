@@ -52,26 +52,107 @@
     const [y, m, d] = iso.split("-").map(Number);
     return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "short" });
   }
-  function dayNum(iso: string): string {
-    return String(Number(iso.split("-")[2]));
+
+  // ── focus-hours contributions heatmap (GitHub-style; pure CSS grid) ──
+  // The backend hands us a full rolling year (366 days, oldest → newest, gaps
+  // already filled with 0). We bucket it into week-columns of 7 day-rows
+  // (Mon–Sun), today in the last column, the first column padded so each row is
+  // a fixed weekday. No chart library — just a CSS grid of cells.
+  type Cell = { date: string; minutes: number; level: number } | null;
+  const yearDays = $derived(data?.year_minutes ?? []);
+
+  // Weekday index with Monday = 0 … Sunday = 6 (JS getDay() has Sunday = 0).
+  function mondayIdx(iso: string): number {
+    const [y, m, d] = iso.split("-").map(Number);
+    return (new Date(y, m - 1, d).getDay() + 6) % 7;
   }
 
-  // ── study-minutes bar chart geometry (pure SVG, no chart lib) ──
-  // A fixed 0..N viewBox the bars are laid out in; CSS scales it responsively.
-  const CH_W = 720;
-  const CH_H = 160;
-  const PAD_B = 22; // room for the baseline date labels
-  const days = $derived(data?.minutes_per_day ?? []);
-  const maxMinutes = $derived(Math.max(1, ...days.map((d) => d.minutes)));
-  const barGap = 3;
-  const barW = $derived(days.length ? (CH_W - barGap * (days.length - 1)) / days.length : 0);
-  function barH(min: number): number {
-    return ((CH_H - PAD_B) * min) / maxMinutes;
+  // Intensity thresholds from the user's OWN nonzero distribution (quartiles of
+  // the max), so a light user still sees 4 shades rather than one faint band.
+  const yearMax = $derived(Math.max(0, ...yearDays.map((d) => d.minutes)));
+  function levelFor(min: number): number {
+    if (min <= 0 || yearMax <= 0) return 0;
+    const q = min / yearMax;
+    if (q <= 0.25) return 1;
+    if (q <= 0.5) return 2;
+    if (q <= 0.75) return 3;
+    return 4;
   }
-  // Label only a few x-ticks (first, ~middle, last) to avoid a crowded axis.
-  function showTick(i: number): boolean {
-    const n = days.length;
-    return n > 0 && (i === 0 || i === n - 1 || i === Math.floor(n / 2));
+
+  // Build week-columns. Pad the FIRST column with leading nulls so the oldest
+  // day lands on its true weekday row (keeps Mon/Wed/Fri labels aligned).
+  const weeks = $derived.by<Cell[][]>(() => {
+    if (!yearDays.length) return [];
+    const cols: Cell[][] = [];
+    let col: Cell[] = [];
+    const firstRow = mondayIdx(yearDays[0].day);
+    for (let i = 0; i < firstRow; i++) col.push(null); // pad partial first week
+    for (const d of yearDays) {
+      col.push({ date: d.day, minutes: d.minutes, level: levelFor(d.minutes) });
+      if (col.length === 7) {
+        cols.push(col);
+        col = [];
+      }
+    }
+    if (col.length) {
+      while (col.length < 7) col.push(null); // pad trailing partial week
+      cols.push(col);
+    }
+    return cols;
+  });
+
+  // Month labels along the top: the column index where each month first appears
+  // (placed above that week so labels read like GitHub's).
+  const monthLabels = $derived.by<{ col: number; label: string }[]>(() => {
+    const out: { col: number; label: string }[] = [];
+    let lastMonth = -1;
+    weeks.forEach((wk, ci) => {
+      // Use the first real cell in the column to date the week.
+      const cell = wk.find((c) => c !== null);
+      if (!cell) return;
+      const month = Number(cell.date.split("-")[1]) - 1;
+      if (month !== lastMonth) {
+        // Skip a label crammed into the very first partial column (GitHub does too).
+        if (ci > 0 || mondayIdx(cell.date) === 0) {
+          out.push({ col: ci, label: MONTHS[month] });
+        }
+        lastMonth = month;
+      }
+    });
+    return out;
+  });
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  const yearMinutesTotal = $derived(yearDays.reduce((a, d) => a + d.minutes, 0));
+  const yearHours = $derived(yearMinutesTotal / 60);
+  const heatmapEmpty = $derived(yearDays.length > 0 && yearMinutesTotal === 0);
+
+  // Tooltip — a positioned div (not a title attr), shown on cell hover.
+  let tip = $state<{ x: number; y: number; text: string } | null>(null);
+  // "2.4h · Tue 14 May" — hours with one decimal when ≥60m, else "45m".
+  function tipLabel(c: NonNullable<Cell>): string {
+    const [y, m, d] = c.date.split("-").map(Number);
+    const dt = new Date(y, m - 1, d);
+    const when = dt.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+    const amount = c.minutes >= 60 ? `${(c.minutes / 60).toFixed(1)}h` : `${c.minutes}m`;
+    return `${amount} · ${when}`;
+  }
+  function showTip(e: MouseEvent, c: Cell) {
+    if (!c) return;
+    const cell = e.currentTarget as HTMLElement;
+    const wrap = cell.closest(".hm-card") as HTMLElement | null;
+    if (!wrap) return;
+    const cr = cell.getBoundingClientRect();
+    const wr = wrap.getBoundingClientRect();
+    // Position relative to the card so the tooltip rides horizontal scroll.
+    tip = {
+      x: cr.left - wr.left + cr.width / 2 + wrap.scrollLeft,
+      y: cr.top - wr.top - 6,
+      text: tipLabel(c),
+    };
+  }
+  function hideTip() {
+    tip = null;
   }
 
   // ── due-forecast mini bars (next 7 days) ──
@@ -87,14 +168,6 @@
       data.per_subject.length === 0 &&
       data.streak === 0
   );
-
-  // Total minutes studied across the whole window (chart caption).
-  const windowMinutes = $derived(days.reduce((a, d) => a + d.minutes, 0));
-  // When every day is zero the chart would look like a blank box — render faint
-  // baseline stubs + a hint instead so the panel never reads as empty/broken.
-  const allZeroMinutes = $derived(days.length > 0 && windowMinutes === 0);
-  // Baseline stub height (in viewBox units) for the all-zero state.
-  const STUB_H = 2;
 
   // ── topics needing the most work ──
   const weakTopics = $derived(data?.weak_topics ?? []);
@@ -146,47 +219,75 @@
         </div>
       </div>
 
-      <!-- ── daily study minutes (last 30 days) ── -->
-      <section class="an-card">
+      <!-- ── focus-hours contributions heatmap (last year) ── -->
+      <section class="an-card hm-card">
         <div class="an-card-h">
-          <h3 class="an-card-t mono">Study minutes · last 30 days</h3>
-          <span class="an-card-sub mono">{fmtMins(windowMinutes)} total</span>
+          <h3 class="an-card-t mono">Focus hours · last year</h3>
+          <span class="an-card-sub mono">{yearHours.toFixed(1)}h total</span>
         </div>
-        <div class="an-chart-wrap">
-          <svg
-            class="an-chart"
-            viewBox="0 0 {CH_W} {CH_H}"
-            preserveAspectRatio="none"
-            role="img"
-            aria-label="Daily study minutes for the last 30 days"
-          >
-            {#each days as d, i (d.day)}
-              {@const h = allZeroMinutes ? STUB_H : barH(d.minutes)}
-              {@const x = i * (barW + barGap)}
-              <rect
-                class="an-bar"
-                class:stub={allZeroMinutes}
-                x={x}
-                y={CH_H - PAD_B - h}
-                width={barW}
-                height={Math.max(STUB_H, h)}
-                rx="1.5"
-              >
-                <title>{d.day}: {fmtMins(d.minutes)}</title>
-              </rect>
-              {#if showTick(i)}
-                <text class="an-axis" x={x + barW / 2} y={CH_H - 6} text-anchor="middle">
-                  {dayNum(d.day)}
-                </text>
-              {/if}
-            {/each}
-          </svg>
-          {#if allZeroMinutes}
-            <!-- Never show a blank box: a centered hint explains it'll fill in. -->
-            <div class="an-chart-hint">
-              No study time tracked yet — focused app time counts automatically now.
+
+        <!-- Scroll wrapper: the full year is ~53 weeks wide; if it can't fit the
+             panel it scrolls horizontally inside the card rather than the page. -->
+        <div class="hm-scroll">
+          <div class="hm-grid-wrap">
+            <!-- month labels along the top edge -->
+            <div class="hm-months">
+              {#each monthLabels as ml (ml.col)}
+                <span class="hm-month mono" style:grid-column={ml.col + 2}>{ml.label}</span>
+              {/each}
             </div>
+
+            <div class="hm-body">
+              <!-- weekday labels (Mon/Wed/Fri) down the left, faint mono -->
+              <div class="hm-wd">
+                <span class="hm-wd-l mono" style:grid-row="2">Mon</span>
+                <span class="hm-wd-l mono" style:grid-row="4">Wed</span>
+                <span class="hm-wd-l mono" style:grid-row="6">Fri</span>
+              </div>
+
+              <div class="hm-grid" role="img" aria-label="Focus hours over the last year">
+                {#each weeks as wk, ci (ci)}
+                  {#each wk as cell, ri (ri)}
+                    {#if cell}
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <div
+                        class="hm-cell"
+                        data-lvl={cell.level}
+                        style:grid-column={ci + 1}
+                        style:grid-row={ri + 1}
+                        onmouseenter={(e) => showTip(e, cell)}
+                        onmouseleave={hideTip}
+                      ></div>
+                    {:else}
+                      <div class="hm-cell hm-cell--pad" style:grid-column={ci + 1} style:grid-row={ri + 1}></div>
+                    {/if}
+                  {/each}
+                {/each}
+              </div>
+            </div>
+          </div>
+
+          {#if tip}
+            <div class="hm-tip mono" style:left="{tip.x}px" style:top="{tip.y}px">{tip.text}</div>
           {/if}
+        </div>
+
+        <!-- legend bottom-right + (when empty) the tracking hint bottom-left -->
+        <div class="hm-foot">
+          {#if heatmapEmpty}
+            <span class="hm-hint">No study time tracked yet — focused app time counts automatically now.</span>
+          {:else}
+            <span></span>
+          {/if}
+          <div class="hm-legend mono">
+            less
+            <span class="hm-cell hm-leg" data-lvl="0"></span>
+            <span class="hm-cell hm-leg" data-lvl="1"></span>
+            <span class="hm-cell hm-leg" data-lvl="2"></span>
+            <span class="hm-cell hm-leg" data-lvl="3"></span>
+            <span class="hm-cell hm-leg" data-lvl="4"></span>
+            more
+          </div>
         </div>
       </section>
 
@@ -404,45 +505,135 @@
     color: var(--fg-faint);
   }
 
-  /* ── study-minutes bar chart ── */
-  .an-chart-wrap {
+  /* ── focus-hours contributions heatmap ── */
+  /* Cell sizing — kept as custom props so cells, gaps and label tracks stay in
+     lockstep (the weekday-label rows must match the grid rows exactly). */
+  .hm-card {
+    --hm-cell: 11px;
+    --hm-gap: 3px;
+    --hm-wd: 26px; /* width of the weekday-label gutter */
+  }
+  /* The grid can be ~53 weeks wide; scroll inside the card, never the page. */
+  .hm-scroll {
     position: relative;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
   }
-  .an-chart {
-    display: block;
-    width: 100%;
-    height: 160px;
+  .hm-scroll::-webkit-scrollbar {
+    height: 7px;
   }
-  .an-bar {
-    fill: var(--accent);
-    opacity: 0.78;
-    transition: opacity var(--dur-fast) var(--ease);
+  .hm-scroll::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: var(--rad-pill);
   }
-  .an-bar:hover {
-    opacity: 1;
+  .hm-grid-wrap {
+    /* Just wide enough for the whole year so the scroll wrapper can pan it. */
+    width: max-content;
   }
-  /* All-zero days: faint baseline stubs so the chart still reads as a chart. */
-  .an-bar.stub {
-    fill: var(--surface-2);
-    opacity: 1;
+
+  /* month labels: a single-row grid whose columns mirror the heatmap columns,
+     offset by 1 to clear the weekday gutter. */
+  .hm-months {
+    display: grid;
+    grid-auto-columns: calc(var(--hm-cell) + var(--hm-gap));
+    grid-auto-flow: column;
+    margin-left: var(--hm-wd);
+    height: 15px;
   }
-  .an-axis {
-    fill: var(--fg-faint);
-    font-family: var(--font-mono);
-    font-size: 11px;
+  .hm-month {
+    font-size: var(--t-2xs);
+    color: var(--fg-faint);
+    white-space: nowrap;
   }
-  /* Centered hint shown over the faint baseline when nothing's been tracked. */
-  .an-chart-hint {
+
+  .hm-body {
+    display: flex;
+    gap: 0;
+  }
+  /* weekday labels aligned to grid rows via a matching 7-row grid */
+  .hm-wd {
+    display: grid;
+    grid-template-rows: repeat(7, var(--hm-cell));
+    grid-auto-flow: row;
+    gap: var(--hm-gap);
+    width: var(--hm-wd);
+    padding-right: 4px;
+  }
+  .hm-wd-l {
+    font-size: var(--t-2xs);
+    color: var(--fg-faint);
+    line-height: var(--hm-cell);
+    align-self: center;
+  }
+
+  .hm-grid {
+    display: grid;
+    grid-auto-flow: column;
+    grid-template-rows: repeat(7, var(--hm-cell));
+    grid-auto-columns: var(--hm-cell);
+    gap: var(--hm-gap);
+  }
+  .hm-cell {
+    width: var(--hm-cell);
+    height: var(--hm-cell);
+    border-radius: 2px;
+    background: var(--surface-2);
+    transition: outline-color var(--dur-fast) var(--ease);
+    outline: 1px solid transparent;
+  }
+  .hm-cell[data-lvl="1"] { background: color-mix(in oklab, var(--accent) 25%, var(--surface-2)); }
+  .hm-cell[data-lvl="2"] { background: color-mix(in oklab, var(--accent) 50%, var(--surface-2)); }
+  .hm-cell[data-lvl="3"] { background: color-mix(in oklab, var(--accent) 75%, var(--surface-2)); }
+  .hm-cell[data-lvl="4"] { background: var(--accent); }
+  .hm-cell:not(.hm-cell--pad):hover {
+    outline-color: var(--fg-muted);
+  }
+  .hm-cell--pad {
+    background: transparent;
+  }
+
+  /* tooltip: positioned div anchored to the card (rides horizontal scroll) */
+  .hm-tip {
     position: absolute;
-    inset: 0;
+    transform: translate(-50%, -100%);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--rad-2);
+    padding: 4px 8px;
+    font-size: var(--t-2xs);
+    color: var(--fg-bright);
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: var(--shadow-pop, 0 4px 14px rgba(0, 0, 0, 0.3));
+    z-index: 5;
+  }
+
+  .hm-foot {
     display: flex;
     align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 0 24px;
-    font-size: var(--t-sm);
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .hm-hint {
+    font-size: var(--t-2xs);
     color: var(--fg-faint);
-    pointer-events: none;
+  }
+  .hm-legend {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: var(--t-2xs);
+    color: var(--fg-faint);
+    margin-left: auto;
+  }
+  .hm-leg {
+    /* legend swatches are independent of the grid sizing vars */
+    width: 11px;
+    height: 11px;
   }
 
   /* ── due forecast (7 mini columns) ── */

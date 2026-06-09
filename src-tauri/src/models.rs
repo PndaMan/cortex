@@ -524,6 +524,10 @@ pub struct FsrsTotals {
 pub struct AnalyticsSummary {
     /// Per-day study minutes for the window (oldest → newest, gaps filled with 0).
     pub minutes_per_day: Vec<DayMinutes>,
+    /// A full rolling year (366 days) of daily study minutes, oldest → newest,
+    /// gaps filled with 0 — drives the GitHub-style contributions heatmap.
+    /// Always a year regardless of the `days` window param.
+    pub year_minutes: Vec<DayMinutes>,
     /// Per-day reviews + accuracy for the window (oldest → newest, gaps filled).
     pub reviews_per_day: Vec<DayReviews>,
     /// Cards due each of the next 7 days (today → today+6, gaps filled with 0).
