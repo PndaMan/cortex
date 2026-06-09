@@ -47,8 +47,10 @@
       ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
       : undefined;
   const liveTranscriptSupported = !!SR;
-  let liveTranscriptOn = $state(true); // user-facing toggle for the live transcript panel (default on)
-  let transcriptCollapsed = $state(false); // collapse the whole panel to reclaim width
+  // One state drives both visibility AND the engine: closed panel = no live
+  // transcription work, open panel = transcribing. Closed by default.
+  let transcriptCollapsed = $state(true);
+  const liveTranscriptOn = $derived(!transcriptCollapsed);
   let liveFinal = $state(""); // accumulated final results
   let liveInterim = $state(""); // current in-flight (unstable) chunk
 
@@ -506,11 +508,11 @@
     }
   }
 
-  // React to the user toggling the live transcript on/off while recording.
-  function toggleLiveTranscript() {
-    liveTranscriptOn = !liveTranscriptOn;
+  // Open/close the transcript panel; the live engines follow the panel state.
+  function toggleTranscriptPanel() {
+    transcriptCollapsed = !transcriptCollapsed;
     if (!recording) return;
-    if (liveTranscriptOn) {
+    if (!transcriptCollapsed) {
       if (!paused) startRecognition();
       startBackendPoll();
     } else {
@@ -673,7 +675,7 @@
       else if (e.key === "Enter" && recording) { e.preventDefault(); stop(); }
       else if (e.key === "m") { e.preventDefault(); tagMoment(); }
       // "t" collapses / reopens the live transcript panel (recorder-local only).
-      else if (e.key.toLowerCase() === "t") { e.preventDefault(); transcriptCollapsed = !transcriptCollapsed; }
+      else if (e.key.toLowerCase() === "t") { e.preventDefault(); toggleTranscriptPanel(); }
       else if (e.key === "Escape") cancel();
     }
     window.addEventListener("keydown", onKey);
@@ -827,20 +829,8 @@
       {:else if live && liveTranscriptOn}
         <span class="status-pill status-pill--draft"><span class="dot dot--pulse"></span>listening</span>
       {/if}
-      <!-- Toggleable: turns the live transcript panel on/off. Default on. -->
-      <button
-        type="button"
-        class="rt-toggle"
-        class:is-on={liveTranscriptOn}
-        role="switch"
-        aria-checked={liveTranscriptOn}
-        title="Toggle live transcript"
-        onclick={toggleLiveTranscript}
-      >
-        <span class="rt-toggle-track"><span class="rt-toggle-knob"></span></span>
-      </button>
-      <!-- Collapse the whole panel to give the recorder full width. "t" toggles it. -->
-      <button class="btn btn--icon btn--sm btn--ghost rt-collapse" title="Collapse transcript (t)" onclick={() => (transcriptCollapsed = true)}>
+      <!-- Closing the panel also stops live transcription; "t" toggles it. -->
+      <button class="btn btn--icon btn--sm btn--ghost rt-collapse" title="Close transcript (t)" onclick={toggleTranscriptPanel}>
         <Icon name="chevron" size={13} />
       </button>
       <span class="kbd rt-kbd" title="Press t to toggle">t</span>
@@ -853,11 +843,6 @@
         {:else if liveBackendText.trim()}
           <p class="rt-live read rt-live--dim">{liveBackendText}</p>
         {/if}
-      {:else if recording && !liveTranscriptOn}
-        <!-- User switched the live transcript off. -->
-        <div class="rt-note mono faint">
-          Live transcript is off. Flip the switch above to see your words as you speak — the full transcript is still saved when you stop.
-        </div>
       {:else if recording && liveTranscriptSupported}
         <!-- Real-time path: browser SpeechRecognition (final + interim). -->
         {#if hasLiveTranscript}
@@ -884,7 +869,7 @@
       {:else}
         <div class="rt-empty mono faint">
           Hit record to capture a lecture. On stop, Cortex transcribes it with Whisper and saves it as a searchable source.
-          A live transcript appears here while you record — toggle it with <span class="kbd">t</span> or the switch above.
+          A live transcript appears here while you record — close it with <span class="kbd">t</span>; closed means transcription is off until you reopen it.
         </div>
       {/if}
     </div>
@@ -892,9 +877,9 @@
   </aside>
 
   {#if transcriptCollapsed}
-    <button class="rt-reopen mono" title="Show live transcript" onclick={() => (transcriptCollapsed = false)}>
+    <button class="rt-reopen mono" title="Open live transcript (t)" onclick={toggleTranscriptPanel}>
       <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={13} /></span>
-      <span class="rt-reopen-label">LIVE TRANSCRIPT</span>
+      <span class="kbd rt-kbd">t</span>
     </button>
   {/if}
 </div>
@@ -1016,46 +1001,6 @@
     color: var(--fg-muted); cursor: pointer; font-size: var(--t-xs); letter-spacing: 0.08em;
   }
   .rt-reopen:hover { color: var(--fg-bright); border-color: var(--accent-dim); }
-  .rt-reopen-label { writing-mode: vertical-rl; }
-
-  /* ---- toggle switch in the transcript header ---- */
-  .rt-toggle {
-    flex: none;
-    margin-left: 10px;
-    padding: 0;
-    border: 0;
-    background: none;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-  }
-  .rt-toggle-track {
-    width: 30px;
-    height: 17px;
-    border-radius: var(--rad-pill);
-    background: var(--surface-2);
-    border: 1px solid var(--border-strong);
-    position: relative;
-    transition: background var(--dur), border-color var(--dur);
-  }
-  .rt-toggle-knob {
-    position: absolute;
-    top: 1px;
-    left: 1px;
-    width: 13px;
-    height: 13px;
-    border-radius: 50%;
-    background: var(--fg-muted);
-    transition: transform var(--dur), background var(--dur);
-  }
-  .rt-toggle.is-on .rt-toggle-track {
-    background: color-mix(in oklab, var(--accent) 45%, transparent);
-    border-color: color-mix(in oklab, var(--accent) 60%, var(--border-strong));
-  }
-  .rt-toggle.is-on .rt-toggle-knob {
-    transform: translateX(13px);
-    background: var(--accent);
-  }
 
   /* ─────────── review & save step ─────────── */
   .rev-wrap {
