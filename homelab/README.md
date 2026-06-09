@@ -70,3 +70,37 @@ Then use the `https://…` URLs in Cortex. If you expose SearXNG publicly, also 
   chat model like `llama3.1`.
 - **SearXNG JSON** is pre-enabled in `searxng/settings.yml` — without it Cortex
   gets a 403.
+
+## Deploying on a homelab host (agent-ready checklist)
+
+Everything needed is this directory — copy it to the host and run it there:
+
+```bash
+# on the homelab host (needs docker + the compose plugin)
+scp -r homelab/ <host>:~/cortex-homelab && ssh <host>
+cd ~/cortex-homelab
+sed -i "s/change-me-openssl-rand-hex-32/$(openssl rand -hex 32)/" searxng/settings.yml
+sed -i "s/change-me-sync-password/<a-real-password>/" docker-compose.yml
+docker compose up -d                    # SearXNG + Whisper + Sync
+docker compose --profile ollama up -d   # …plus Ollama, if wanted
+```
+
+Verify from any machine on the same VPN/LAN:
+
+```bash
+curl -s 'http://<host>:8080/search?q=test&format=json' | head -c 200   # SearXNG (must NOT be a 403)
+curl -s http://<host>:9009/v1/models                                    # Whisper
+curl -su cortex:<password> -X PROPFIND http://<host>:9010/              # WebDAV sync
+```
+
+Then in Cortex → Settings → Integrations set: SearXNG `http://<host>:8080`,
+remote transcription `http://<host>:9009`, live sync `http://<host>:9010` with the
+WebDAV credentials. Keep it reachable only over your VPN (Tailscale/Netbird/
+WireGuard) or behind a TLS reverse proxy — never bare on the internet.
+
+To trial the stack on a workstation first without exposing anything on the LAN,
+`docker-compose.local.yml` overrides every port to 127.0.0.1:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+```
