@@ -149,9 +149,10 @@
 .subj-tabs { display: flex; align-items: center; gap: 3px; height: 50px; padding: 0 14px; border-bottom: 1px solid var(--border); flex: none; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
 .subj-tabs::-webkit-scrollbar { height: 0; width: 0; display: none; }
 .subj-tab { flex: none; }
-.st-id { display: flex; align-items: center; gap: 10px; padding-right: 14px; margin-right: 6px; border-right: 1px solid var(--border); }
-.st-name { font-size: var(--t-md); color: var(--fg-bright); font-weight: 600; }
-.st-code { font-size: var(--t-2xs); color: var(--fg-faint); }
+.st-id { display: flex; align-items: center; gap: 10px; padding-right: 14px; margin-right: 6px; border-right: 1px solid var(--border); flex: none; min-width: 0; max-width: 46vw; }
+.st-id > div { min-width: 0; }
+.st-name { font-size: var(--t-md); color: var(--fg-bright); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-code { font-size: var(--t-2xs); color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subj-tab { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px; border: none; background: none; color: var(--fg-muted); border-radius: var(--rad-2); cursor: pointer; font-size: var(--t-sm); position: relative; }
 .subj-tab:hover { background: var(--surface-2); color: var(--fg-bright); }
 .subj-tab.on { background: var(--surface-3); color: var(--fg-bright); }
@@ -181,7 +182,12 @@
 .recent-chat span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .sources-page { max-width: 960px; margin: 0 auto; padding: var(--sp-6) var(--sp-7) var(--sp-8); }
-.sources-toolbar { display: flex; align-items: center; gap: 9px; margin-bottom: var(--sp-5); }
+.sources-toolbar { display: flex; align-items: center; gap: 9px; margin-bottom: var(--sp-5); flex-wrap: wrap; }
+/* The leading caption shrinks/ellipsizes so the action buttons stay intact and
+   never overflow; once it can't, the whole toolbar wraps cleanly (gap keeps the
+   rhythm). Buttons never shrink/clip their labels. */
+.sources-toolbar > .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sources-toolbar > .btn { flex: none; }
 .src-topic { margin-bottom: var(--sp-6); }
 .src-topic-h { display: flex; align-items: center; gap: 7px; font-size: var(--t-sm); color: var(--fg-bright); font-weight: 500; margin-bottom: 11px; }
 .src-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 9px; }
@@ -450,22 +456,25 @@
 @keyframes chatSlide { from { transform: translateX(28px); } }
 .app-shell.compact .chat-backdrop { display: block; position: absolute; inset: 0; z-index: 58; background: color-mix(in oklab, var(--bg-sunken) 45%, transparent); }
 
-/* TIGHT: sidebar becomes a slide-in drawer */
-.app-shell.tight { grid-template-columns: 0 1fr; }
-.app-shell.tight .app-main { grid-column: 1 / -1; }
-.app-shell.tight .sidebar {
+/* DRAWER: sidebar becomes a slide-in overlay (whole sub-1080 band). The grid
+   collapses its rail column to 0 so the workspace owns the full width — this is
+   what stops the 760-1080 squash; the sidebar overlays on demand instead of
+   permanently stealing 248px. */
+.app-shell.drawer { grid-template-columns: 0 1fr; }
+.app-shell.drawer .app-main { grid-column: 1 / -1; }
+.app-shell.drawer .sidebar {
   position: fixed; left: 0; top: 0; bottom: 0; width: 256px; z-index: 74;
   transform: translateX(-101%); transition: transform var(--dur-slow) var(--ease);
   box-shadow: 14px 0 40px rgba(0,0,0,0.5);
 }
-.app-shell.tight.nav-open .sidebar { transform: translateX(0); }
-.app-shell.tight .nav-toggle { display: inline-flex; }
-.app-shell.tight.nav-open .nav-backdrop { display: block; position: fixed; inset: 0; z-index: 73; background: color-mix(in oklab, var(--bg-sunken) 55%, transparent); border: 0; padding: 0; cursor: default; }
+.app-shell.drawer.nav-open .sidebar { transform: translateX(0); }
+.app-shell.drawer .nav-toggle { display: inline-flex; }
+.app-shell.drawer.nav-open .nav-backdrop { display: block; position: fixed; inset: 0; z-index: 73; background: color-mix(in oklab, var(--bg-sunken) 55%, transparent); border: 0; padding: 0; cursor: default; }
 /* give headers room for the hamburger */
-.app-shell.tight .subj-tabs { padding-left: 50px; }
-.app-shell.tight .sv-head { padding-left: 50px; }
-.app-shell.tight .dash { padding-left: 56px; }
-.app-shell.tight .rec-stage { padding-top: 54px; }
+.app-shell.drawer .subj-tabs { padding-left: 50px; }
+.app-shell.drawer .sv-head { padding-left: 50px; }
+.app-shell.drawer .dash { padding-left: 56px; }
+.app-shell.drawer .rec-stage { padding-top: 54px; }
 
 /* very tight: collapse cheatsheet rail and single-column items */
 @media (max-width: 720px) {
@@ -998,6 +1007,12 @@ body.reorder-active, body.reorder-active * { cursor: grabbing !important; user-s
    window narrows tightens the whole app together — content stops getting cut off
    or squished instead of each screen needing its own rule. Pairs with the .tight
    (drawer) and .compact (chat overlay) shell modes wired in App.svelte. */
+/* 1080 is where the sidebar becomes a drawer; step the big paddings down one
+   notch so the freed width turns into breathing room, not a wide gutter. The
+   >1080 desktop look is untouched. */
+@media (max-width: 1080px) {
+  :root { --sp-7: 28px; --sp-8: 32px; --sp-9: 40px; --sp-10: 52px; }
+}
 @media (max-width: 900px) {
   :root { --sp-7: 24px; --sp-8: 28px; --sp-9: 36px; --sp-10: 44px; }
 }

@@ -98,11 +98,17 @@
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   });
+  // Below 1080 the sidebar becomes a slide-in drawer (overlay, never pushes the
+  // workspace) so the content always has the full width to itself — that kills
+  // the 760-1080 "squash" where a fixed 248px rail + workspace both fought for
+  // ~900px. `tight` (<760) keeps its phone tweaks; `drawer` is the shared
+  // hamburger+overlay sidebar mode for the whole sub-1080 band.
   const tight = $derived(vw < 760);
+  const drawer = $derived(vw < 1080);
   const compact = $derived(vw < 1080);
   let navOpen = $state(false);
-  // Close the drawer when leaving tight mode or when navigating anywhere.
-  $effect(() => { if (!tight) navOpen = false; });
+  // Close the drawer when leaving drawer mode or when navigating anywhere.
+  $effect(() => { if (!drawer) navOpen = false; });
   $effect(() => { void app.view; void app.activeSubjectId; void app.subjectTab; navOpen = false; });
 
   // ---- view back-stack: Esc goes back to the previous page ----
@@ -283,12 +289,13 @@
   <div
     class="app-shell"
     class:tight
+    class:drawer
     class:compact
     class:nav-open={navOpen}
     style:--sb-w={app.sidebarCollapsed ? "0px" : "248px"}
   >
-    {#if tight}
-      <!-- Mobile: hamburger toggles the slide-in sidebar drawer. -->
+    {#if drawer}
+      <!-- Sub-1080: hamburger toggles the slide-in sidebar drawer (overlay). -->
       <button class="nav-toggle" onclick={() => (navOpen = !navOpen)} aria-label="Toggle menu">
         <Icon name="grid" size={16} />
       </button>

@@ -536,7 +536,7 @@
   .exam-step-v { min-width: 36px; text-align: center; color: var(--fg-bright); }
 
   /* Primary action + summary row, like GenerateMaterial's footer. */
-  .exam-cta { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-7); }
+  .exam-cta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-3); margin-bottom: var(--sp-7); }
 
   /* Past-exam rows: clickable Settings rows. */
   .exam-past { cursor: pointer; }
@@ -580,6 +580,7 @@
   /* Results stat cards (replicates AnalyticsView's an-stat, which is scoped there). */
   .exam-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-4); margin-bottom: var(--sp-5); }
   @media (max-width: 760px) { .exam-stats { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .exam-stats { grid-template-columns: 1fr; } }
   .exam-stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--rad-3); padding: 14px 16px; }
   .exam-stat-k { font-size: var(--t-2xs); letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-faint); }
   .exam-stat-v { margin-top: 8px; font-size: var(--r-xl); font-weight: 600; color: var(--fg-bright); font-variant-numeric: tabular-nums; }

@@ -449,10 +449,12 @@
     grid-template-columns: repeat(4, 1fr);
     gap: var(--sp-4);
   }
-  @media (max-width: 760px) {
-    .an-stats {
-      grid-template-columns: repeat(2, 1fr);
-    }
+  /* Reflow 4→2 under ~1000px, 2→1 under ~560px — same cards, never crushed. */
+  @media (max-width: 1000px) {
+    .an-stats { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 560px) {
+    .an-stats { grid-template-columns: 1fr; }
   }
   .an-stat {
     background: var(--surface);
