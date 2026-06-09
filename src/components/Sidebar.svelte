@@ -164,7 +164,7 @@
       tabindex="0"
       onkeydown={(e) => e.key === "Enter" && app.setView("analytics")}
     >
-      <Icon name="chart" size={14} /> Insights
+      <Icon name="chart" size={14} /> Insights <span class="nav-k">␣ i</span>
     </div>
 
     <!-- Subjects section header -->
