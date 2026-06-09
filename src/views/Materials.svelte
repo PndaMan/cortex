@@ -153,6 +153,38 @@
       app.pushToast({ kind: "error", title: "Anki export failed", body: String(err) });
     }
   }
+
+  // Import an Anki .apkg into this subject as flashcard material(s) via a native
+  // open dialog. Lives here (not in the Flashcards player) because this view owns
+  // the deck list + reload, and mirrors the per-card export affordance above.
+  let importing = $state(false);
+  async function importAnki() {
+    const sub = app.activeSubject;
+    if (!sub) { app.pushToast({ kind: "warning", title: "Select a subject first" }); return; }
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const picked = await open({
+        multiple: false,
+        filters: [{ name: "Anki deck", extensions: ["apkg"] }],
+      });
+      const path = Array.isArray(picked) ? picked[0] : picked;
+      if (!path) return;
+      importing = true;
+      const r = await api.importAnki(sub.id, path);
+      const decks = `${r.deck_count} deck${r.deck_count !== 1 ? "s" : ""}`;
+      const cards = `${r.card_count} card${r.card_count !== 1 ? "s" : ""}`;
+      app.pushToast(
+        r.skipped > 0
+          ? { kind: "warning", title: "Imported with skips", body: `${cards} across ${decks} · ${r.skipped} duplicate${r.skipped !== 1 ? "s" : ""} skipped` }
+          : { kind: "success", title: "Imported from Anki", body: `${cards} across ${decks}` }
+      );
+      loadMaterials(sub.id);
+    } catch (err) {
+      app.pushToast({ kind: "error", title: "Anki import failed", body: String(err) });
+    } finally {
+      importing = false;
+    }
+  }
 </script>
 
 {#if matLaunch}
@@ -197,6 +229,14 @@
       <div class="sources-toolbar">
         <span class="label">{materials.length} materials · generated from this subject</span>
         <div class="grow"></div>
+        <button
+          class="btn btn--sm"
+          onclick={importAnki}
+          disabled={importing}
+          title="Import an Anki .apkg deck as flashcards"
+        >
+          <Icon name="upload" size={12} /> {importing ? "Importing…" : "Import Anki"}
+        </button>
         <button
           class="btn btn--sm"
           onclick={() => app.setView("exam")}

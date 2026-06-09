@@ -1383,6 +1383,118 @@ pub async fn export_anki(app: AppHandle, material_id: String, dest: String) -> R
     .map_err(|e| Error::Other(format!("anki export task failed: {e}")))?
 }
 
+/// Import an Anki `.apkg` deck file into this subject as flashcard materials —
+/// one material per Anki deck. Cards are HTML-stripped to plain text, deduped
+/// within the import AND against existing flashcard decks in this subject (by
+/// normalized front), then stored in the exact `[{ "q": front, "a": back }]`
+/// payload shape the Flashcards view renders. Returns a small summary.
+#[tauri::command]
+pub async fn import_anki(
+    app: AppHandle,
+    subject_id: String,
+    topic_id: Option<String>,
+    path: String,
+) -> Result<AnkiImportResult> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<AnkiImportResult> {
+        let state = app.state::<AppState>();
+
+        // Parse the archive off the DB lock (zip + sqlite read can be slow).
+        let decks = crate::anki::import_apkg(std::path::Path::new(&path))?;
+        if decks.is_empty() {
+            return Err(Error::Other(
+                "no flashcards found in this .apkg (no decks with usable cards)".into(),
+            ));
+        }
+
+        // Gather every existing flashcard front already in this subject so we don't
+        // re-import duplicates the user already has. Built once, under one lock.
+        let mut existing_fronts: std::collections::HashSet<String> = std::collections::HashSet::new();
+        {
+            let c = state.db.lock().unwrap();
+            for m in repo::list_materials(&c, &subject_id)? {
+                if m.kind != "flashcards" {
+                    continue;
+                }
+                for card in m.payload.as_array().into_iter().flatten() {
+                    if let Some(q) = card["q"].as_str() {
+                        let q = q.trim();
+                        if !q.is_empty() {
+                            existing_fronts.insert(crate::anki::dedupe_key(q));
+                        }
+                    }
+                }
+            }
+        }
+
+        // The stem of the imported file — a fallback deck title when Anki's deck
+        // name is the generic "Default" or empty.
+        let stem = std::path::Path::new(&path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Imported deck")
+            .to_string();
+
+        let mut deck_count = 0usize;
+        let mut card_count = 0usize;
+        let mut skipped = 0usize;
+
+        for deck in decks {
+            // Drop cards whose front already exists in this subject (cross-deck
+            // dedupe). Within-deck dedupe already happened in import_apkg.
+            let mut cards: Vec<serde_json::Value> = Vec::new();
+            for card in &deck.cards {
+                if !existing_fronts.insert(crate::anki::dedupe_key(&card.front)) {
+                    skipped += 1;
+                    continue;
+                }
+                cards.push(serde_json::json!({ "q": card.front, "a": card.back }));
+            }
+            if cards.is_empty() {
+                continue; // every card was a duplicate — no material to create
+            }
+
+            // A "Default"/blank Anki deck name carries no meaning; use the filename.
+            let title = if deck.name.trim().is_empty() || deck.name.trim() == "Default" {
+                stem.clone()
+            } else {
+                deck.name.trim().to_string()
+            };
+            let n = cards.len();
+            let meta = format!("{n} cards · imported from Anki");
+            let payload = serde_json::Value::Array(cards);
+
+            {
+                let c = state.db.lock().unwrap();
+                repo::save_material(
+                    &c,
+                    &subject_id,
+                    topic_id.as_deref(),
+                    "flashcards",
+                    &title,
+                    &meta,
+                    &payload,
+                )?;
+            }
+            deck_count += 1;
+            card_count += n;
+        }
+
+        if card_count == 0 {
+            return Err(Error::Other(
+                "every card in this .apkg already exists in this subject".into(),
+            ));
+        }
+
+        Ok(AnkiImportResult {
+            deck_count,
+            card_count,
+            skipped,
+        })
+    })
+    .await
+    .map_err(|e| Error::Other(format!("anki import task failed: {e}")))?
+}
+
 /// MAP step: turn ONE source into an exhaustive, compact study digest so a bucket
 /// with many sources can be reduced into a single cheatsheet without overflowing
 /// the model window — and so every source is guaranteed to be represented.

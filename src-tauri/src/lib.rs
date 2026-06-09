@@ -205,6 +205,7 @@ pub fn run() {
             commands::export_pdf,
             commands::export_database,
             commands::export_anki,
+            commands::import_anki,
             backup::backup_status,
             backup::backup_now,
             commands::optimize_db,

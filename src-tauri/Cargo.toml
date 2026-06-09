@@ -27,6 +27,11 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip", "multipart"] }
+# Read Anki `.apkg` archives on import (an apkg is a ZIP holding a SQLite
+# collection). Pure-Rust deflate only — no system zlib, no extra C deps. The
+# export path hand-rolls a STORED zip writer; reading needs real unzip, hence
+# this crate (default features off keeps bzip2/zstd/AES out of the build).
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
