@@ -6,6 +6,8 @@
   "permissions": [
     "core:default",
     "core:event:default",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
     "dialog:default",
     "dialog:allow-open",
     "dialog:allow-save",

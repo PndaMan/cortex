@@ -33,6 +33,10 @@ libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0", features = ["v2_8"] }
+# Used to intercept Ctrl+F at the GTK level (WebKitGTK's native find steals
+# Ctrl+C/V). Versions match webkit2gtk 2.0's gtk-rs (0.18).
+gtk = "0.18"
+gdk = "0.18"
 
 [features]
 # this feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!

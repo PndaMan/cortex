@@ -1807,6 +1807,7 @@ pub async fn generate_material(
     title: Option<String>,
     custom_prompt: Option<String>,
     source_ids: Option<Vec<String>>,
+    count: Option<u32>,
 ) -> Result<MaterialRec> {
     tauri::async_runtime::spawn_blocking(move || -> Result<MaterialRec> {
     let state = app.state::<AppState>();
@@ -1861,11 +1862,20 @@ pub async fn generate_material(
         ));
     }
 
+    // How many items to generate, when the kind is count-based. The user can set
+    // this in GenerateMaterial; clamp to a sane range so a bad value can't ask the
+    // model for 0 or 500 cards.
+    let quiz_n = count.unwrap_or(9).clamp(3, 30);
+    let card_n = count.unwrap_or(14).clamp(4, 40);
+
     // Per-kind prompt + payload shape.
     let (system, default_title) = match kind.as_str() {
         "quiz" => (
-            "You generate quiz questions from study material. Output ONLY a JSON array of 8-10 \
-             items, each: {\"q\":\"question\",\"options\":[\"a\",\"b\",\"c\",\"d\"],\"answer\":<index 0-3>,\"explain\":\"why\"}. No prose.".to_string(),
+            format!(
+                "You generate quiz questions from study material. Output ONLY a JSON array of \
+                 EXACTLY {quiz_n} items, each: {{\"q\":\"question\",\"options\":[\"a\",\"b\",\"c\",\"d\"],\
+                 \"answer\":<index 0-3>,\"explain\":\"why\"}}. No prose."
+            ),
             format!("{topic_name} quiz"),
         ),
         "audio" => (
@@ -1922,10 +1932,13 @@ pub async fn generate_material(
             format!("{topic_name} — mind map"),
         ),
         _ => (
-            "You generate study flashcards from material. Output ONLY a JSON array of 12-18 items, \
-             each {\"q\":\"front\",\"a\":\"back\"}. Keep the \"a\" CONCISE (about 15-45 words) and \
-             use light Markdown where it aids recall: **bold** the key term(s), and short `- ` \
-             bullet lists for multi-part answers. No headings, no prose outside the JSON.".to_string(),
+            format!(
+                "You generate study flashcards from material. Output ONLY a JSON array of EXACTLY \
+                 {card_n} items, each {{\"q\":\"front\",\"a\":\"back\"}}. Keep the \"a\" SHORT and \
+                 punchy — ideally one tight sentence or a few words (8-25 words max); never a \
+                 paragraph. **bold** the single key term; use a short `- ` bullet list ONLY when \
+                 the answer is genuinely multi-part. No headings, no preamble, no prose outside the JSON."
+            ),
             format!("{topic_name} flashcards"),
         ),
     };
@@ -1984,6 +1997,110 @@ pub async fn generate_material(
         status: "ready".into(),
         payload,
     })
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+}
+
+#[derive(serde::Deserialize)]
+pub struct TtsSegment {
+    #[serde(default)]
+    pub speaker: String,
+    #[serde(default)]
+    pub text: String,
+}
+
+/// Turn a generated two-host podcast script into a REAL audio file (NotebookLM
+/// style) using a cloud TTS — OpenAI's `/audio/speech` with the user's two
+/// configured voices. Returns the path to the cached mp3 under `$APPDATA/
+/// audio_overviews/` (served to the webview via the asset protocol). The result
+/// is cached by material id, so re-calling is instant unless `force` is set. When
+/// there's no OpenAI key (offline), this errors and the frontend falls back to
+/// on-device speech synthesis.
+#[tauri::command]
+pub async fn synthesize_overview(
+    app: AppHandle,
+    material_id: String,
+    segments: Vec<TtsSegment>,
+    force: Option<bool>,
+) -> Result<String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String> {
+        let state = app.state::<AppState>();
+        let dir = app
+            .path()
+            .app_data_dir()
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join("audio_overviews");
+        std::fs::create_dir_all(&dir).ok();
+        let out = dir.join(format!("{material_id}.mp3"));
+        if !force.unwrap_or(false) && out.exists() {
+            return Ok(out.to_string_lossy().to_string());
+        }
+        if segments.is_empty() {
+            return Err(Error::Other("No script segments to synthesize.".into()));
+        }
+        // OpenAI key + the two voices (sensible OpenAI-voice defaults).
+        let (key, voice_a, voice_b) = {
+            let c = state.db.lock().unwrap();
+            let key = read_keys(&c)?
+                .openai
+                .filter(|k| !k.trim().is_empty())
+                .ok_or_else(|| {
+                    Error::Other(
+                        "Add an OpenAI API key in Settings to generate real audio (offline mode uses on-device voices)."
+                            .into(),
+                    )
+                })?;
+            let va = repo::get_setting(&c, "tts_voice_a")?.unwrap_or_else(|| "alloy".into());
+            let vb = repo::get_setting(&c, "tts_voice_b")?.unwrap_or_else(|| "onyx".into());
+            (key, va, vb)
+        };
+        let client = http_client(180);
+        // First distinct speaker → voice_a, the other → voice_b. mp3 frames
+        // concatenate cleanly enough for sequential playback in the webview.
+        let mut audio: Vec<u8> = Vec::new();
+        let mut first: Option<String> = None;
+        for seg in &segments {
+            let text = seg.text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            let spk = seg.speaker.trim().to_lowercase();
+            let voice = match &first {
+                None => {
+                    first = Some(spk.clone());
+                    voice_a.clone()
+                }
+                Some(f) if *f == spk => voice_a.clone(),
+                _ => voice_b.clone(),
+            };
+            let body = serde_json::json!({
+                "model": "tts-1",
+                "voice": voice,
+                "input": text,
+                "response_format": "mp3",
+            });
+            let resp = client
+                .post("https://api.openai.com/v1/audio/speech")
+                .header("Authorization", format!("Bearer {}", key.trim()))
+                .json(&body)
+                .send()?;
+            if !resp.status().is_success() {
+                let code = resp.status();
+                let detail = resp.text().unwrap_or_default();
+                return Err(Error::Other(format!(
+                    "TTS request failed ({code}): {}",
+                    truncate(&detail, 200)
+                )));
+            }
+            audio.extend_from_slice(&resp.bytes()?);
+        }
+        if audio.is_empty() {
+            return Err(Error::Other("TTS produced no audio.".into()));
+        }
+        std::fs::write(&out, &audio)
+            .map_err(|e| Error::Other(format!("Could not save audio file: {e}")))?;
+        Ok(out.to_string_lossy().to_string())
     })
     .await
     .map_err(|e| Error::Other(format!("background task failed: {e}")))?
@@ -2198,9 +2315,29 @@ fn transcribe(
         Ok(py) => {
             let models_dir = data_dir.join("whisper-models");
             let _ = std::fs::create_dir_all(&models_dir);
+            // faster-whisper decodes via PyAV, whose bundled ffmpeg often can't
+            // read the browser's MediaRecorder .webm (Opus) — it throws
+            // "Invalid data found when processing input". Pre-convert to 16 kHz
+            // mono WAV with system ffmpeg when available; PyAV decodes WAV cleanly.
+            let wav = outdir.join("fw.wav");
+            let decodable = if ingest::which("ffmpeg").is_some()
+                && Command::new("ffmpeg")
+                    .args(["-y", "-i"])
+                    .arg(file)
+                    .args(["-ar", "16000", "-ac", "1"])
+                    .arg(&wav)
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+                && wav.is_file()
+            {
+                wav.clone()
+            } else {
+                file.to_path_buf()
+            };
             // argv[1] = audio file, argv[2] = model cache dir (model auto-downloads here)
             const RUNNER: &str = "import sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('base.en',device='cpu',compute_type='int8',download_root=sys.argv[2])\nsegs,_=m.transcribe(sys.argv[1],language='en')\nprint(' '.join(s.text.strip() for s in segs))";
-            let out = Command::new(&py).arg("-c").arg(RUNNER).arg(file).arg(&models_dir).output();
+            let out = Command::new(&py).arg("-c").arg(RUNNER).arg(&decodable).arg(&models_dir).output();
             match out {
                 Ok(o) if o.status.success() => {
                     let t = String::from_utf8_lossy(&o.stdout).trim().to_string();
@@ -2210,13 +2347,19 @@ fn transcribe(
                 Ok(o) => {
                     let err = String::from_utf8_lossy(&o.stderr);
                     eprintln!("[whisper] faster-whisper run failed: {err}");
-                    // Most run-time failures here are the one-off model download
-                    // (no network / disk) rather than a broken install.
-                    setup_detail = format!(
-                        "transcription failed — likely the model download (needs internet on \
-                         first use) or low disk. Details: {}",
-                        last_line(&err)
-                    );
+                    // Distinguish the two common runtime failures: an audio-decode
+                    // error (needs system ffmpeg to transcode the recording) vs the
+                    // one-off model download.
+                    setup_detail = if err.contains("Invalid data") || err.contains("decode_audio") {
+                        "couldn't decode the recording — install ffmpeg so Cortex can transcode it \
+                         (e.g. `sudo pacman -S ffmpeg`), then re-record".to_string()
+                    } else {
+                        format!(
+                            "transcription failed — likely the model download (needs internet on \
+                             first use) or low disk. Details: {}",
+                            last_line(&err)
+                        )
+                    };
                 }
                 Err(e) => setup_detail = format!("couldn't run the Whisper venv: {e}"),
             }

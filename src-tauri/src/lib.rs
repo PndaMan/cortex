@@ -62,6 +62,27 @@ pub fn run() {
                                 false
                             }
                         });
+
+                        // WebKitGTK's built-in find-in-page grabs Ctrl/Ctrl+F at the
+                        // GTK level — BELOW the webview's JS — so a JS capture-phase
+                        // handler can't stop it, and it steals Ctrl+C/Ctrl+V (the
+                        // user can't copy/paste). Intercept Ctrl+F here: block the
+                        // native handler and open OUR find bar via a synthetic event.
+                        // All other keys (incl. copy/paste) pass straight through.
+                        use gtk::prelude::WidgetExt;
+                        wv.connect_key_press_event(|wv: &webkit2gtk::WebView, ev: &gdk::EventKey| {
+                            let ctrl = ev.state().contains(gdk::ModifierType::CONTROL_MASK);
+                            let key = ev.keyval().name().map(|s| s.to_string()).unwrap_or_default();
+                            if ctrl && (key == "f" || key == "F") {
+                                wv.run_javascript(
+                                    "window.dispatchEvent(new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true}))",
+                                    None::<&webkit2gtk::gio::Cancellable>,
+                                    |_| {},
+                                );
+                                return gtk::glib::Propagation::Stop;
+                            }
+                            gtk::glib::Propagation::Proceed
+                        });
                     });
                 }
             }
@@ -114,6 +135,7 @@ pub fn run() {
             backup::backup_now,
             commands::optimize_db,
             commands::generate_material,
+            commands::synthesize_overview,
             commands::list_materials,
             commands::delete_material,
             commands::rename_material,

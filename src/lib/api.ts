@@ -252,8 +252,17 @@ export const generateMaterial = (
   topicId?: string,
   title?: string,
   customPrompt?: string,
-  sourceIds?: string[]
-) => invoke<MaterialRec>("generate_material", { subjectId, kind, topicId, title, customPrompt, sourceIds });
+  sourceIds?: string[],
+  count?: number
+) => invoke<MaterialRec>("generate_material", { subjectId, kind, topicId, title, customPrompt, sourceIds, count });
+/** Synthesize a real audio-overview mp3 from the script segments via cloud TTS.
+ *  Returns the file path (serve to <audio> with convertFileSrc). Errors offline /
+ *  without an OpenAI key — caller falls back to on-device speech synthesis. */
+export const synthesizeOverview = (
+  materialId: string,
+  segments: { speaker: string; text: string }[],
+  force?: boolean
+) => invoke<string>("synthesize_overview", { materialId, segments, force });
 export const listMaterials = (subjectId: string) =>
   invoke<MaterialRec[]>("list_materials", { subjectId });
 export const deleteMaterial = (id: string) => invoke<void>("delete_material", { id });
