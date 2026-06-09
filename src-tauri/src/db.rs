@@ -18,6 +18,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0011_tags.sql"),
     include_str!("../migrations/0012_cheatsheet_versions.sql"),
     include_str!("../migrations/0013_custom_stations.sql"),
+    include_str!("../migrations/0014_event_reminder_index.sql"),
 ];
 
 /// Shared application state: a single SQLite connection behind a Mutex.

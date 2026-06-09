@@ -67,18 +67,28 @@ pub struct GeminiEmbedder {
 
 impl Embedder for GeminiEmbedder {
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        // batchEmbedContents takes up to 100 contents per call — one round-trip
+        // per 100 chunks instead of one per chunk.
         let client = reqwest::blocking::Client::new();
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={}",
+            "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents?key={}",
             self.api_key
         );
         let mut out = Vec::with_capacity(texts.len());
-        for t in texts {
-            let body = serde_json::json!({
-                "model": "models/text-embedding-004",
-                "content": { "parts": [{ "text": t }] }
-            });
-            let resp = client.post(&url).json(&body).send()?;
+        for batch in texts.chunks(100) {
+            let requests: Vec<_> = batch
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "model": "models/text-embedding-004",
+                        "content": { "parts": [{ "text": t }] }
+                    })
+                })
+                .collect();
+            let resp = client
+                .post(&url)
+                .json(&serde_json::json!({ "requests": requests }))
+                .send()?;
             if !resp.status().is_success() {
                 return Err(Error::Other(format!(
                     "gemini embed failed: {}",
@@ -86,14 +96,26 @@ impl Embedder for GeminiEmbedder {
                 )));
             }
             let json: serde_json::Value = resp.json()?;
-            let vals = json["embedding"]["values"]
+            let embeddings = json["embeddings"]
                 .as_array()
-                .ok_or_else(|| Error::Other("gemini: no embedding values".into()))?;
-            out.push(
-                vals.iter()
-                    .map(|v| v.as_f64().unwrap_or(0.0) as f32)
-                    .collect(),
-            );
+                .ok_or_else(|| Error::Other("gemini: no embeddings".into()))?;
+            if embeddings.len() != batch.len() {
+                return Err(Error::Other(format!(
+                    "gemini: expected {} embeddings, got {}",
+                    batch.len(),
+                    embeddings.len()
+                )));
+            }
+            for e in embeddings {
+                let vals = e["values"]
+                    .as_array()
+                    .ok_or_else(|| Error::Other("gemini: no embedding values".into()))?;
+                out.push(
+                    vals.iter()
+                        .map(|v| v.as_f64().unwrap_or(0.0) as f32)
+                        .collect(),
+                );
+            }
         }
         Ok(out)
     }
@@ -111,9 +133,10 @@ pub struct OllamaEmbedder {
     pub model: String,
 }
 
-impl Embedder for OllamaEmbedder {
-    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let client = reqwest::blocking::Client::new();
+impl OllamaEmbedder {
+    /// Legacy one-text-per-request endpoint, kept as a fallback for Ollama
+    /// versions that predate the batched `/api/embed`.
+    fn embed_singly(&self, client: &reqwest::blocking::Client, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/api/embeddings", self.base_url.trim_end_matches('/'));
         let mut out = Vec::with_capacity(texts.len());
         for t in texts {
@@ -136,6 +159,48 @@ impl Embedder for OllamaEmbedder {
             );
         }
         Ok(out)
+    }
+}
+
+impl Embedder for OllamaEmbedder {
+    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let client = reqwest::blocking::Client::new();
+        // Batched endpoint (Ollama ≥0.1.45): all texts in one request.
+        let url = format!("{}/api/embed", self.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({ "model": self.model, "input": texts });
+        let resp = client.post(&url).json(&body).send()?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return self.embed_singly(&client, texts);
+        }
+        if !resp.status().is_success() {
+            return Err(Error::Other(format!(
+                "ollama embed failed: {}",
+                resp.status()
+            )));
+        }
+        let json: serde_json::Value = resp.json()?;
+        let embeddings = json["embeddings"]
+            .as_array()
+            .ok_or_else(|| Error::Other("ollama: no embeddings".into()))?;
+        if embeddings.len() != texts.len() {
+            return Err(Error::Other(format!(
+                "ollama: expected {} embeddings, got {}",
+                texts.len(),
+                embeddings.len()
+            )));
+        }
+        embeddings
+            .iter()
+            .map(|e| {
+                e.as_array()
+                    .map(|vals| {
+                        vals.iter()
+                            .map(|v| v.as_f64().unwrap_or(0.0) as f32)
+                            .collect::<Vec<f32>>()
+                    })
+                    .ok_or_else(|| Error::Other("ollama: bad embedding shape".into()))
+            })
+            .collect()
     }
     fn dim(&self) -> usize {
         768

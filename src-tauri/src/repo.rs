@@ -6,6 +6,7 @@ use crate::error::{Error, Result};
 use crate::models::*;
 use crate::vector::{blob_to_f32s, cosine};
 use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::HashMap;
 
 // ---- subjects ----------------------------------------------------------
 
@@ -60,45 +61,65 @@ pub fn delete_subject(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
+fn map_subject(r: &rusqlite::Row) -> rusqlite::Result<Subject> {
+    Ok(Subject {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        code: r.get(2)?,
+        glyph: r.get(3)?,
+        color: r.get(4)?,
+        status: r.get(5)?,
+        streak: r.get(6)?,
+        position: r.get(7)?,
+        source_count: 0,
+        topics: Vec::new(),
+        created_at: r.get(8)?,
+        updated_at: r.get(9)?,
+    })
+}
+
+const SUBJECT_COLS: &str =
+    "id, name, code, glyph, color, status, streak, position, created_at, updated_at";
+
 /// Full Subjects → Topics → Sources tree (what the sidebar + dashboard render).
+/// Batched: a fixed 5 queries regardless of subject/topic/source counts
+/// (previously 1 + per-subject topics + per-topic sources + per-source tags).
 pub fn list_subjects(conn: &Connection) -> Result<Vec<Subject>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, name, code, glyph, color, status, streak, position, created_at, updated_at
-         FROM subjects ORDER BY position, created_at",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok(Subject {
-            id: r.get(0)?,
-            name: r.get(1)?,
-            code: r.get(2)?,
-            glyph: r.get(3)?,
-            color: r.get(4)?,
-            status: r.get(5)?,
-            streak: r.get(6)?,
-            position: r.get(7)?,
-            source_count: 0,
-            topics: Vec::new(),
-            created_at: r.get(8)?,
-            updated_at: r.get(9)?,
-        })
-    })?;
+    let sql = format!("SELECT {SUBJECT_COLS} FROM subjects ORDER BY position, created_at");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], map_subject)?;
     let mut subjects: Vec<Subject> = rows.collect::<rusqlite::Result<_>>()?;
+
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    let mut stmt =
+        conn.prepare("SELECT subject_id, count(*) FROM sources GROUP BY subject_id")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    for row in rows {
+        let (sid, n) = row?;
+        counts.insert(sid, n);
+    }
+
+    let mut topics_by_subject = topics_grouped(conn)?;
     for s in &mut subjects {
-        s.topics = list_topics(conn, &s.id)?;
-        s.source_count = conn.query_row(
-            "SELECT count(*) FROM sources WHERE subject_id=?1",
-            params![s.id],
-            |r| r.get(0),
-        )?;
+        s.topics = topics_by_subject.remove(&s.id).unwrap_or_default();
+        s.source_count = counts.get(&s.id).copied().unwrap_or(0);
     }
     Ok(subjects)
 }
 
 pub fn get_subject(conn: &Connection, id: &str) -> Result<Subject> {
-    list_subjects(conn)?
-        .into_iter()
-        .find(|s| s.id == id)
-        .ok_or_else(|| Error::NotFound(format!("subject {id}")))
+    let sql = format!("SELECT {SUBJECT_COLS} FROM subjects WHERE id=?1");
+    let mut s = conn
+        .query_row(&sql, params![id], map_subject)
+        .optional()?
+        .ok_or_else(|| Error::NotFound(format!("subject {id}")))?;
+    s.topics = list_topics(conn, id)?;
+    s.source_count = conn.query_row(
+        "SELECT count(*) FROM sources WHERE subject_id=?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    Ok(s)
 }
 
 // ---- topics ------------------------------------------------------------
@@ -181,27 +202,80 @@ pub fn reorder_topics(conn: &Connection, subject_id: &str, ids: &[String]) -> Re
     Ok(())
 }
 
+fn map_topic(r: &rusqlite::Row) -> rusqlite::Result<Topic> {
+    Ok(Topic {
+        id: r.get(0)?,
+        subject_id: r.get(1)?,
+        name: r.get(2)?,
+        glyph: r.get(3)?,
+        position: r.get(4)?,
+        tags: text_to_tags(r.get(5)?),
+        sources: Vec::new(),
+    })
+}
+
 pub fn list_topics(conn: &Connection, subject_id: &str) -> Result<Vec<Topic>> {
     let mut stmt = conn.prepare(
         "SELECT id, subject_id, name, glyph, position, tags FROM topics
          WHERE subject_id=?1 ORDER BY position, created_at",
     )?;
-    let rows = stmt.query_map(params![subject_id], |r| {
-        Ok(Topic {
-            id: r.get(0)?,
-            subject_id: r.get(1)?,
-            name: r.get(2)?,
-            glyph: r.get(3)?,
-            position: r.get(4)?,
-            tags: text_to_tags(r.get(5)?),
-            sources: Vec::new(),
-        })
-    })?;
+    let rows = stmt.query_map(params![subject_id], map_topic)?;
     let mut topics: Vec<Topic> = rows.collect::<rusqlite::Result<_>>()?;
+
+    // All topic-filed sources of this subject in one query instead of one per topic.
+    let sql = format!(
+        "SELECT {SOURCE_COLS} FROM sources \
+         WHERE subject_id=?1 AND topic_id IS NOT NULL ORDER BY created_at"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![subject_id], map_source)?;
+    let mut by_topic = group_sources_by_topic(rows, tags_by_source(conn, Some(subject_id))?)?;
     for t in &mut topics {
-        t.sources = list_sources_for_topic(conn, &t.id)?;
+        t.sources = by_topic.remove(&t.id).unwrap_or_default();
     }
     Ok(topics)
+}
+
+/// Every subject's topics (with their sources + tags) in 3 fixed queries,
+/// grouped by subject id. Backs the sidebar tree via `list_subjects`.
+fn topics_grouped(conn: &Connection) -> Result<HashMap<String, Vec<Topic>>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, subject_id, name, glyph, position, tags FROM topics
+         ORDER BY position, created_at",
+    )?;
+    let rows = stmt.query_map([], map_topic)?;
+    let topics: Vec<Topic> = rows.collect::<rusqlite::Result<_>>()?;
+
+    let sql = format!(
+        "SELECT {SOURCE_COLS} FROM sources WHERE topic_id IS NOT NULL ORDER BY created_at"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], map_source)?;
+    let mut by_topic = group_sources_by_topic(rows, tags_by_source(conn, None)?)?;
+
+    let mut out: HashMap<String, Vec<Topic>> = HashMap::new();
+    for mut t in topics {
+        t.sources = by_topic.remove(&t.id).unwrap_or_default();
+        out.entry(t.subject_id.clone()).or_default().push(t);
+    }
+    Ok(out)
+}
+
+/// Collect mapped source rows into topic_id → sources, attaching tags from a
+/// prefetched map. Row order (created_at) is preserved within each topic.
+fn group_sources_by_topic(
+    rows: impl Iterator<Item = rusqlite::Result<Source>>,
+    mut tags: HashMap<String, Vec<String>>,
+) -> Result<HashMap<String, Vec<Source>>> {
+    let mut by_topic: HashMap<String, Vec<Source>> = HashMap::new();
+    for row in rows {
+        let mut s = row?;
+        s.tags = tags.remove(&s.id).unwrap_or_default();
+        if let Some(tid) = s.topic_id.clone() {
+            by_topic.entry(tid).or_default().push(s);
+        }
+    }
+    Ok(by_topic)
 }
 
 // ---- sources -----------------------------------------------------------
@@ -287,8 +361,9 @@ pub fn list_sources(conn: &Connection, subject_id: &str) -> Result<Vec<Source>> 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![subject_id], map_source)?;
     let mut out: Vec<Source> = rows.collect::<rusqlite::Result<_>>()?;
+    let mut tags = tags_by_source(conn, Some(subject_id))?;
     for s in &mut out {
-        s.tags = source_tags(conn, &s.id)?;
+        s.tags = tags.remove(&s.id).unwrap_or_default();
     }
     Ok(out)
 }
@@ -305,19 +380,6 @@ pub fn list_failed_sources(conn: &Connection) -> Result<Vec<Source>> {
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], map_source)?;
-    let mut out: Vec<Source> = rows.collect::<rusqlite::Result<_>>()?;
-    for s in &mut out {
-        s.tags = source_tags(conn, &s.id)?;
-    }
-    Ok(out)
-}
-
-fn list_sources_for_topic(conn: &Connection, topic_id: &str) -> Result<Vec<Source>> {
-    let sql = format!(
-        "SELECT {SOURCE_COLS} FROM sources WHERE topic_id=?1 ORDER BY created_at"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![topic_id], map_source)?;
     let mut out: Vec<Source> = rows.collect::<rusqlite::Result<_>>()?;
     for s in &mut out {
         s.tags = source_tags(conn, &s.id)?;
@@ -398,6 +460,43 @@ pub fn source_tags(conn: &Connection, source_id: &str) -> Result<Vec<String>> {
     )?;
     let rows = stmt.query_map(params![source_id], |r| r.get::<_, String>(0))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Tag names for many sources at once (source_id → sorted names), optionally
+/// restricted to one subject. One query instead of one per source.
+fn tags_by_source(
+    conn: &Connection,
+    subject_id: Option<&str>,
+) -> Result<HashMap<String, Vec<String>>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    let base = "SELECT st.source_id, t.name FROM source_tags st \
+                JOIN tags t ON t.id=st.tag_id";
+    let mut collect = |rows: &mut dyn Iterator<Item = rusqlite::Result<(String, String)>>| {
+        for row in rows {
+            let (sid, name) = row?;
+            out.entry(sid).or_default().push(name);
+        }
+        Ok::<_, Error>(())
+    };
+    match subject_id {
+        Some(sub) => {
+            let sql = format!(
+                "{base} JOIN sources s ON s.id=st.source_id \
+                 WHERE s.subject_id=?1 ORDER BY t.name"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let mut rows =
+                stmt.query_map(params![sub], |r| Ok((r.get::<_, String>(0)?, r.get(1)?)))?;
+            collect(&mut rows)?;
+        }
+        None => {
+            let sql = format!("{base} ORDER BY t.name");
+            let mut stmt = conn.prepare(&sql)?;
+            let mut rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get(1)?)))?;
+            collect(&mut rows)?;
+        }
+    }
+    Ok(out)
 }
 
 // ---- chunks ------------------------------------------------------------

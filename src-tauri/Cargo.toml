@@ -41,3 +41,9 @@ gdk = "0.18"
 [features]
 # this feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+# panic stays "unwind": a panicking command thread shouldn't kill the whole app.
+lto = "thin"
+codegen-units = 1
+strip = true
