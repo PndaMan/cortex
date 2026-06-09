@@ -105,6 +105,8 @@
     const m = Math.floor(s / 60);
     return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
   });
+  // Warn under 2 minutes, escalate to error under 1 minute.
+  const warnTime = $derived(remainingMs > 0 && remainingMs < 120_000);
   const lowTime = $derived(remainingMs > 0 && remainingMs < 60_000);
 
   function pick(qid: string, idx: number) {
@@ -211,72 +213,102 @@
   $effect(() => () => stopTimer());
 </script>
 
-<div class="exam-wrap">
+<div class="workspace-scroll">
   {#if screen === "setup"}
-    <div class="exam-setup">
-      <header class="exam-head">
-        <div>
-          <h1 class="read exam-h1">Exam mode</h1>
-          <p class="mono faint">Generate a timed exam from {app.activeSubject?.name ?? "your subject"} and grade it instantly.</p>
-        </div>
+    <!-- Setup mirrors a Settings tab: set-pane shell, set-head, set-groups + set-cards. -->
+    <div class="set-pane">
+      <header class="set-head">
+        <div class="eyebrow">Exam mode</div>
+        <h1 class="read set-title">Sit a timed exam</h1>
+        <p class="set-sub">Generate a timed MCQ + written exam from {app.activeSubject?.name ?? "your subject"} and have it graded instantly.</p>
       </header>
 
       {#if !app.activeSubject}
-        <div class="exam-empty mono muted">Open a subject to create an exam.</div>
+        <div class="set-card">
+          <div class="set-row"><div class="set-row-l"><div class="set-row-d">Open a subject to create an exam.</div></div></div>
+        </div>
       {:else}
+        <!-- Topics: small dashed tag-chip-add chips with a check when selected, like
+             Settings → Profile → "Explain with". -->
         <section class="set-group">
-          <div class="set-group-h"><h3 class="set-group-t">Topics</h3>
-            <p class="set-group-d">Leave all unselected to cover the whole subject.</p></div>
+          <div class="set-group-h">
+            <h3 class="set-group-t">Topics</h3>
+            <p class="set-group-d">Leave all unselected to cover the whole subject.</p>
+          </div>
           <div class="set-card">
-            <div class="exam-chips">
-              {#if topics.length === 0}
-                <span class="mono faint">No topics yet — the exam will use all sources.</span>
-              {:else}
-                {#each topics as t (t.id)}
-                  <button class="exam-chip mono{selTopics.includes(t.id) ? ' on' : ''}" onclick={() => toggleTopic(t.id)}>
-                    {t.name}
-                  </button>
-                {/each}
-              {/if}
+            <div class="set-row stacked">
+              <div class="set-row-r">
+                {#if topics.length === 0}
+                  <div class="set-row-d">No topics yet — the exam will use all of this subject's sources.</div>
+                {:else}
+                  <div class="tag-suggest" style="margin-top:0">
+                    {#each topics as t (t.id)}
+                      <button
+                        type="button"
+                        class={"tag-chip-add" + (selTopics.includes(t.id) ? " on" : "")}
+                        onclick={() => toggleTopic(t.id)}
+                      >
+                        {#if selTopics.includes(t.id)}<Icon name="check" size={9} />{/if}
+                        {t.name}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
             </div>
           </div>
         </section>
 
+        <!-- Format: seg duration + two stepper rows, exactly the Settings pomodoro pattern. -->
         <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Format</h3></div>
-          <div class="set-card exam-format">
-            <div class="exam-field">
-              <span class="onb-label mono">DURATION</span>
-              <div class="exam-durs">
-                {#each DURATIONS as d}
-                  <button class="exam-dur mono{duration === d ? ' on' : ''}" onclick={() => (duration = d)}>{d}m</button>
-                {/each}
+          <div class="set-card">
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">Duration</div>
+                <div class="set-row-d">How long the countdown runs.</div>
+              </div>
+              <div class="set-row-r">
+                <div class="seg">
+                  {#each DURATIONS as d}
+                    <button type="button" class={"seg-opt" + (duration === d ? " on" : "")} onclick={() => (duration = d)}>{d} min</button>
+                  {/each}
+                </div>
               </div>
             </div>
 
-            <div class="exam-field">
-              <span class="onb-label mono">MULTIPLE CHOICE</span>
-              <div class="exam-count">
-                <button class="btn btn--icon btn--sm" onclick={() => clampMcq(mcqCount - 1)} disabled={mcqCount <= 0} title="Fewer">−</button>
-                <input class="input exam-count-in mono" type="number" min="0" max="30" value={mcqCount}
-                  oninput={(e) => clampMcq(parseInt(e.currentTarget.value, 10))} />
-                <button class="btn btn--icon btn--sm" onclick={() => clampMcq(mcqCount + 1)} disabled={mcqCount >= 30} title="More">+</button>
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">Multiple choice</div>
+                <div class="set-row-d">One mark each.</div>
+              </div>
+              <div class="set-row-r">
+                <div class="exam-step">
+                  <button class="btn btn--icon btn--sm" onclick={() => clampMcq(mcqCount - 1)} disabled={mcqCount <= 0} aria-label="fewer multiple choice questions">−</button>
+                  <span class="mono exam-step-v">{mcqCount}</span>
+                  <button class="btn btn--icon btn--sm" onclick={() => clampMcq(mcqCount + 1)} disabled={mcqCount >= 30} aria-label="more multiple choice questions">+</button>
+                </div>
               </div>
             </div>
 
-            <div class="exam-field">
-              <span class="onb-label mono">WRITTEN</span>
-              <div class="exam-count">
-                <button class="btn btn--icon btn--sm" onclick={() => clampWritten(writtenCount - 1)} disabled={writtenCount <= 0} title="Fewer">−</button>
-                <input class="input exam-count-in mono" type="number" min="0" max="15" value={writtenCount}
-                  oninput={(e) => clampWritten(parseInt(e.currentTarget.value, 10))} />
-                <button class="btn btn--icon btn--sm" onclick={() => clampWritten(writtenCount + 1)} disabled={writtenCount >= 15} title="More">+</button>
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">Written</div>
+                <div class="set-row-d">Two to five marks each, graded by the model.</div>
+              </div>
+              <div class="set-row-r">
+                <div class="exam-step">
+                  <button class="btn btn--icon btn--sm" onclick={() => clampWritten(writtenCount - 1)} disabled={writtenCount <= 0} aria-label="fewer written questions">−</button>
+                  <span class="mono exam-step-v">{writtenCount}</span>
+                  <button class="btn btn--icon btn--sm" onclick={() => clampWritten(writtenCount + 1)} disabled={writtenCount >= 15} aria-label="more written questions">+</button>
+                </div>
               </div>
             </div>
           </div>
         </section>
 
-        <div class="exam-actions">
+        <!-- Primary action + summary, mirroring GenerateMaterial's footer. -->
+        <div class="exam-cta">
           <button class="btn btn--primary" onclick={startNew} disabled={!canStart}>
             <Icon name="bolt" size={13} /> Generate &amp; start
           </button>
@@ -286,27 +318,30 @@
         {#if pastExams.length > 0}
           <section class="set-group">
             <div class="set-group-h"><h3 class="set-group-t">Past exams</h3></div>
-            <div class="exam-past">
+            <div class="set-card">
               {#each pastExams as e (e.id)}
                 <div
-                  class="exam-past-row"
+                  class="set-row exam-past"
                   role="button"
                   tabindex="0"
                   onclick={() => openPast(e)}
                   onkeydown={(ev) => { if (ev.key === "Enter") openPast(e); }}
                 >
-                  <span class="exam-past-title read">{e.title}</span>
-                  <span class="exam-past-meta mono faint">
+                  <div class="set-row-l">
+                    <div class="set-row-t">{e.title}</div>
+                    <div class="set-row-d">
+                      {e.status === "graded" ? "Graded" : e.status === "in_progress" ? "In progress" : "Ready to start"}
+                    </div>
+                  </div>
+                  <div class="set-row-r exam-past-r">
                     {#if e.status === "graded"}
-                      {Math.round(e.score ?? 0)}%
-                    {:else}
-                      {e.status === "in_progress" ? "In progress" : "Ready"}
+                      <span class="mono exam-past-score">{Math.round(e.score ?? 0)}%</span>
                     {/if}
-                  </span>
-                  <span class="exam-past-status mono" class:ok={e.status === "graded"}>{e.status}</span>
-                  <button class="btn btn--icon btn--sm btn--ghost" title="Delete" aria-label="Delete exam" onclick={(ev) => deletePast(e, ev)}>
-                    <Icon name="x" size={12} />
-                  </button>
+                    <span class="badge">{e.status === "graded" ? "graded" : e.status === "in_progress" ? "resume" : "start"}</span>
+                    <button class="btn btn--icon btn--sm btn--ghost" title="Delete exam" aria-label="Delete exam" onclick={(ev) => deletePast(e, ev)}>
+                      <Icon name="x" size={12} />
+                    </button>
+                  </div>
                 </div>
               {/each}
             </div>
@@ -316,11 +351,14 @@
     </div>
 
   {:else if screen === "generating"}
-    <div class="exam-gen">
+    <!-- Same visual language as GeneratingCard (gen-card + is-spin). -->
+    <div class="set-pane exam-center">
       <div class="exam-gen-card">
-        <div class="exam-spinner"></div>
-        <h2 class="read">Writing your exam…</h2>
-        <p class="mono faint">Generating {mcqCount} multiple-choice and {writtenCount} written questions.</p>
+        <span class="is-spin"></span>
+        <div class="exam-gen-text">
+          <span class="mono exam-gen-label">Writing your exam…</span>
+          <span class="mono faint exam-gen-sub">{mcqCount} multiple-choice · {writtenCount} written</span>
+        </div>
       </div>
     </div>
 
@@ -328,25 +366,29 @@
     <div class="exam-run">
       <header class="exam-run-head">
         <div class="exam-run-title read">{exam?.title}</div>
-        <div class="exam-timer mono" class:low={lowTime}>
+        <div class="exam-timer mono" class:warn={warnTime && !lowTime} class:low={lowTime}>
           <Icon name="record" size={13} /> {mmss}
         </div>
       </header>
 
-      <div class="exam-questions">
+      <div class="exam-qs">
         {#each questions as q, qi (q.id)}
-          <div class="exam-q">
+          <!-- Question card mirrors Quiz.svelte's quiz-card / quiz-opt markup. -->
+          <div class="quiz-card">
             <div class="exam-q-head">
-              <span class="exam-q-num mono">{qi + 1}</span>
-              <p class="read exam-q-text">{q.q}</p>
-              <span class="exam-q-marks mono faint">{q.marks} mark{q.marks === 1 ? "" : "s"}</span>
+              <span class="quiz-key mono">{qi + 1}</span>
+              <p class="quiz-q read">{q.q}</p>
+              <span class="mono faint exam-q-marks">{q.marks} mark{q.marks === 1 ? "" : "s"}</span>
             </div>
             {#if q.type === "mcq"}
-              <div class="exam-opts">
+              <div class="quiz-opts">
                 {#each q.options as opt, oi (oi)}
-                  <button class="exam-opt{runAnswers[q.id]?.choice === oi ? ' on' : ''}" onclick={() => pick(q.id, oi)}>
+                  <button class="quiz-opt{runAnswers[q.id]?.choice === oi ? ' correct' : ''}" onclick={() => pick(q.id, oi)}>
                     <span class="quiz-key mono">{String.fromCharCode(65 + oi)}</span>
                     <span class="read">{opt}</span>
+                    {#if runAnswers[q.id]?.choice === oi}
+                      <Icon name="check" size={14} color="var(--accent)" />
+                    {/if}
                   </button>
                 {/each}
               </div>
@@ -365,221 +407,175 @@
 
       <div class="exam-run-foot">
         <button class="btn btn--primary" onclick={confirmSubmit} disabled={submitting}>
-          {submitting ? "Grading…" : "Submit exam"}
+          {#if submitting}<span class="is-spin"></span> Grading…{:else}<Icon name="check" size={13} /> Submit exam{/if}
         </button>
       </div>
     </div>
 
   {:else if screen === "results"}
-    <div class="exam-results">
-      <header class="exam-res-head">
-        <div class="exam-score">
-          <span class="exam-score-pct read">{Math.round(scorePct)}%</span>
-          <span class="mono faint">{exam?.title}</span>
-        </div>
-        <div class="row gap-2">
-          <button class="btn btn--primary" onclick={startNew}>Retake</button>
-          <button class="btn" onclick={backToSetup}>New exam</button>
-        </div>
+    <div class="set-pane">
+      <header class="set-head">
+        <div class="eyebrow">Results</div>
+        <h1 class="read set-title">{exam?.title}</h1>
       </header>
 
-      {#if weakTopics.length > 0}
-        <div class="exam-weak">
-          <span class="mono exam-weak-h">Topics to revise</span>
-          <div class="exam-chips">
-            {#each weakTopics as wt}
-              <span class="exam-chip mono on">{wt}</span>
-            {/each}
-          </div>
+      <!-- Score as an AnalyticsView-style stat card row. -->
+      <div class="exam-stats">
+        <div class="exam-stat">
+          <div class="exam-stat-k mono">Score</div>
+          <div class="exam-stat-v">{Math.round(scorePct)}<span class="exam-stat-u">%</span></div>
         </div>
+        {#if results}
+          <div class="exam-stat">
+            <div class="exam-stat-k mono">Marks earned</div>
+            <div class="exam-stat-v">{results.earned ?? 0}<span class="exam-stat-u"> / {results.total ?? 0}</span></div>
+          </div>
+          <div class="exam-stat">
+            <div class="exam-stat-k mono">Questions</div>
+            <div class="exam-stat-v">{questions.length}</div>
+          </div>
+        {/if}
+      </div>
+
+      <div class="exam-cta">
+        <button class="btn btn--primary" onclick={startNew}><Icon name="bolt" size={13} /> Retake</button>
+        <button class="btn" onclick={backToSetup}><Icon name="book" size={13} /> New exam</button>
+      </div>
+
+      {#if weakTopics.length > 0}
+        <!-- Weak-topic callout: a set-card with a warn accent. -->
+        <section class="set-group">
+          <div class="set-group-h"><h3 class="set-group-t">Topics to revise</h3></div>
+          <div class="set-card exam-weak">
+            <div class="set-row stacked">
+              <div class="set-row-r">
+                <div class="tag-suggest" style="margin-top:0">
+                  {#each weakTopics as wt}
+                    <span class="tag-chip-add on">{wt}</span>
+                  {/each}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
       {/if}
 
-      <div class="exam-review">
-        {#each reviewItems as { q, r }, idx (q.id)}
-          {@const correct = q.type === "mcq" ? r?.correct : (r?.score ?? 0) >= q.marks}
-          {@const partial = q.type === "written" && (r?.score ?? 0) > 0 && (r?.score ?? 0) < q.marks}
-          <div class="exam-rev-card">
-            <div class="exam-rev-q">
-              <span class="exam-q-num mono">{idx + 1}</span>
-              <p class="read">{q.q}</p>
-              <span class="exam-rev-mark mono" class:ok={correct} class:partial={partial} class:err={!correct && !partial}>
-                {(r?.score ?? 0)} / {q.marks}
-              </span>
+      <!-- Per-question review reuses Quiz.svelte's answered-state classes. -->
+      <section class="set-group">
+        <div class="set-group-h"><h3 class="set-group-t">Review</h3></div>
+        <div class="exam-review">
+          {#each reviewItems as { q, r }, idx (q.id)}
+            {@const correct = q.type === "mcq" ? r?.correct : (r?.score ?? 0) >= q.marks}
+            {@const partial = q.type === "written" && (r?.score ?? 0) > 0 && (r?.score ?? 0) < q.marks}
+            <div class="quiz-card">
+              <div class="exam-q-head">
+                <span class="quiz-key mono">{idx + 1}</span>
+                <p class="quiz-q read">{q.q}</p>
+                <span class="mono exam-rev-mark" class:ok={correct} class:warn={partial} class:err={!correct && !partial}>
+                  {(r?.score ?? 0)} / {q.marks}
+                </span>
+              </div>
+
+              {#if q.type === "mcq"}
+                <div class="quiz-opts">
+                  {#each q.options as opt, oi (oi)}
+                    {@const isAnswer = oi === q.correct}
+                    {@const isPick = r?.your_choice === oi}
+                    <div class="quiz-opt{isAnswer ? ' correct' : ''}{isPick && !isAnswer ? ' wrong' : ''}">
+                      <span class="quiz-key mono">{String.fromCharCode(65 + oi)}</span>
+                      <span class="read">{opt}</span>
+                      {#if isPick}<span class="badge">Your answer</span>{/if}
+                      {#if isAnswer}<Icon name="check" size={13} color="var(--ok)" />{/if}
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <div class="exam-rev-written">
+                  <span class="mono faint exam-rev-label">Your answer</span>
+                  <p class="read exam-rev-yours">{r?.your_text || "(blank)"}</p>
+                </div>
+              {/if}
+
+              {#if r?.feedback}
+                <p class="mono muted exam-rev-fb">{r.feedback}</p>
+              {/if}
             </div>
-
-            {#if q.type === "mcq"}
-              <div class="exam-rev-opts">
-                {#each q.options as opt, oi (oi)}
-                  {@const isAnswer = oi === q.correct}
-                  {@const isPick = r?.your_choice === oi}
-                  <div class="exam-rev-opt" class:correct={isAnswer} class:wrong={isPick && !isAnswer}>
-                    <span class="quiz-key mono">{String.fromCharCode(65 + oi)}</span>
-                    <span class="read">{opt}</span>
-                    {#if isPick}<span class="badge">Your answer</span>{/if}
-                    {#if isAnswer}<span class="badge">Correct</span>{/if}
-                  </div>
-                {/each}
-              </div>
-            {:else}
-              <div class="exam-rev-written">
-                <p class="mono faint exam-rev-label">Your answer</p>
-                <p class="read exam-rev-yours">{r?.your_text || "(blank)"}</p>
-              </div>
-            {/if}
-
-            {#if r?.feedback}
-              <p class="mono muted exam-rev-fb">{r.feedback}</p>
-            {/if}
-          </div>
-        {/each}
-      </div>
+          {/each}
+        </div>
+      </section>
     </div>
   {/if}
 </div>
 
 <style>
-  .exam-wrap { height: 100%; overflow-y: auto; padding: var(--sp-6); }
+  /* Stepper value (matches the Settings pomodoro stepper inline style). */
+  .exam-step { display: flex; align-items: center; gap: 8px; }
+  .exam-step-v { min-width: 36px; text-align: center; color: var(--fg-bright); }
 
-  /* ── setup ── */
-  .exam-setup { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--sp-5); }
-  .exam-head { display: flex; justify-content: space-between; align-items: flex-end; }
-  .exam-h1 { font-size: var(--r-xl); color: var(--fg-bright); margin-bottom: 2px; }
-  .exam-empty { padding: var(--sp-6); text-align: center; }
+  /* Primary action + summary row, like GenerateMaterial's footer. */
+  .exam-cta { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-7); }
 
-  .exam-chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-  .exam-chip {
-    padding: 6px 12px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--rad-pill, 999px);
-    background: var(--surface-2);
-    color: var(--fg);
-    font-size: var(--t-sm);
-    cursor: pointer;
-    transition: var(--t-fast, 120ms);
+  /* Past-exam rows: clickable Settings rows. */
+  .exam-past { cursor: pointer; }
+  .exam-past:hover { background: var(--surface-2); }
+  .exam-past-r { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+  .exam-past-score { color: var(--fg-bright); font-variant-numeric: tabular-nums; }
+
+  /* Generating: GeneratingCard look, centered. */
+  .exam-center { display: flex; align-items: center; justify-content: center; min-height: 50vh; }
+  .exam-gen-card {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 18px; border: 1px solid var(--border-strong);
+    border-radius: var(--rad-4); background: var(--surface-2);
   }
-  .exam-chip.on {
-    border-color: var(--accent);
-    background: color-mix(in oklab, var(--accent) 16%, var(--surface));
-    color: var(--accent);
-  }
+  .exam-gen-text { display: flex; flex-direction: column; gap: 2px; }
+  .exam-gen-label { color: var(--fg-bright); font-size: var(--t-sm); }
+  .exam-gen-sub { font-size: var(--t-xs); }
 
-  .exam-format { display: flex; flex-direction: column; gap: var(--sp-4); }
-  .exam-field { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
-  .onb-label { font-size: var(--t-xs); letter-spacing: 0.06em; color: var(--fg-faint); }
-  .exam-durs, .exam-count { display: flex; gap: var(--sp-1); align-items: center; }
-  .exam-dur {
-    padding: 6px 12px; border: 1px solid var(--border-strong); border-radius: var(--rad-3);
-    background: var(--surface-2); color: var(--fg); font-size: var(--t-sm); cursor: pointer;
-  }
-  .exam-dur.on { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 16%, var(--surface)); color: var(--accent); }
-  .exam-count-in { width: 56px; text-align: center; }
-
-  .exam-actions { display: flex; align-items: center; gap: var(--sp-3); }
-
-  .exam-past { display: flex; flex-direction: column; gap: var(--sp-1); }
-  .exam-past-row {
-    display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: var(--sp-3);
-    padding: 10px 12px; background: var(--surface); border: 1px solid var(--border-strong);
-    border-radius: var(--rad-3); cursor: pointer; text-align: left; width: 100%;
-  }
-  .exam-past-row:hover { border-color: var(--accent); }
-  .exam-past-title { font-size: var(--r-sm); color: var(--fg-bright); }
-  .exam-past-meta { font-size: var(--t-sm); }
-  .exam-past-status { font-size: var(--t-2xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-faint); }
-  .exam-past-status.ok { color: var(--ok); }
-
-  /* ── generating ── */
-  .exam-gen { display: flex; align-items: center; justify-content: center; height: 100%; }
-  .exam-gen-card { text-align: center; display: flex; flex-direction: column; align-items: center; gap: var(--sp-3); }
-  .exam-spinner {
-    width: 36px; height: 36px; border-radius: 50%;
-    border: 3px solid var(--border-strong); border-top-color: var(--accent);
-    animation: exam-spin 0.8s linear infinite;
-  }
-  @keyframes exam-spin { to { transform: rotate(360deg); } }
-
-  /* ── run ── */
-  .exam-run { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--sp-4); }
+  /* Run screen. */
+  .exam-run { max-width: 720px; margin: 0 auto; padding: var(--sp-6) var(--sp-7); display: flex; flex-direction: column; gap: var(--sp-4); }
   .exam-run-head {
-    position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center;
-    padding: var(--sp-3) 0; background: var(--bg, var(--surface)); backdrop-filter: blur(6px);
+    position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between;
+    gap: var(--sp-4); padding: var(--sp-3) 0; background: var(--bg); border-bottom: 1px solid var(--border);
   }
-  .exam-run-title { font-size: var(--r-md); color: var(--fg-bright); }
+  .exam-run-title { font-size: var(--r-md); color: var(--fg-bright); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .exam-timer {
-    display: inline-flex; align-items: center; gap: var(--sp-1); font-size: var(--r-md);
-    padding: 6px 12px; border: 1px solid var(--border-strong); border-radius: var(--rad-3);
-    color: var(--fg-bright); background: var(--surface-2);
+    flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-lg);
+    padding: 6px 12px; border: 1px solid var(--border-strong); border-radius: var(--rad-2);
+    color: var(--fg-bright); background: var(--surface-2); font-variant-numeric: tabular-nums;
   }
+  .exam-timer.warn { color: var(--warn); border-color: color-mix(in oklab, var(--warn) 50%, var(--border-strong)); }
   .exam-timer.low { color: var(--err); border-color: var(--err); }
 
-  .exam-questions { display: flex; flex-direction: column; gap: var(--sp-4); }
-  .exam-q {
-    background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--rad-4); padding: var(--sp-5);
-    display: flex; flex-direction: column; gap: var(--sp-3);
-  }
-  .exam-q-head { display: flex; align-items: baseline; gap: var(--sp-3); }
-  .exam-q-num {
-    flex: none; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
-    border: 1px solid var(--border-strong); border-radius: var(--rad-2); font-size: var(--t-xs); color: var(--fg-faint);
-  }
-  .exam-q-text { flex: 1; font-size: var(--r-md); color: var(--fg-bright); line-height: 1.4; }
+  .exam-qs { display: flex; flex-direction: column; gap: var(--sp-4); }
+  .exam-q-head { display: flex; align-items: baseline; gap: var(--sp-3); margin-bottom: var(--sp-2); }
+  .exam-q-head .quiz-q { flex: 1; margin: 0; }
   .exam-q-marks { flex: none; font-size: var(--t-xs); }
-
-  .exam-opts { display: flex; flex-direction: column; gap: 7px; }
-  .exam-opt {
-    display: flex; align-items: center; gap: var(--sp-3); padding: 10px 12px;
-    background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--rad-3);
-    color: var(--fg); cursor: pointer; text-align: left;
-  }
-  .exam-opt:hover { border-color: var(--accent); }
-  .exam-opt.on { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 14%, var(--surface)); }
-  .exam-opt.on .quiz-key { border-color: var(--accent); color: var(--accent); }
-  .exam-opt .read { flex: 1; font-size: var(--r-sm); }
-
   .exam-textarea { width: 100%; resize: vertical; font-family: inherit; }
+  .exam-run-foot { display: flex; justify-content: flex-end; padding-bottom: var(--sp-6); }
 
-  .exam-run-foot { display: flex; justify-content: flex-end; padding-bottom: var(--sp-4); }
+  /* Results stat cards (replicates AnalyticsView's an-stat, which is scoped there). */
+  .exam-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-4); margin-bottom: var(--sp-5); }
+  @media (max-width: 760px) { .exam-stats { grid-template-columns: repeat(2, 1fr); } }
+  .exam-stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--rad-3); padding: 14px 16px; }
+  .exam-stat-k { font-size: var(--t-2xs); letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-faint); }
+  .exam-stat-v { margin-top: 8px; font-size: var(--r-xl); font-weight: 600; color: var(--fg-bright); font-variant-numeric: tabular-nums; }
+  .exam-stat-u { font-size: var(--t-sm); font-weight: 400; color: var(--fg-faint); }
 
-  /* ── results ── */
-  .exam-results { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--sp-4); }
-  .exam-res-head { display: flex; justify-content: space-between; align-items: center; }
-  .exam-score { display: flex; flex-direction: column; gap: 2px; }
-  .exam-score-pct { font-size: var(--r-2xl, 2rem); color: var(--fg-bright); line-height: 1; }
+  /* Weak-topic callout: warn-accented set-card. */
+  .exam-weak { border-color: color-mix(in oklab, var(--warn) 40%, var(--border)); background: color-mix(in oklab, var(--warn) 6%, var(--surface)); }
 
-  .exam-weak {
-    background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--rad-4);
-    padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-2);
-  }
-  .exam-weak-h { font-size: var(--t-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-faint); }
-
+  /* Review (reuses quiz-card / quiz-opt; only the mark badge + written block are glue). */
   .exam-review { display: flex; flex-direction: column; gap: var(--sp-3); }
-  .exam-rev-card {
-    background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--rad-4); padding: var(--sp-5);
-    display: flex; flex-direction: column; gap: var(--sp-3);
-  }
-  .exam-rev-q { display: flex; align-items: baseline; gap: var(--sp-3); }
-  .exam-rev-q .read { flex: 1; font-size: var(--r-md); color: var(--fg-bright); line-height: 1.35; }
   .exam-rev-mark { flex: none; font-size: var(--t-2xs); text-transform: uppercase; letter-spacing: 0.06em; }
   .exam-rev-mark.ok { color: var(--ok); }
-  .exam-rev-mark.partial { color: var(--warn); }
+  .exam-rev-mark.warn { color: var(--warn); }
   .exam-rev-mark.err { color: var(--err); }
-
-  .exam-rev-opts { display: flex; flex-direction: column; gap: 7px; }
-  .exam-rev-opt {
-    display: flex; align-items: center; gap: var(--sp-3); padding: 9px 12px;
-    background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--rad-3); color: var(--fg);
-  }
-  .exam-rev-opt .read { flex: 1; font-size: var(--r-sm); }
-  .exam-rev-opt.correct { border-color: var(--ok); background: color-mix(in oklab, var(--ok) 14%, var(--surface)); }
-  .exam-rev-opt.correct .quiz-key { border-color: var(--ok); color: var(--ok); }
-  .exam-rev-opt.wrong { border-color: var(--err); background: color-mix(in oklab, var(--err) 12%, var(--surface)); }
-  .exam-rev-opt.wrong .quiz-key { border-color: var(--err); color: var(--err); }
-
-  .exam-rev-written { display: flex; flex-direction: column; gap: var(--sp-1); }
+  .exam-rev-written { display: flex; flex-direction: column; gap: var(--sp-1); margin-top: var(--sp-2); }
   .exam-rev-label { font-size: var(--t-2xs); text-transform: uppercase; letter-spacing: 0.06em; }
   .exam-rev-yours {
     font-size: var(--r-sm); color: var(--fg); background: var(--surface-2);
     border: 1px solid var(--border-strong); border-radius: var(--rad-3); padding: 10px 12px; white-space: pre-wrap;
   }
-  .exam-rev-fb { font-size: var(--t-sm); line-height: 1.5; }
+  .exam-rev-fb { font-size: var(--t-sm); line-height: 1.5; margin-top: var(--sp-2); }
 </style>
