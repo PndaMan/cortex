@@ -49,7 +49,9 @@ pub fn b64_encode(data: &[u8]) -> String {
     out
 }
 
-const OCR_PROMPT: &str = "Transcribe ALL text in these page image(s) EXACTLY, in reading order. \
+const OCR_PROMPT: &str = "Transcribe ALL text in these page image(s) EXACTLY, in reading order — \
+including HANDWRITTEN text (photographed notes, whiteboards): transcribe messy writing as \
+faithfully as you can and mark genuinely unreadable words as [illegible]. \
 Preserve headings, lists, tables (as Markdown tables), and math. Do not summarise, \
 translate, or add commentary — output ONLY the transcribed text as Markdown.";
 

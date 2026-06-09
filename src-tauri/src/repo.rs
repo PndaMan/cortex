@@ -1896,12 +1896,65 @@ pub fn wrong_items(conn: &Connection, subject_id: &str, kind: &str) -> Result<Ve
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-// ---- SM-2 spaced repetition -------------------------------------------
+// ---- FSRS spaced repetition -------------------------------------------
+//
+// FSRS-4.5 (open spaced-repetition scheduler): each card carries a memory
+// `stability` (days until recall probability drops to 90%) and `difficulty`
+// (1-10). Replaces SM-2, whose fixed 1→6→×ease ladder badly over/under-spaces
+// real retention. Default published parameters; same grading API as before.
 
-/// Grade a card with the SM-2 algorithm and upsert its schedule. `quality` is
-/// 0-5 (Again≈1, Hard≈3, Good≈4, Easy≈5). Also logs an `attempts` row (correct =
-/// quality >= 3) so the legacy "review missed" set keeps working. Returns the new
-/// schedule. SM-2 reference: ease' = ease + (0.1 - (5-q)(0.08 + (5-q)0.02)), min 1.3.
+const FSRS_W: [f64; 17] = [
+    0.4872, 1.4003, 3.7145, 13.8206, 5.1618, 1.2298, 0.8975, 0.0310, 1.6474,
+    0.1367, 1.0461, 2.1072, 0.0793, 0.3246, 1.5870, 0.2272, 2.8755,
+];
+const FSRS_DECAY: f64 = -0.5;
+const FSRS_FACTOR: f64 = 19.0 / 81.0;
+const FSRS_RETENTION: f64 = 0.9; // schedule reviews at the 90% recall point
+
+/// First-review stability for grade `g` (1=Again … 4=Easy).
+fn fsrs_init_stability(g: usize) -> f64 {
+    FSRS_W[g - 1].max(0.1)
+}
+fn fsrs_init_difficulty(g: usize) -> f64 {
+    (FSRS_W[4] - (g as f64 - 3.0) * FSRS_W[5]).clamp(1.0, 10.0)
+}
+fn fsrs_next_difficulty(d: f64, g: usize) -> f64 {
+    let next = d - FSRS_W[6] * (g as f64 - 3.0);
+    // mean-reverts toward the initial "Easy" difficulty so D can't run away
+    (FSRS_W[7] * fsrs_init_difficulty(4) + (1.0 - FSRS_W[7]) * next).clamp(1.0, 10.0)
+}
+/// Probability of recall after `elapsed_d` days at stability `s`.
+fn fsrs_retrievability(elapsed_d: f64, s: f64) -> f64 {
+    (1.0 + FSRS_FACTOR * elapsed_d / s.max(0.1)).powf(FSRS_DECAY)
+}
+fn fsrs_next_stability(d: f64, s: f64, r: f64, g: usize) -> f64 {
+    if g == 1 {
+        // post-lapse stability: shrinks, never exceeds what it was
+        let sf = FSRS_W[11]
+            * d.powf(-FSRS_W[12])
+            * ((s + 1.0).powf(FSRS_W[13]) - 1.0)
+            * (FSRS_W[14] * (1.0 - r)).exp();
+        sf.min(s).max(0.1)
+    } else {
+        let hard = if g == 2 { FSRS_W[15] } else { 1.0 };
+        let easy = if g == 4 { FSRS_W[16] } else { 1.0 };
+        let grow = FSRS_W[8].exp()
+            * (11.0 - d)
+            * s.powf(-FSRS_W[9])
+            * ((FSRS_W[10] * (1.0 - r)).exp() - 1.0);
+        (s * (1.0 + grow * hard * easy)).max(0.1)
+    }
+}
+/// Days until recall probability decays to FSRS_RETENTION.
+fn fsrs_interval(s: f64) -> i64 {
+    let days = s / FSRS_FACTOR * (FSRS_RETENTION.powf(1.0 / FSRS_DECAY) - 1.0);
+    (days.round() as i64).clamp(1, 36_500)
+}
+
+/// Grade a card with FSRS and upsert its schedule. `quality` is 0-5 from the
+/// existing UI (Again≈1, Hard≈3, Good≈4, Easy≈5), mapped to FSRS's four grades.
+/// Also logs an `attempts` row (correct = quality >= 3) so the legacy "review
+/// missed" set keeps working. Returns the new schedule.
 pub fn srs_grade(
     conn: &Connection,
     subject_id: &str,
@@ -1914,31 +1967,49 @@ pub fn srs_grade(
     let q = quality.clamp(0, 5);
     let now = now_ms();
 
-    // Current schedule for this item, or SM-2 defaults for a brand-new card.
-    let existing: Option<(f64, i64, i64, i64)> = conn
+    // Current schedule, or defaults for a brand-new card. stability/difficulty
+    // are NULL on rows last scheduled under SM-2 — seeded below.
+    #[allow(clippy::type_complexity)]
+    let existing: Option<(f64, i64, i64, i64, Option<f64>, Option<f64>, i64)> = conn
         .query_row(
-            "SELECT ease, interval_d, reps, lapses FROM srs_cards
-             WHERE subject_id=?1 AND kind=?2 AND item_key=?3",
+            "SELECT ease, interval_d, reps, lapses, stability, difficulty, updated_at
+             FROM srs_cards WHERE subject_id=?1 AND kind=?2 AND item_key=?3",
             params![subject_id, kind, item_key],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
         )
         .optional()?;
-    let (mut ease, mut interval_d, mut reps, mut lapses) = existing.unwrap_or((2.5, 0, 0, 0));
+    let is_new = existing.is_none();
+    let (mut ease, mut interval_d, mut reps, mut lapses, stability, difficulty, last_seen) =
+        existing.unwrap_or((2.5, 0, 0, 0, None, None, now));
 
-    if q < 3 {
-        // Lapse: reset reps, relearn tomorrow.
+    let g: usize = match q {
+        0..=2 => 1, // Again
+        3 => 2,     // Hard
+        4 => 3,     // Good
+        _ => 4,     // Easy
+    };
+    let (s, d) = if is_new {
+        (fsrs_init_stability(g), fsrs_init_difficulty(g))
+    } else {
+        // SM-2 rows seed FSRS from their interval (≈ stability at 90% retention)
+        // and a rough ease→difficulty mapping; FSRS self-corrects from there.
+        let s0 = stability.unwrap_or((interval_d as f64).max(0.5));
+        let d0 = difficulty.unwrap_or((11.0 - 3.0 * ease).clamp(1.0, 10.0));
+        let elapsed_d = ((now - last_seen) as f64 / 86_400_000.0).max(0.0);
+        let r = fsrs_retrievability(elapsed_d, s0);
+        (fsrs_next_stability(d0, s0, r, g), fsrs_next_difficulty(d0, g))
+    };
+
+    if g == 1 {
+        // Lapse: relearn tomorrow (stability already shrunk by the forget branch).
         reps = 0;
         interval_d = 1;
         lapses += 1;
     } else {
         reps += 1;
-        interval_d = match reps {
-            1 => 1,
-            2 => 6,
-            _ => ((interval_d as f64) * ease).round() as i64,
-        }
-        .max(1);
+        interval_d = fsrs_interval(s);
     }
+    // Keep the SM-2 ease as a legacy display value so existing UI stays stable.
     let qf = q as f64;
     ease = (ease + (0.1 - (5.0 - qf) * (0.08 + (5.0 - qf) * 0.02))).max(1.3);
     let due_at = now + interval_d * 86_400_000;
@@ -1946,16 +2017,18 @@ pub fn srs_grade(
     conn.execute(
         "INSERT INTO srs_cards
             (id, subject_id, material_id, kind, item_index, item_key,
-             ease, interval_d, reps, lapses, last_grade, due_at, created_at, updated_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13)
+             ease, interval_d, reps, lapses, last_grade, due_at, created_at, updated_at,
+             stability, difficulty)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13,?14,?15)
          ON CONFLICT(subject_id, kind, item_key) DO UPDATE SET
             material_id=excluded.material_id, item_index=excluded.item_index,
             ease=excluded.ease, interval_d=excluded.interval_d, reps=excluded.reps,
             lapses=excluded.lapses, last_grade=excluded.last_grade,
-            due_at=excluded.due_at, updated_at=excluded.updated_at",
+            due_at=excluded.due_at, updated_at=excluded.updated_at,
+            stability=excluded.stability, difficulty=excluded.difficulty",
         params![
             new_id(), subject_id, material_id, kind, item_index, item_key,
-            ease, interval_d, reps, lapses, q, due_at, now
+            ease, interval_d, reps, lapses, q, due_at, now, s, d
         ],
     )?;
 
@@ -2129,37 +2202,59 @@ mod tests {
     }
 
     #[test]
-    fn srs_sm2_schedule_progresses_and_lapses() {
+    fn srs_fsrs_schedule_progresses_and_lapses() {
         let st = AppState::in_memory().unwrap();
         let c = st.db.lock().unwrap();
         let sid = insert_subject(&c, "Bio", None, None, None).unwrap();
         let key = "What is ATP?";
 
-        // First "Good" grade: a new card → interval 1 day, reps 1.
+        // First "Good" grade: new card → interval ≈ initial Good stability (~4d).
         let r1 = srs_grade(&c, &sid, None, "flashcard", 0, key, 4).unwrap();
         assert_eq!(r1.reps, 1);
-        assert_eq!(r1.interval_d, 1);
+        assert!(r1.interval_d >= 1, "got {}", r1.interval_d);
 
-        // Second "Good": SM-2 second step → interval 6 days, reps 2.
+        // Repeated grades at the SAME instant: retrievability is still 1.0, so
+        // FSRS (correctly) grants no stability gain — interval must not shrink.
+        // Growth-with-elapsed-time is asserted in fsrs_math_is_sane.
         let r2 = srs_grade(&c, &sid, None, "flashcard", 0, key, 4).unwrap();
         assert_eq!(r2.reps, 2);
-        assert_eq!(r2.interval_d, 6);
-
-        // Third "Good": interval = round(6 * ease) with ease > 1.3.
-        let r3 = srs_grade(&c, &sid, None, "flashcard", 0, key, 4).unwrap();
+        assert!(r2.interval_d >= r1.interval_d, "{} < {}", r2.interval_d, r1.interval_d);
+        let r3 = srs_grade(&c, &sid, None, "flashcard", 0, key, 5).unwrap();
         assert_eq!(r3.reps, 3);
-        assert!(r3.interval_d > 6, "interval should grow: {}", r3.interval_d);
+        assert!(r3.interval_d >= r2.interval_d, "{} < {}", r3.interval_d, r2.interval_d);
 
         // Exactly one schedule row (upsert, not insert-per-grade); 1 total card.
         assert_eq!(srs_stats(&c, &sid, "flashcard").unwrap().total, 1);
 
-        // "Again" lapse resets reps to 0 and interval back to 1 day.
+        // "Again" lapse resets reps to 0 and relearns tomorrow.
         let r4 = srs_grade(&c, &sid, None, "flashcard", 0, key, 1).unwrap();
         assert_eq!(r4.reps, 0);
         assert_eq!(r4.interval_d, 1);
 
         // The legacy "wrong items" set picks up the lapse (latest attempt wrong).
         assert_eq!(wrong_items(&c, &sid, "flashcard").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn fsrs_math_is_sane() {
+        // Initial stabilities are ordered Again < Hard < Good < Easy.
+        assert!(fsrs_init_stability(1) < fsrs_init_stability(2));
+        assert!(fsrs_init_stability(2) < fsrs_init_stability(3));
+        assert!(fsrs_init_stability(3) < fsrs_init_stability(4));
+        // Difficulty stays in [1,10] and Easy reduces it.
+        let d = fsrs_init_difficulty(3);
+        assert!((1.0..=10.0).contains(&d));
+        assert!(fsrs_next_difficulty(d, 4) < d);
+        assert!(fsrs_next_difficulty(d, 1) > d);
+        // Retrievability decays with elapsed time.
+        assert!(fsrs_retrievability(0.0, 5.0) > fsrs_retrievability(10.0, 5.0));
+        // Successful review grows stability; a lapse shrinks it.
+        let s = 10.0;
+        let r = fsrs_retrievability(10.0, s);
+        assert!(fsrs_next_stability(d, s, r, 3) > s);
+        assert!(fsrs_next_stability(d, s, r, 1) < s);
+        // At 90% retention the interval is ≈ the stability (FSRS design point).
+        assert_eq!(fsrs_interval(10.0), 10);
     }
 
     #[test]
