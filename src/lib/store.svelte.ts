@@ -1090,6 +1090,10 @@ class AppStore {
   // ---- theme ----
   applyTheme(t: Theme) {
     document.documentElement.setAttribute("data-theme", t);
+    // Synchronous cache so the NEXT launch/refresh paints the right theme
+    // before the async settings read returns (kills the osaka-jade flash).
+    // The settings table stays the source of truth; this is just a hint.
+    try { localStorage.setItem("cortex-theme", t); } catch { /* storage off */ }
   }
   setTheme(t: Theme) {
     this.theme = t;
