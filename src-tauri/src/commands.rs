@@ -2319,21 +2319,40 @@ fn transcribe(
             // read the browser's MediaRecorder .webm (Opus) — it throws
             // "Invalid data found when processing input". Pre-convert to 16 kHz
             // mono WAV with system ffmpeg when available; PyAV decodes WAV cleanly.
+            // Track WHY conversion didn't happen so a decode failure later can
+            // report the real cause instead of always blaming a missing ffmpeg.
             let wav = outdir.join("fw.wav");
-            let decodable = if ingest::which("ffmpeg").is_some()
-                && Command::new("ffmpeg")
+            let mut ffmpeg_problem: Option<String> = None;
+            let decodable = match ingest::which("ffmpeg") {
+                None => {
+                    ffmpeg_problem = Some(
+                        "ffmpeg isn't installed — install it (e.g. `sudo pacman -S ffmpeg`) \
+                         so Cortex can transcode recordings"
+                            .into(),
+                    );
+                    file.to_path_buf()
+                }
+                Some(ff) => match Command::new(&ff)
                     .args(["-y", "-i"])
                     .arg(file)
                     .args(["-ar", "16000", "-ac", "1"])
                     .arg(&wav)
                     .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false)
-                && wav.is_file()
-            {
-                wav.clone()
-            } else {
-                file.to_path_buf()
+                {
+                    Ok(o) if o.status.success() && wav.is_file() => wav.clone(),
+                    Ok(o) => {
+                        ffmpeg_problem = Some(format!(
+                            "ffmpeg couldn't read the recording ({}) — the file may be \
+                             corrupt or empty; try re-recording",
+                            last_line(&String::from_utf8_lossy(&o.stderr))
+                        ));
+                        file.to_path_buf()
+                    }
+                    Err(e) => {
+                        ffmpeg_problem = Some(format!("ffmpeg failed to run: {e}"));
+                        file.to_path_buf()
+                    }
+                },
             };
             // argv[1] = audio file, argv[2] = model cache dir (model auto-downloads here)
             const RUNNER: &str = "import sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('base.en',device='cpu',compute_type='int8',download_root=sys.argv[2])\nsegs,_=m.transcribe(sys.argv[1],language='en')\nprint(' '.join(s.text.strip() for s in segs))";
@@ -2351,8 +2370,13 @@ fn transcribe(
                     // error (needs system ffmpeg to transcode the recording) vs the
                     // one-off model download.
                     setup_detail = if err.contains("Invalid data") || err.contains("decode_audio") {
-                        "couldn't decode the recording — install ffmpeg so Cortex can transcode it \
-                         (e.g. `sudo pacman -S ffmpeg`), then re-record".to_string()
+                        format!(
+                            "couldn't decode the recording — {}",
+                            ffmpeg_problem.unwrap_or_else(|| {
+                                "the transcoded audio was still unreadable; try re-recording"
+                                    .to_string()
+                            })
+                        )
                     } else {
                         format!(
                             "transcription failed — likely the model download (needs internet on \
