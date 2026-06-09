@@ -24,16 +24,38 @@
   import SourceViewer from "./views/SourceViewer.svelte";
   import AddSource from "./views/AddSource.svelte";
   import AddSubject from "./views/AddSubject.svelte";
-  import Recorder from "./views/Recorder.svelte";
   import GenerateMaterial from "./views/GenerateMaterial.svelte";
   import NotesView from "./views/NotesView.svelte";
-  import CalendarView from "./views/CalendarView.svelte";
-  import Settings from "./views/Settings.svelte";
   import Onboarding from "./views/Onboarding.svelte";
+
+  // The three heaviest views (Settings 70KB, Recorder 32KB, Calendar 31KB) are
+  // code-split out of the startup bundle and loaded on first visit. They're
+  // prefetched right after init settles, so by the time a human can navigate
+  // there the chunk is already resolved — no flash, just a faster cold start.
+  let SettingsView = $state<any>(null);
+  let RecorderView = $state<any>(null);
+  let CalendarViewC = $state<any>(null);
+  const loadSettings = () =>
+    SettingsView ?? import("./views/Settings.svelte").then((m) => (SettingsView = m.default));
+  const loadRecorder = () =>
+    RecorderView ?? import("./views/Recorder.svelte").then((m) => (RecorderView = m.default));
+  const loadCalendar = () =>
+    CalendarViewC ?? import("./views/CalendarView.svelte").then((m) => (CalendarViewC = m.default));
+  $effect(() => {
+    if (app.view === "settings") void loadSettings();
+    else if (app.view === "recorder") void loadRecorder();
+    else if (app.view === "calendar") void loadCalendar();
+  });
 
   // Initialize app state on mount (loads subjects, seeds demo if empty, restores theme)
   $effect(() => {
     app.init();
+    const prefetch = setTimeout(() => {
+      void loadSettings();
+      void loadRecorder();
+      void loadCalendar();
+    }, 1500);
+    return () => clearTimeout(prefetch);
   });
 
   // Chat dock / FAB visibility. Read EVERY signal into a local first so &&/||
@@ -280,15 +302,15 @@
         {:else if app.view === "add-subject"}
           <AddSubject />
         {:else if app.view === "recorder"}
-          <Recorder />
+          {#if RecorderView}{@const Recorder = RecorderView}<Recorder />{/if}
         {:else if app.view === "gen-material"}
           <GenerateMaterial />
         {:else if app.view === "notes"}
           <NotesView />
         {:else if app.view === "calendar"}
-          <CalendarView />
+          {#if CalendarViewC}{@const CalendarView = CalendarViewC}<CalendarView />{/if}
         {:else if app.view === "settings"}
-          <Settings />
+          {#if SettingsView}{@const Settings = SettingsView}<Settings />{/if}
         {/if}
       </div>
 
