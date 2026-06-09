@@ -656,33 +656,38 @@ class AppStore {
   }
 
   // ---- passive study-time tracking ----
-  // Most studying happens just reading the cheatsheet, not via the pomodoro
-  // timer, so focus minutes would otherwise read 0. Accumulate focused in-app
-  // time and flush it as "app" pomodoro_sessions rows attributed to the active
-  // subject. We only count time while the window is visible AND focused, and
-  // NOT while a pomodoro WORK session is running (that span is already logged as
-  // "work" — counting both would double it).
+  // Most studying happens just READING the cheatsheet — long stretches with no
+  // clicks or keys — so gating on window focus undercounted badly (focus also
+  // flaps under tiling WMs). Instead: time counts while the window is VISIBLE
+  // and the user has interacted (mouse/key/wheel/touch) within the last 10
+  // minutes; past that they've plausibly walked away and the segment is cut at
+  // the idle threshold. Never counts while a pomodoro WORK session runs (that
+  // span is already logged as "work" — counting both would double it).
   #appSegStart = 0; // wall-clock ms the current accumulating segment began (0 = idle)
   #appSegSubject: string | null = null; // subject the current segment is attributed to
   #appFlushTimer: ReturnType<typeof setInterval> | null = null;
-  #appFocused = true;
+  #appIdleTimer: ReturnType<typeof setInterval> | null = null;
+  #lastActivityAt = Date.now();
   // Don't log sub-minute noise (tab flicks, quick window switches).
   static #APP_MIN_MS = 60_000;
   static #APP_FLUSH_MS = 5 * 60_000;
+  static #APP_IDLE_MS = 10 * 60_000;
 
-  /** Should we be accumulating right now? Visible + focused + not in a pomodoro
-   *  work session (whose time is logged separately as "work"). */
+  /** Should we be accumulating right now? Visible + recently active + not in a
+   *  pomodoro work session (whose time is logged separately as "work"). */
   #appShouldAccumulate(): boolean {
     const hidden = typeof document !== "undefined" && document.hidden;
+    const idle = Date.now() - this.#lastActivityAt >= AppStore.#APP_IDLE_MS;
     const pomoWork = this.pomo.running && this.pomo.phase === "work";
-    return this.#appFocused && !hidden && !pomoWork;
+    return !hidden && !idle && !pomoWork;
   }
 
-  /** Flush the in-progress segment (if long enough) and stop accumulating. */
-  #appFlush() {
+  /** Flush the in-progress segment (if long enough) and stop accumulating.
+   *  `endAt` caps the credited span (used to cut a segment at the idle line). */
+  #appFlush(endAt?: number) {
     if (this.#appSegStart === 0) return;
     const start = this.#appSegStart;
-    const end = Date.now();
+    const end = Math.max(start, Math.min(endAt ?? Date.now(), Date.now()));
     const subject = this.#appSegSubject;
     this.#appSegStart = 0;
     this.#appSegSubject = null;
@@ -715,16 +720,29 @@ class AppStore {
 
   startAppTimeTracking() {
     if (this.#appFlushTimer || typeof window === "undefined") return; // once
-    this.#appFocused = document.hasFocus?.() ?? true;
-    window.addEventListener("focus", () => { this.#appFocused = true; this.#appReconcile(); });
-    window.addEventListener("blur", () => { this.#appFocused = false; this.#appReconcile(); });
+    this.#lastActivityAt = Date.now();
+    // Any interaction proves presence — and restarts counting after idle.
+    const activity = () => {
+      this.#lastActivityAt = Date.now();
+      if (this.#appSegStart === 0) this.#appReconcile();
+    };
+    for (const ev of ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"] as const) {
+      window.addEventListener(ev, activity, { passive: true });
+    }
     document.addEventListener("visibilitychange", () => this.#appReconcile());
     // Best-effort final flush when the window/app goes away.
     window.addEventListener("beforeunload", () => this.#appFlush());
     window.addEventListener("pagehide", () => this.#appFlush());
+    // Cut the segment at the idle line once 10 minutes pass with no input —
+    // the read-without-touching stretch up to that line still counts.
+    this.#appIdleTimer = setInterval(() => {
+      if (this.#appSegStart !== 0 && !this.#appShouldAccumulate()) {
+        this.#appFlush(this.#lastActivityAt + AppStore.#APP_IDLE_MS);
+      }
+    }, 60_000);
     // Periodic flush so long uninterrupted sessions still land rows (and so the
-    // dashboard updates without waiting for a blur). Each flush rolls straight
-    // into a new segment via reconcile.
+    // dashboard updates without waiting for an idle gap). Each flush rolls
+    // straight into a new segment via reconcile.
     this.#appFlushTimer = setInterval(() => {
       this.#appFlush();
       this.#appReconcile();
