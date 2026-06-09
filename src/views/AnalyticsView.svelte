@@ -90,6 +90,17 @@
 
   // Total minutes studied across the whole window (chart caption).
   const windowMinutes = $derived(days.reduce((a, d) => a + d.minutes, 0));
+  // When every day is zero the chart would look like a blank box — render faint
+  // baseline stubs + a hint instead so the panel never reads as empty/broken.
+  const allZeroMinutes = $derived(days.length > 0 && windowMinutes === 0);
+  // Baseline stub height (in viewBox units) for the all-zero state.
+  const STUB_H = 2;
+
+  // ── topics needing the most work ──
+  const weakTopics = $derived(data?.weak_topics ?? []);
+  function weakSubjectName(t: api.WeakTopic): string {
+    return subjectName(t.subject_id);
+  }
 </script>
 
 <div class="workspace-scroll">
@@ -141,33 +152,42 @@
           <h3 class="an-card-t mono">Study minutes · last 30 days</h3>
           <span class="an-card-sub mono">{fmtMins(windowMinutes)} total</span>
         </div>
-        <svg
-          class="an-chart"
-          viewBox="0 0 {CH_W} {CH_H}"
-          preserveAspectRatio="none"
-          role="img"
-          aria-label="Daily study minutes for the last 30 days"
-        >
-          {#each days as d, i (d.day)}
-            {@const h = barH(d.minutes)}
-            {@const x = i * (barW + barGap)}
-            <rect
-              class="an-bar"
-              x={x}
-              y={CH_H - PAD_B - h}
-              width={barW}
-              height={Math.max(0, h)}
-              rx="1.5"
-            >
-              <title>{d.day}: {fmtMins(d.minutes)}</title>
-            </rect>
-            {#if showTick(i)}
-              <text class="an-axis" x={x + barW / 2} y={CH_H - 6} text-anchor="middle">
-                {dayNum(d.day)}
-              </text>
-            {/if}
-          {/each}
-        </svg>
+        <div class="an-chart-wrap">
+          <svg
+            class="an-chart"
+            viewBox="0 0 {CH_W} {CH_H}"
+            preserveAspectRatio="none"
+            role="img"
+            aria-label="Daily study minutes for the last 30 days"
+          >
+            {#each days as d, i (d.day)}
+              {@const h = allZeroMinutes ? STUB_H : barH(d.minutes)}
+              {@const x = i * (barW + barGap)}
+              <rect
+                class="an-bar"
+                class:stub={allZeroMinutes}
+                x={x}
+                y={CH_H - PAD_B - h}
+                width={barW}
+                height={Math.max(STUB_H, h)}
+                rx="1.5"
+              >
+                <title>{d.day}: {fmtMins(d.minutes)}</title>
+              </rect>
+              {#if showTick(i)}
+                <text class="an-axis" x={x + barW / 2} y={CH_H - 6} text-anchor="middle">
+                  {dayNum(d.day)}
+                </text>
+              {/if}
+            {/each}
+          </svg>
+          {#if allZeroMinutes}
+            <!-- Never show a blank box: a centered hint explains it'll fill in. -->
+            <div class="an-chart-hint">
+              No study time tracked yet — focused app time counts automatically now.
+            </div>
+          {/if}
+        </div>
       </section>
 
       <!-- ── due forecast (next 7 days) ── -->
@@ -217,6 +237,35 @@
                 <span class="an-td mono">{fmtMins(s.minutes)}</span>
                 <span class="an-td mono">{s.reviews}</span>
                 <span class="an-td mono">{s.reviews > 0 ? pct(s.accuracy) : "—"}</span>
+              </div>
+            {/each}
+          </div>
+        </section>
+      {/if}
+
+      <!-- ── topics needing the most work ── -->
+      {#if weakTopics.length}
+        <section class="an-card">
+          <div class="an-card-h">
+            <h3 class="an-card-t mono">Topics needing work</h3>
+            <span class="an-card-sub mono">weakest first</span>
+          </div>
+          <div class="an-weak">
+            {#each weakTopics as t (t.topic_id)}
+              <div class="an-weak-row">
+                <span class="an-dot" style:background={subjectColor(t.subject_id)}></span>
+                <div class="an-weak-main">
+                  <div class="an-weak-name read">
+                    <span class="an-weak-subj">{weakSubjectName(t)}</span>
+                    <span class="an-weak-sep">·</span>
+                    {t.topic_name}
+                  </div>
+                  <div class="an-weak-reason mono">{t.reason}</div>
+                </div>
+                <div class="an-weak-stats mono">
+                  {#if t.reviews > 0}<span class="an-weak-stat">{pct(t.accuracy)} acc</span>{/if}
+                  {#if t.lapses > 0}<span class="an-weak-stat">{t.lapses} lapse{t.lapses === 1 ? "" : "s"}</span>{/if}
+                </div>
               </div>
             {/each}
           </div>
@@ -356,6 +405,9 @@
   }
 
   /* ── study-minutes bar chart ── */
+  .an-chart-wrap {
+    position: relative;
+  }
   .an-chart {
     display: block;
     width: 100%;
@@ -369,10 +421,28 @@
   .an-bar:hover {
     opacity: 1;
   }
+  /* All-zero days: faint baseline stubs so the chart still reads as a chart. */
+  .an-bar.stub {
+    fill: var(--surface-2);
+    opacity: 1;
+  }
   .an-axis {
     fill: var(--fg-faint);
     font-family: var(--font-mono);
     font-size: 11px;
+  }
+  /* Centered hint shown over the faint baseline when nothing's been tracked. */
+  .an-chart-hint {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 24px;
+    font-size: var(--t-sm);
+    color: var(--fg-faint);
+    pointer-events: none;
   }
 
   /* ── due forecast (7 mini columns) ── */
@@ -496,5 +566,57 @@
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--fg-faint);
+  }
+
+  /* ── topics needing work ── */
+  .an-weak {
+    display: flex;
+    flex-direction: column;
+  }
+  .an-weak-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 4px;
+    border-top: 1px solid var(--border);
+  }
+  .an-weak-row:first-child {
+    border-top: none;
+  }
+  .an-weak-main {
+    flex: 1;
+    min-width: 0;
+  }
+  .an-weak-name {
+    font-size: var(--t-md);
+    color: var(--fg-bright);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .an-weak-subj {
+    color: var(--fg-muted);
+  }
+  .an-weak-sep {
+    color: var(--fg-faint);
+    margin: 0 2px;
+  }
+  .an-weak-reason {
+    margin-top: 3px;
+    font-size: var(--t-2xs);
+    color: var(--fg-faint);
+  }
+  .an-weak-stats {
+    flex: none;
+    display: flex;
+    gap: 8px;
+  }
+  .an-weak-stat {
+    font-size: var(--t-2xs);
+    color: var(--warn);
+    background: color-mix(in oklab, var(--warn) 12%, transparent);
+    border-radius: var(--rad-pill);
+    padding: 2px 8px;
+    white-space: nowrap;
   }
 </style>

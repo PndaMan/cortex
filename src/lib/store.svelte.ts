@@ -588,6 +588,7 @@ class AppStore {
     }
     void this.revealWindow(); // ensure the window shows even if settings failed
     this.startReminderPolling();
+    this.startAppTimeTracking();
     void this.loadSyncStatus(); // learn whether homelab sync is on (drives the pill)
     // Auto-retry sources that failed to ingest last time (offline, model not set
     // up, transient errors). Fire-and-forget so it never blocks first render.
@@ -652,6 +653,92 @@ class AppStore {
     };
     tick();
     this.#reminderTimer = setInterval(tick, 60_000);
+  }
+
+  // ---- passive study-time tracking ----
+  // Most studying happens just reading the cheatsheet, not via the pomodoro
+  // timer, so focus minutes would otherwise read 0. Accumulate focused in-app
+  // time and flush it as "app" pomodoro_sessions rows attributed to the active
+  // subject. We only count time while the window is visible AND focused, and
+  // NOT while a pomodoro WORK session is running (that span is already logged as
+  // "work" — counting both would double it).
+  #appSegStart = 0; // wall-clock ms the current accumulating segment began (0 = idle)
+  #appSegSubject: string | null = null; // subject the current segment is attributed to
+  #appFlushTimer: ReturnType<typeof setInterval> | null = null;
+  #appFocused = true;
+  // Don't log sub-minute noise (tab flicks, quick window switches).
+  static #APP_MIN_MS = 60_000;
+  static #APP_FLUSH_MS = 5 * 60_000;
+
+  /** Should we be accumulating right now? Visible + focused + not in a pomodoro
+   *  work session (whose time is logged separately as "work"). */
+  #appShouldAccumulate(): boolean {
+    const hidden = typeof document !== "undefined" && document.hidden;
+    const pomoWork = this.pomo.running && this.pomo.phase === "work";
+    return this.#appFocused && !hidden && !pomoWork;
+  }
+
+  /** Flush the in-progress segment (if long enough) and stop accumulating. */
+  #appFlush() {
+    if (this.#appSegStart === 0) return;
+    const start = this.#appSegStart;
+    const end = Date.now();
+    const subject = this.#appSegSubject;
+    this.#appSegStart = 0;
+    this.#appSegSubject = null;
+    if (end - start >= AppStore.#APP_MIN_MS) {
+      api.logPomodoroSession(subject, "app", start, end).catch(() => {});
+    }
+  }
+
+  /** Begin a fresh accumulation segment for the current subject, if eligible. */
+  #appStartSegment() {
+    if (this.#appSegStart !== 0) return; // already running
+    if (!this.#appShouldAccumulate()) return;
+    this.#appSegStart = Date.now();
+    this.#appSegSubject = this.activeSubjectId;
+  }
+
+  /** Re-evaluate: start, stop, or re-attribute the segment as conditions change. */
+  #appReconcile() {
+    if (!this.#appShouldAccumulate()) {
+      this.#appFlush();
+      return;
+    }
+    // Active subject changed mid-segment → close the old one, open a new one so
+    // minutes land on the right subject.
+    if (this.#appSegStart !== 0 && this.#appSegSubject !== this.activeSubjectId) {
+      this.#appFlush();
+    }
+    this.#appStartSegment();
+  }
+
+  startAppTimeTracking() {
+    if (this.#appFlushTimer || typeof window === "undefined") return; // once
+    this.#appFocused = document.hasFocus?.() ?? true;
+    window.addEventListener("focus", () => { this.#appFocused = true; this.#appReconcile(); });
+    window.addEventListener("blur", () => { this.#appFocused = false; this.#appReconcile(); });
+    document.addEventListener("visibilitychange", () => this.#appReconcile());
+    // Best-effort final flush when the window/app goes away.
+    window.addEventListener("beforeunload", () => this.#appFlush());
+    window.addEventListener("pagehide", () => this.#appFlush());
+    // Periodic flush so long uninterrupted sessions still land rows (and so the
+    // dashboard updates without waiting for a blur). Each flush rolls straight
+    // into a new segment via reconcile.
+    this.#appFlushTimer = setInterval(() => {
+      this.#appFlush();
+      this.#appReconcile();
+    }, AppStore.#APP_FLUSH_MS);
+    // Keep attribution correct when the user switches subjects without blurring.
+    $effect.root(() => {
+      $effect(() => {
+        void this.activeSubjectId;
+        void this.pomo.running;
+        void this.pomo.phase;
+        this.#appReconcile();
+      });
+    });
+    this.#appReconcile(); // start now if eligible
   }
 
   async refresh() {

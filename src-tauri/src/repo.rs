@@ -2307,8 +2307,10 @@ pub fn move_source(
 
 // ---- pomodoro sessions + study analytics ------------------------------
 
-/// Record one finished pomodoro segment. Called from the frontend when a work
-/// (or break) phase completes; only "work" rows count toward study minutes.
+/// Record one study segment. `kind` is "work" (a finished pomodoro focus
+/// phase), "break" (logged for completeness), or "app" (passive focused
+/// in-app time, accumulated while the window is visible+focused). Both "work"
+/// and "app" rows count toward study minutes in the analytics dashboard.
 pub fn insert_pomodoro_session(
     conn: &Connection,
     subject_id: Option<&str>,
@@ -2340,14 +2342,16 @@ pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummar
     // window covers today plus the previous 29 days).
     let since_ms = day_floor_ms(now_ms()) - (days - 1) * DAY_MS;
 
-    // ── per-day study minutes (work segments only) ──
+    // ── per-day study minutes (work + passive app segments) ──
     // Minutes are summed from each segment's own duration so a partially-skipped
-    // session still contributes its real elapsed time.
+    // session still contributes its real elapsed time. "app" rows are passive
+    // focused in-app time (e.g. studying the cheatsheet) so study time isn't 0
+    // for users who never run a pomodoro.
     let mut stmt = conn.prepare(
         "SELECT date(started_ms/1000, 'unixepoch', 'localtime') AS d,
                 SUM(ended_ms - started_ms) AS ms
          FROM pomodoro_sessions
-         WHERE kind='work' AND started_ms >= ?1
+         WHERE kind IN ('work','app') AND started_ms >= ?1
          GROUP BY d",
     )?;
     let mut minutes_by_day: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
@@ -2420,7 +2424,7 @@ pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummar
     let mut stmt = conn.prepare(
         "SELECT subject_id, SUM(ended_ms - started_ms) AS ms
          FROM pomodoro_sessions
-         WHERE kind='work' AND started_ms >= ?1 AND subject_id IS NOT NULL
+         WHERE kind IN ('work','app') AND started_ms >= ?1 AND subject_id IS NOT NULL
          GROUP BY subject_id",
     )?;
     for row in stmt.query_map(params![since_ms], |r| {
@@ -2510,7 +2514,7 @@ pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummar
     let week_start = day_floor_ms(now_ms()) - 6 * DAY_MS;
     let minutes_week: i64 = conn.query_row(
         "SELECT COALESCE(SUM(ended_ms - started_ms), 0) / 60000
-         FROM pomodoro_sessions WHERE kind='work' AND started_ms >= ?1",
+         FROM pomodoro_sessions WHERE kind IN ('work','app') AND started_ms >= ?1",
         params![week_start],
         |r| r.get(0),
     )?;
@@ -2525,17 +2529,170 @@ pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummar
         0.0
     };
 
+    let weak_topics = weak_topics(conn, since_ms)?;
+
     Ok(AnalyticsSummary {
         minutes_per_day,
         reviews_per_day,
         due_forecast,
         per_subject,
+        weak_topics,
         fsrs,
         streak,
         minutes_week,
         reviews_week,
         accuracy_week,
     })
+}
+
+/// Rank topics that need the most work, blending low review accuracy, high
+/// lapses, and low FSRS stability. Attribution flows attempts/cards → materials
+/// → topics: rows whose material has no `topic_id` (or no material) are simply
+/// skipped — we never guess. Returns the weakest ~8 across all subjects.
+fn weak_topics(conn: &Connection, since_ms: i64) -> Result<Vec<WeakTopic>> {
+    // Accumulator keyed by topic id, carrying its subject + name and the merged
+    // attempt/card signals.
+    struct Acc {
+        subject_id: String,
+        topic_name: String,
+        reviews: i64,
+        correct: i64,
+        lapses: i64,
+        stab_sum: f64,
+        stab_n: i64,
+    }
+    let mut by_topic: std::collections::HashMap<String, Acc> = std::collections::HashMap::new();
+
+    // ── review attempts attributed via the answered material's topic ──
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.subject_id, t.name, COUNT(*) AS n, SUM(a.correct) AS ok
+         FROM attempts a
+         JOIN materials m ON m.id = a.material_id
+         JOIN topics t ON t.id = m.topic_id
+         WHERE a.created_at >= ?1 AND m.topic_id IS NOT NULL
+         GROUP BY t.id",
+    )?;
+    for row in stmt.query_map(params![since_ms], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, i64>(4)?,
+        ))
+    })? {
+        let (tid, sid, name, n, ok) = row?;
+        let e = by_topic.entry(tid).or_insert_with(|| Acc {
+            subject_id: sid,
+            topic_name: name,
+            reviews: 0,
+            correct: 0,
+            lapses: 0,
+            stab_sum: 0.0,
+            stab_n: 0,
+        });
+        e.reviews += n;
+        e.correct += ok;
+    }
+
+    // ── FSRS lapses + stability attributed via each card's material topic ──
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.subject_id, t.name,
+                COALESCE(SUM(c.lapses), 0) AS lapses,
+                COALESCE(SUM(c.stability), 0.0) AS stab_sum,
+                COUNT(c.stability) AS stab_n
+         FROM srs_cards c
+         JOIN materials m ON m.id = c.material_id
+         JOIN topics t ON t.id = m.topic_id
+         WHERE m.topic_id IS NOT NULL
+         GROUP BY t.id",
+    )?;
+    for row in stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, f64>(4)?,
+            r.get::<_, i64>(5)?,
+        ))
+    })? {
+        let (tid, sid, name, lapses, stab_sum, stab_n) = row?;
+        let e = by_topic.entry(tid).or_insert_with(|| Acc {
+            subject_id: sid,
+            topic_name: name,
+            reviews: 0,
+            correct: 0,
+            lapses: 0,
+            stab_sum: 0.0,
+            stab_n: 0,
+        });
+        e.lapses += lapses;
+        e.stab_sum += stab_sum;
+        e.stab_n += stab_n;
+    }
+
+    // Score each topic: higher == weaker. Three independent signals, each scaled
+    // to ~0..1 so none dominates, then summed:
+    //   • inaccuracy  = 1 - accuracy            (only meaningful with reviews)
+    //   • lapse load  = lapses / (lapses + 3)   (saturating, so 1 lapse ≠ 10)
+    //   • fragility   = 1 - stability/(stability+14)  (low stability → high)
+    let mut scored: Vec<(f64, WeakTopic)> = by_topic
+        .into_iter()
+        .map(|(topic_id, a)| {
+            let accuracy = if a.reviews > 0 { a.correct as f64 / a.reviews as f64 } else { 0.0 };
+            let avg_stability = if a.stab_n > 0 { a.stab_sum / a.stab_n as f64 } else { 0.0 };
+
+            let inaccuracy = if a.reviews > 0 { 1.0 - accuracy } else { 0.0 };
+            let lapse_load = a.lapses as f64 / (a.lapses as f64 + 3.0);
+            // Only penalize fragility when we actually have a stability reading.
+            let fragility = if a.stab_n > 0 {
+                1.0 - avg_stability / (avg_stability + 14.0)
+            } else {
+                0.0
+            };
+            let score = inaccuracy + lapse_load + fragility;
+
+            // A short, human reason naming the dominant weakness(es).
+            let mut bits: Vec<String> = Vec::new();
+            if a.reviews > 0 && accuracy < 0.7 {
+                bits.push(format!("{}% accuracy", (accuracy * 100.0).round() as i64));
+            }
+            if a.lapses > 0 {
+                bits.push(format!("{} lapse{}", a.lapses, if a.lapses == 1 { "" } else { "s" }));
+            }
+            if a.stab_n > 0 && avg_stability < 7.0 {
+                bits.push("low retention".into());
+            }
+            let reason = if bits.is_empty() { "Needs review".into() } else { bits.join(" · ") };
+
+            (
+                score,
+                WeakTopic {
+                    subject_id: a.subject_id,
+                    topic_id,
+                    topic_name: a.topic_name,
+                    reviews: a.reviews,
+                    correct: a.correct,
+                    accuracy,
+                    lapses: a.lapses,
+                    avg_stability,
+                    reason,
+                },
+            )
+        })
+        // Drop topics with no weakness signal at all (perfect & stable → not "weak").
+        .filter(|(score, _)| *score > 0.0)
+        .collect();
+
+    // Weakest first; ties broken by topic name so ordering is stable run-to-run.
+    scored.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.1.topic_name.cmp(&b.1.topic_name))
+    });
+
+    Ok(scored.into_iter().take(8).map(|(_, wt)| wt).collect())
 }
 
 /// Milliseconds in a day — analytics steps the day cursor by this.
@@ -2781,9 +2938,11 @@ mod tests {
         let c = st.db.lock().unwrap();
         let sid = insert_subject(&c, "Math", None, None, None).unwrap();
 
-        // A 25-minute work session that ended just now, plus two answers.
+        // A 25-minute work session + 10 minutes of passive app time, both ending
+        // just now, plus two answers. Work AND app both count toward study time.
         let now = now_ms();
         insert_pomodoro_session(&c, Some(&sid), "work", now - 25 * 60_000, now).unwrap();
+        insert_pomodoro_session(&c, Some(&sid), "app", now - 10 * 60_000, now).unwrap();
         // A break segment must NOT count toward study minutes.
         insert_pomodoro_session(&c, Some(&sid), "break", now - 5 * 60_000, now).unwrap();
         record_attempt(&c, &sid, None, "quiz", 0, "Q1", true).unwrap();
@@ -2792,8 +2951,8 @@ mod tests {
         let s = analytics_summary(&c, 30).unwrap();
         // 30-day window of contiguous days, today is the last bucket.
         assert_eq!(s.minutes_per_day.len(), 30);
-        assert_eq!(s.minutes_per_day.last().unwrap().minutes, 25, "work only");
-        assert_eq!(s.minutes_week, 25);
+        assert_eq!(s.minutes_per_day.last().unwrap().minutes, 35, "work + app, no break");
+        assert_eq!(s.minutes_week, 35);
         assert_eq!(s.reviews_week, 2);
         assert!((s.accuracy_week - 0.5).abs() < 1e-9, "1 of 2 correct");
         assert_eq!(s.streak, 1, "today has activity");
@@ -2803,8 +2962,42 @@ mod tests {
         assert_eq!(s.per_subject.len(), 1);
         let ps = &s.per_subject[0];
         assert_eq!(ps.subject_id, sid);
-        assert_eq!(ps.minutes, 25);
+        assert_eq!(ps.minutes, 35);
         assert_eq!(ps.reviews, 2);
         assert_eq!(ps.correct, 1);
+    }
+
+    #[test]
+    fn weak_topics_attributes_via_material_and_skips_unattributable() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let sid = insert_subject(&c, "Bio", None, None, None).unwrap();
+        let weak = insert_topic(&c, &sid, "Krebs cycle", None, &[]).unwrap();
+        let payload = serde_json::json!({});
+        let mat = save_material(&c, &sid, Some(&weak), "quiz", "Quiz", "", &payload).unwrap();
+
+        // Topic "Krebs cycle": mostly wrong + a lapse → should surface as weak.
+        // NB: srs_grade also records an attempt (q>=3 == correct), so the two
+        // grades below add two more attributable attempts on top of these three.
+        record_attempt(&c, &sid, Some(&mat), "quiz", 0, "Q1", false).unwrap();
+        record_attempt(&c, &sid, Some(&mat), "quiz", 1, "Q2", false).unwrap();
+        record_attempt(&c, &sid, Some(&mat), "quiz", 2, "Q3", true).unwrap();
+        srs_grade(&c, &sid, Some(&mat), "quiz", 0, "Q1", 4).unwrap(); // schedule (+1 correct attempt)
+        srs_grade(&c, &sid, Some(&mat), "quiz", 0, "Q1", 1).unwrap(); // lapse   (+1 wrong attempt)
+
+        // An attempt with NO material (unattributable) must be ignored, not crash.
+        record_attempt(&c, &sid, None, "quiz", 9, "Loose", false).unwrap();
+
+        let s = analytics_summary(&c, 30).unwrap();
+        assert_eq!(s.weak_topics.len(), 1, "only the attributable topic ranks");
+        let w = &s.weak_topics[0];
+        assert_eq!(w.topic_id, weak);
+        assert_eq!(w.topic_name, "Krebs cycle");
+        // 3 explicit + 2 from grading; 2 correct (Q3 + the grade-4); the loose
+        // material-less attempt is excluded.
+        assert_eq!(w.reviews, 5);
+        assert_eq!(w.correct, 2);
+        assert!(w.lapses >= 1, "the lapse is attributed to the topic");
+        assert!(!w.reason.is_empty());
     }
 }

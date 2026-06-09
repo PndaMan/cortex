@@ -704,21 +704,33 @@ export interface SubjectStat {
   accuracy: number;
 }
 export interface FsrsTotals { cards: number; avg_stability: number; lapses: number }
+export interface WeakTopic {
+  subject_id: string;
+  topic_id: string;
+  topic_name: string;
+  reviews: number;
+  correct: number;
+  accuracy: number;
+  lapses: number;
+  avg_stability: number;
+  reason: string;
+}
 export interface AnalyticsSummary {
   minutes_per_day: DayMinutes[];
   reviews_per_day: DayReviews[];
   due_forecast: DueDay[];
   per_subject: SubjectStat[];
+  weak_topics: WeakTopic[];
   fsrs: FsrsTotals;
   streak: number;
   minutes_week: number;
   reviews_week: number;
   accuracy_week: number;
 }
-/** Log a finished pomodoro segment (work|break) with the subject active then. */
+/** Log a study segment: "work"/"break" (pomodoro) or "app" (passive focused time). */
 export const logPomodoroSession = (
   subjectId: string | null,
-  kind: "work" | "break",
+  kind: "work" | "break" | "app",
   startedMs: number,
   endedMs: number
 ) => invoke<void>("log_pomodoro_session", { subjectId, kind, startedMs, endedMs });
