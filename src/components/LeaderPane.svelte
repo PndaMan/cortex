@@ -17,6 +17,7 @@
     d: () => app.reviewDiff(),
     o: () => app.setView("notes"),
     a: () => app.setView("calendar"),
+    i: () => app.setView("analytics"),
     t: () => app.cycleTheme(),
     m: () => { app.musicOpen = true; },
     p: () => { app.pomodoroOpen = true; },

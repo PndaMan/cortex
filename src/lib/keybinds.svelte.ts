@@ -83,6 +83,7 @@ export const LEADER_ACTIONS: LeaderAction[] = [
   { key: "d", label: "Review diff", detail: "cheatsheet draft" },
   { key: "o", label: "Notes",       detail: "markdown notes" },
   { key: "a", label: "Calendar",    detail: "events & tasks" },
+  { key: "i", label: "Insights",    detail: "study analytics" },
   { key: "t", label: "Theme",       detail: "cycle Omarchy theme" },
   { key: "m", label: "Music",       detail: "study sound panel" },
   { key: "p", label: "Pomodoro",    detail: "focus timer + bonsai" },

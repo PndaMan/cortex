@@ -455,11 +455,31 @@ pub struct IngestProgress {
 // strings ("YYYY-MM-DD") computed in SQL so per-day buckets line up with the
 // user's calendar rather than UTC midnight.
 
-/// Study minutes on one local day (work pomodoro segments only).
+/// Study minutes on one local day (work pomodoro + passive app segments).
 #[derive(Debug, Clone, Serialize)]
 pub struct DayMinutes {
     pub day: String, // YYYY-MM-DD (local)
     pub minutes: i64,
+}
+
+/// A topic flagged as needing more work, ranked by a weakness score blending
+/// low review accuracy, high lapse count, and low FSRS stability.
+#[derive(Debug, Clone, Serialize)]
+pub struct WeakTopic {
+    pub subject_id: String,
+    pub topic_id: String,
+    pub topic_name: String,
+    /// Review attempts attributable to this topic in the window.
+    pub reviews: i64,
+    pub correct: i64,
+    /// 0.0-1.0; 0 when no reviews for this topic.
+    pub accuracy: f64,
+    /// Total lapses across this topic's scheduled cards.
+    pub lapses: i64,
+    /// Mean FSRS stability (days) over this topic's cards that have one set.
+    pub avg_stability: f64,
+    /// Short human reason it's flagged (e.g. "Low accuracy · 4 lapses").
+    pub reason: String,
 }
 
 /// Reviews answered on one local day, with that day's accuracy.
@@ -510,6 +530,8 @@ pub struct AnalyticsSummary {
     pub due_forecast: Vec<DueDay>,
     /// Per-subject totals over the window (only subjects with any activity).
     pub per_subject: Vec<SubjectStat>,
+    /// Topics needing the most work (top ~8 across subjects, weakest first).
+    pub weak_topics: Vec<WeakTopic>,
     /// FSRS state totals (all scheduled cards, not windowed).
     pub fsrs: FsrsTotals,
     /// Consecutive days ending today with ≥1 review attempt OR work session.
