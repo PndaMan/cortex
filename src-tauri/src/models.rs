@@ -321,6 +321,12 @@ pub struct CalEvent {
     /// Topic ids ticked off for this deadline's study checklist.
     #[serde(default)]
     pub checklist: Vec<String>,
+    /// Assignment priority: "low" | "med" | "high" (None = normal). Previously
+    /// encoded as a colour hex in `color` — now a real field.
+    pub priority: Option<String>,
+    /// Topic ids this assignment covers (previously squatted in `tags`).
+    #[serde(default)]
+    pub topic_ids: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }

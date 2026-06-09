@@ -24,6 +24,8 @@ pub fn create_event(
     kind: Option<String>,
     reminder_ms: Option<i64>,
     tags: Option<Vec<String>>,
+    priority: Option<String>,
+    topic_ids: Option<Vec<String>>,
 ) -> Result<CalEvent> {
     let c = state.db.lock().unwrap();
     let id = repo::insert_event(
@@ -39,8 +41,18 @@ pub fn create_event(
         kind.as_deref().unwrap_or("event"),
         reminder_ms,
         &tags.unwrap_or_default(),
+        normalize_priority(priority.as_deref()),
+        &topic_ids.unwrap_or_default(),
     )?;
     repo::get_event(&c, &id)
+}
+
+/// "none"/"" mean no priority; anything else passes through.
+fn normalize_priority(p: Option<&str>) -> Option<&str> {
+    match p {
+        None | Some("") | Some("none") => None,
+        Some(v) => Some(v),
+    }
 }
 
 #[tauri::command]
@@ -69,8 +81,20 @@ pub fn update_event(
     kind: Option<String>,
     reminder_ms: Option<i64>,
     tags: Option<Vec<String>>,
+    priority: Option<String>,
+    topic_ids: Option<Vec<String>>,
 ) -> Result<CalEvent> {
     let c = state.db.lock().unwrap();
+    // Callers that don't know about assignment fields (e.g. the generic event
+    // modal) omit them — keep the stored values instead of wiping them. An
+    // explicit "none" clears the priority.
+    let existing = repo::get_event(&c, &id)?;
+    let priority = match priority.as_deref() {
+        None => existing.priority.clone(),
+        Some("") | Some("none") => None,
+        Some(v) => Some(v.to_string()),
+    };
+    let topic_ids = topic_ids.unwrap_or(existing.topic_ids);
     repo::update_event(
         &c,
         &id,
@@ -84,6 +108,8 @@ pub fn update_event(
         kind.as_deref().unwrap_or("event"),
         reminder_ms,
         &tags.unwrap_or_default(),
+        priority.as_deref(),
+        &topic_ids,
     )?;
     repo::get_event(&c, &id)
 }

@@ -117,7 +117,8 @@
   const ASSIGNMENT_KINDS = ["exam", "assignment", "project", "deadline"];
   let assignments = $state<CalEvent[]>([]);
 
-  // priority ↔ colour token the calendar already understands. null = normal.
+  // Priority is a real event field now (migration 0015); the colour is only a
+  // calendar display hint derived from it — never parsed back.
   const PRIORITIES = [
     { id: "none", label: "None", color: null as string | null },
     { id: "low", label: "Low", color: "#3b9eff" },
@@ -127,8 +128,8 @@
   function colorForPriority(id: string): string | null {
     return PRIORITIES.find((p) => p.id === id)?.color ?? null;
   }
-  function priorityOf(color: string | null): (typeof PRIORITIES)[number] {
-    return PRIORITIES.find((p) => p.color === color) ?? PRIORITIES[0];
+  function priorityOf(e: CalEvent): (typeof PRIORITIES)[number] {
+    return PRIORITIES.find((p) => p.id === (e.priority ?? "none")) ?? PRIORITIES[0];
   }
 
   // create form
@@ -163,9 +164,10 @@
   // with the Calendar tab).
   $effect(() => { void subjectId; void app.eventsChangedNonce; loadAssignments(); });
 
-  // Covered topics = the subject topics whose ids are stored in the event's tags.
+  // Covered topics = the subject topics whose ids are in the event's topic_ids
+  // (real column; older rows were migrated off the shared tags field).
   function coveredTopics(e: CalEvent) {
-    const ids = new Set(e.tags ?? []);
+    const ids = new Set(e.topic_ids ?? []);
     if (ids.size === 0) return [];
     return (app.activeSubject?.topics ?? []).filter((t) => ids.has(t.id));
   }
@@ -193,9 +195,10 @@
       await api.createEvent({
         title: aTitle.trim(), startMs, subjectId, kind: aKind, allDay: true,
         reminderMs: startMs - 86_400_000, // remind 1 day before
-        tags: [...aTopics], // covered topic ids
+        topicIds: [...aTopics], // covered topic ids (real field)
+        priority: aPriority,
         description: aNotes.trim() || null,
-        color: colorForPriority(aPriority), // priority colour — also shows on the calendar
+        color: colorForPriority(aPriority), // display hint for the calendar only
       });
       resetAssignmentForm();
       app.notifyEventsChanged();
@@ -297,7 +300,7 @@
             {@const topics = coveredTopics(e)}
             {@const doneN = doneCount(e, topics)}
             {@const pct = topics.length ? doneN / topics.length : 0}
-            {@const prio = priorityOf(e.color)}
+            {@const prio = priorityOf(e)}
             {@const open = expanded[e.id] ?? false}
             <li class="cit-deadline{overdue ? ' overdue' : ''}">
               {#if topics.length}

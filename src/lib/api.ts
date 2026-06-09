@@ -462,6 +462,8 @@ export interface CalEvent {
   google_id: string | null;
   tags: string[];
   checklist: string[]; // ticked topic ids (deadline study checklist)
+  priority: string | null; // assignment priority: low | med | high (null = normal)
+  topic_ids: string[]; // covered topic ids (assignments)
   created_at: number;
   updated_at: number;
 }
@@ -477,6 +479,8 @@ export const createEvent = (e: {
   kind?: string;
   reminderMs?: number | null;
   tags?: string[];
+  priority?: string | null;
+  topicIds?: string[];
 }) =>
   invoke<CalEvent>("create_event", {
     subjectId: e.subjectId,
@@ -490,6 +494,8 @@ export const createEvent = (e: {
     kind: e.kind,
     reminderMs: e.reminderMs,
     tags: e.tags,
+    priority: e.priority,
+    topicIds: e.topicIds,
   });
 export const listEvents = (
   subjectId?: string | null,
@@ -508,6 +514,10 @@ export const updateEvent = (e: {
   kind?: string;
   reminderMs?: number | null;
   tags?: string[];
+  /** Omit to keep the stored value; "none" clears. */
+  priority?: string | null;
+  /** Omit to keep the stored value. */
+  topicIds?: string[];
 }) =>
   invoke<CalEvent>("update_event", {
     id: e.id,
@@ -521,6 +531,8 @@ export const updateEvent = (e: {
     kind: e.kind,
     reminderMs: e.reminderMs,
     tags: e.tags,
+    priority: e.priority ?? undefined,
+    topicIds: e.topicIds,
   });
 export const deleteEvent = (id: string) => invoke<void>("delete_event", { id });
 export const setEventDone = (id: string, done: boolean) =>

@@ -1625,13 +1625,16 @@ fn map_event(r: &rusqlite::Row) -> rusqlite::Result<CalEvent> {
         google_id: r.get(13)?,
         tags: text_to_tags(r.get(16)?),
         checklist: text_to_ids(r.get(17)?),
+        priority: r.get(18)?,
+        topic_ids: text_to_tags(r.get(19)?),
         created_at: r.get(14)?,
         updated_at: r.get(15)?,
     })
 }
 
 const EVENT_COLS: &str = "id, subject_id, title, description, location, color, start_ms, end_ms, \
-    all_day, kind, done, reminder_ms, notified, google_id, created_at, updated_at, tags, checklist";
+    all_day, kind, done, reminder_ms, notified, google_id, created_at, updated_at, tags, checklist, \
+    priority, topic_ids";
 
 #[allow(clippy::too_many_arguments)]
 pub fn insert_event(
@@ -1647,17 +1650,21 @@ pub fn insert_event(
     kind: &str,
     reminder_ms: Option<i64>,
     tags: &[String],
+    priority: Option<&str>,
+    topic_ids: &[String],
 ) -> Result<String> {
     let id = new_id();
     let ts = now_ms();
     conn.execute(
         "INSERT INTO events
             (id, subject_id, title, description, location, color, start_ms, end_ms,
-             all_day, kind, done, reminder_ms, notified, created_at, updated_at, tags)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, 0, ?12, ?12, ?13)",
+             all_day, kind, done, reminder_ms, notified, created_at, updated_at, tags,
+             priority, topic_ids)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, 0, ?12, ?12, ?13, ?14, ?15)",
         params![
             id, subject_id, title, description, location, color, start_ms, end_ms,
-            all_day as i64, kind, reminder_ms, ts, tags_to_text(tags)
+            all_day as i64, kind, reminder_ms, ts, tags_to_text(tags),
+            priority, tags_to_text(topic_ids)
         ],
     )?;
     Ok(id)
@@ -1702,16 +1709,20 @@ pub fn update_event(
     kind: &str,
     reminder_ms: Option<i64>,
     tags: &[String],
+    priority: Option<&str>,
+    topic_ids: &[String],
 ) -> Result<()> {
     // Editing an event resets its notified flag so a moved reminder fires again.
     let n = conn.execute(
         "UPDATE events SET
             title=?2, description=?3, location=?4, color=?5, start_ms=?6, end_ms=?7,
-            all_day=?8, kind=?9, reminder_ms=?10, notified=0, updated_at=?11, tags=?12
+            all_day=?8, kind=?9, reminder_ms=?10, notified=0, updated_at=?11, tags=?12,
+            priority=?13, topic_ids=?14
          WHERE id=?1",
         params![
             id, title, description, location, color, start_ms, end_ms,
-            all_day as i64, kind, reminder_ms, now_ms(), tags_to_text(tags)
+            all_day as i64, kind, reminder_ms, now_ms(), tags_to_text(tags),
+            priority, tags_to_text(topic_ids)
         ],
     )?;
     if n == 0 {
@@ -2209,11 +2220,11 @@ mod tests {
         let st = AppState::in_memory().unwrap();
         let c = st.db.lock().unwrap();
         let due = insert_event(
-            &c, None, "Exam", None, None, None, 1_000, Some(2_000), false, "event", Some(500), &[],
+            &c, None, "Exam", None, None, None, 1_000, Some(2_000), false, "event", Some(500), &[], None, &[],
         )
         .unwrap();
         let _future = insert_event(
-            &c, None, "Later", None, None, None, 9_000, None, false, "task", Some(8_000), &[],
+            &c, None, "Later", None, None, None, 9_000, None, false, "task", Some(8_000), &[], None, &[],
         )
         .unwrap();
         // only the past-due, un-notified reminder comes back at now=1000
