@@ -499,6 +499,84 @@ fn tags_by_source(
     Ok(out)
 }
 
+// ---- global text search --------------------------------------------------
+
+/// Case-insensitive substring matches across sources, notes, events and
+/// materials (up to `per_kind` each), normalized into SearchHits for the
+/// global Ctrl+K overlay. Semantic chunk search complements this in
+/// commands::global_search.
+pub fn text_search(conn: &Connection, query: &str, per_kind: usize) -> Result<Vec<SearchHit>> {
+    let pat = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
+    let mut out: Vec<SearchHit> = Vec::new();
+
+    let mut stmt = conn.prepare(
+        "SELECT id, subject_id, name, COALESCE(meta,'') FROM sources \
+         WHERE name LIKE ?1 ESCAPE '\\' ORDER BY updated_at DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![pat, per_kind as i64], |r| {
+        Ok(SearchHit {
+            kind: "source".into(),
+            id: r.get(0)?,
+            subject_id: Some(r.get(1)?),
+            title: r.get(2)?,
+            snippet: r.get(3)?,
+            score: 0.0,
+        })
+    })?;
+    out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+    let mut stmt = conn.prepare(
+        "SELECT id, subject_id, title, substr(body, 1, 160) FROM notes \
+         WHERE title LIKE ?1 ESCAPE '\\' OR body LIKE ?1 ESCAPE '\\' \
+         ORDER BY updated_at DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![pat, per_kind as i64], |r| {
+        Ok(SearchHit {
+            kind: "note".into(),
+            id: r.get(0)?,
+            subject_id: r.get(1)?,
+            title: r.get(2)?,
+            snippet: r.get(3)?,
+            score: 0.0,
+        })
+    })?;
+    out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+    let mut stmt = conn.prepare(
+        "SELECT id, subject_id, title, COALESCE(location, '') FROM events \
+         WHERE title LIKE ?1 ESCAPE '\\' ORDER BY start_ms DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![pat, per_kind as i64], |r| {
+        Ok(SearchHit {
+            kind: "event".into(),
+            id: r.get(0)?,
+            subject_id: r.get(1)?,
+            title: r.get(2)?,
+            snippet: r.get(3)?,
+            score: 0.0,
+        })
+    })?;
+    out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+    let mut stmt = conn.prepare(
+        "SELECT id, subject_id, title, kind FROM materials \
+         WHERE title LIKE ?1 ESCAPE '\\' ORDER BY created_at DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![pat, per_kind as i64], |r| {
+        Ok(SearchHit {
+            kind: "material".into(),
+            id: r.get(0)?,
+            subject_id: Some(r.get(1)?),
+            title: r.get(2)?,
+            snippet: r.get::<_, String>(3)?,
+            score: 0.0,
+        })
+    })?;
+    out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+    Ok(out)
+}
+
 // ---- chunks ------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]

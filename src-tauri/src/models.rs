@@ -80,6 +80,21 @@ pub struct ChunkHit {
     pub score: f32,
 }
 
+/// One result of the global Ctrl+K search, normalized across record types so
+/// the overlay can render and navigate uniformly.
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchHit {
+    /// "chunk" | "source" | "note" | "event" | "material"
+    pub kind: String,
+    pub id: String,
+    /// For chunk hits this is the SOURCE id to open; subject_id scopes navigation.
+    pub subject_id: Option<String>,
+    pub title: String,
+    pub snippet: String,
+    /// Cosine similarity for semantic hits; 0 for plain text matches.
+    pub score: f32,
+}
+
 // ---- chat (RAG) -------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize)]

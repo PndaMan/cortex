@@ -852,6 +852,58 @@ pub fn search_chunks(
     repo::search_chunks(&c, subject_id.as_deref(), &qvec, k.unwrap_or(8))
 }
 
+/// Global Ctrl+K search: semantic over every subject's chunks (the existing
+/// vector index) + plain-text matches over sources, notes, events and
+/// materials. Returns a flat, deduplicated hit list the overlay groups by kind.
+#[tauri::command]
+pub fn global_search(state: State<AppState>, query: String) -> Result<Vec<SearchHit>> {
+    let query = query.trim().to_string();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (provider, gemini_key, ollama_url) = {
+        let c = state.db.lock().unwrap();
+        (
+            effective_embed_provider(&c),
+            repo::get_setting(&c, "gemini_api_key")?,
+            repo::get_setting(&c, "ollama_url")?,
+        )
+    };
+    let mut hits: Vec<SearchHit> = Vec::new();
+
+    // Text matches first — instant, no network.
+    {
+        let c = state.db.lock().unwrap();
+        hits.extend(repo::text_search(&c, &query, 5)?);
+    }
+
+    // Semantic over the vector index (may hit the embedding provider; the stub
+    // embedder keeps this working offline). Failures degrade to text-only.
+    let embedder = embed::from_settings(&provider, gemini_key.as_deref(), ollama_url.as_deref());
+    if let Ok(mut v) = embedder.embed(&[query.clone()]) {
+        let qvec = v.pop().unwrap_or_default();
+        let c = state.db.lock().unwrap();
+        if let Ok(chunks) = repo::search_chunks(&c, None, &qvec, 8) {
+            for h in chunks {
+                // A name match for the same source may already be present.
+                if hits.iter().any(|x| x.kind == "source" && x.id == h.source_id) {
+                    continue;
+                }
+                let subject = repo::get_source(&c, &h.source_id).ok().map(|s| s.subject_id);
+                hits.push(SearchHit {
+                    kind: "chunk".into(),
+                    id: h.source_id.clone(),
+                    subject_id: subject,
+                    title: h.source_name,
+                    snippet: h.text.chars().take(160).collect(),
+                    score: h.score,
+                });
+            }
+        }
+    }
+    Ok(hits)
+}
+
 /// Seed a few demo subjects/topics/sources so the UI has content on first run.
 #[tauri::command]
 pub fn seed_demo(state: State<AppState>) -> Result<Vec<Subject>> {
@@ -2670,6 +2722,10 @@ pub async fn save_recording(
     };
     emit_progress(&app, &source_id, "done", "transcribed", 100);
 
+    // 5. auto-summary: distill the lecture into a note in the background so the
+    // user comes back to key points + terms without blocking the save.
+    spawn_lecture_summary(app.clone(), subject_id.clone(), topic_id.clone(), name.clone(), transcript.clone());
+
     let c = state.db.lock().unwrap();
     let source = repo::get_source(&c, &source_id)?;
     Ok(IngestResult {
@@ -2681,6 +2737,72 @@ pub async fn save_recording(
     })
     .await
     .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+}
+
+/// Background auto-summary of a transcribed lecture → a note ("Summary — <name>")
+/// under the same subject/topic. Best-effort: no model configured, offline mode,
+/// or an LLM error just logs — the recording itself already saved fine.
+fn spawn_lecture_summary(
+    app: AppHandle,
+    subject_id: String,
+    topic_id: Option<String>,
+    name: String,
+    transcript: String,
+) {
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let (spec, keys, offline) = {
+            let c = state.db.lock().unwrap();
+            let spec = match repo::get_setting(&c, "model_chat") {
+                Ok(Some(s)) => s,
+                _ => "gemini:gemini-2.5-flash".into(),
+            };
+            let keys = match read_keys(&c) {
+                Ok(k) => k,
+                Err(e) => { eprintln!("[summary] keys unavailable: {e}"); return; }
+            };
+            let offline = matches!(repo::get_setting(&c, "offline_mode"), Ok(Some(v)) if v == "true");
+            (spec, keys, offline)
+        };
+        if offline && !spec.starts_with("ollama") {
+            return; // honor offline mode: only a local model may run
+        }
+        let Some(mut model) = llm::from_spec_or_any(&spec, &keys) else { return };
+        {
+            let c = state.db.lock().unwrap();
+            apply_budget(&mut model, &c, "chat");
+        }
+        // Keep the prompt inside a sane context window.
+        let excerpt: String = transcript.chars().take(24_000).collect();
+        let system = "You summarize lecture transcripts for a student's study notes. \
+                      Be faithful to the transcript; do not invent content.";
+        let user = format!(
+            "Summarize this lecture transcript as Markdown with exactly these sections:\n\
+             ## Key points — 5-10 tight bullets\n\
+             ## Terms — each important term with a one-line definition\n\
+             ## Open questions — anything the lecturer left unresolved or flagged as exam-relevant (omit the section if none)\n\n\
+             Transcript:\n{excerpt}"
+        );
+        match model.complete(system, &user) {
+            Ok(summary) if !summary.trim().is_empty() => {
+                let c = state.db.lock().unwrap();
+                if let Err(e) = repo::insert_note(
+                    &c,
+                    Some(&subject_id),
+                    topic_id.as_deref(),
+                    &format!("Summary — {name}"),
+                    summary.trim(),
+                ) {
+                    eprintln!("[summary] couldn't save note: {e}");
+                } else {
+                    use tauri::Emitter;
+                    let _ = app.emit("note:created", ());
+                }
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("[summary] generation failed: {e}"),
+        }
+    });
 }
 
 // ---- web search (SearXNG) --------------------------------------------

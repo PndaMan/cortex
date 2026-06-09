@@ -3,6 +3,7 @@
   import Sidebar from "./components/Sidebar.svelte";
   import StatusBar from "./components/StatusBar.svelte";
   import CommandPalette from "./components/CommandPalette.svelte";
+  import GlobalSearch from "./components/GlobalSearch.svelte";
   import ToastStack from "./components/ToastStack.svelte";
   import DiffModal from "./components/DiffModal.svelte";
   import MusicPanel from "./components/MusicPanel.svelte";
@@ -184,8 +185,8 @@
       if (e.key === "Escape") {
         // 1. Close any transient overlay first.
         if (app.findOpen) { app.findOpen = false; return; }
-        if (app.cmdkOpen || app.leaderOpen || app.musicOpen) {
-          app.cmdkOpen = false; app.leaderOpen = false; app.musicOpen = false; return;
+        if (app.cmdkOpen || app.leaderOpen || app.musicOpen || app.searchOpen) {
+          app.cmdkOpen = false; app.leaderOpen = false; app.musicOpen = false; app.searchOpen = false; return;
         }
         if ((window as any).__cortexModalOpen) return; // modals handle their own Esc
         // 2. In a text field (e.g. the chat compose box) Esc just leaves edit mode.
@@ -212,6 +213,8 @@
       const cmdMod = e.ctrlKey || e.metaKey;
       const isP = e.key === "p" || e.key === "P";
       if (cmdMod && isP) { e.preventDefault(); app.cmdkOpen = true; return; }
+      const isK = e.key === "k" || e.key === "K";
+      if (cmdMod && isK) { e.preventDefault(); app.searchOpen = true; return; }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       if (app.leaderOpen) return; // LeaderPane consumes its own keys
@@ -335,6 +338,7 @@
     <!-- overlays -->
     <FindBar />
     <CommandPalette />
+    <GlobalSearch />
     <LeaderPane />
     <HelpOverlay />
     <DiffModal />

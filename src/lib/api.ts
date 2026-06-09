@@ -69,6 +69,16 @@ export interface ChunkHit {
   score: number;
 }
 
+/** One global-search (Ctrl+K) result. For "chunk" hits `id` is the source id. */
+export interface SearchHit {
+  kind: "chunk" | "source" | "note" | "event" | "material";
+  id: string;
+  subject_id: string | null;
+  title: string;
+  snippet: string;
+  score: number;
+}
+
 export interface IngestProgress {
   source_id: string;
   stage: string; // parsing | chunking | embedding | storing | done | error
@@ -192,6 +202,9 @@ export const addSource = (input: AddSourceInput) =>
 // ---- search / settings / demo ----
 export const searchChunks = (query: string, subjectId?: string, k?: number) =>
   invoke<ChunkHit[]>("search_chunks", { query, subjectId, k });
+/** Global Ctrl+K search: semantic across all subjects + text over records. */
+export const globalSearch = (query: string) =>
+  invoke<SearchHit[]>("global_search", { query });
 export const getSetting = (key: string) => invoke<string | null>("get_setting", { key });
 export const setSetting = (key: string, value: string) =>
   invoke<void>("set_setting", { key, value });
@@ -635,3 +648,6 @@ export const onIngestProgress = (
 /** Fired by the tray menu's "Play / pause music" item. */
 export const onTrayMusicToggle = (cb: () => void): Promise<UnlistenFn> =>
   listen("tray-music-toggle", () => cb());
+/** Fired when a background job creates a note (e.g. auto lecture summary). */
+export const onNoteCreated = (cb: () => void): Promise<UnlistenFn> =>
+  listen("note:created", () => cb());

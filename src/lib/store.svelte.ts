@@ -406,6 +406,8 @@ class AppStore {
   // True while a stream/mpv station is connecting, so the panel can show a
   // buffering indicator instead of looking frozen.
   musicBuffering = $state(false);
+  // Global semantic search overlay (Ctrl+K).
+  searchOpen = $state(false);
   // User-added YouTube/URL stations (streamed ad-free via the mpv sidecar).
   customStations = $state<api.CustomStation[]>([]);
   // Favourited station ids (built-in or custom), pinned to a "Favourites" group
@@ -434,6 +436,14 @@ class AppStore {
     };
     // Tray menu "Play / pause music" (works while the window is hidden).
     void api.onTrayMusicToggle(() => this.toggleMusic());
+    // Background auto-summary finished → tell the user where to find it.
+    void api.onNoteCreated(() => {
+      this.pushToast({
+        kind: "success",
+        title: "Lecture summary ready",
+        body: "Key points + terms saved to Notes.",
+      });
+    });
     // Toast on every focus↔break transition.
     this.pomo.onPhaseChange((to) => {
       if (to === "work") {

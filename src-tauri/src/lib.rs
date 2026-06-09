@@ -183,6 +183,7 @@ pub fn run() {
             commands::add_source,
             commands::reingest_source,
             commands::search_chunks,
+            commands::global_search,
             commands::seed_demo,
             commands::env_probe,
             commands::chat_answer,
