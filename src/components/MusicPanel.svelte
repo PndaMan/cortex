@@ -4,15 +4,6 @@
   import { stations } from "../lib/mock";
   import { moveItem, reorderable } from "../lib/dnd";
 
-  // Group stations by category
-  const cats = $derived.by(() => {
-    const map: Record<string, typeof stations> = {};
-    for (const s of stations) {
-      (map[s.cat] ??= []).push(s);
-    }
-    return map;
-  });
-
   // Resolve a station id (built-in or custom) to uniform display fields.
   type Row = { id: string; name: string; kind: string; ico: string };
   function resolve(id: string): Row | null {
@@ -147,36 +138,10 @@
           {/each}
         {/if}
 
-        {#each Object.entries(cats) as [cat, items]}
-          <div class="music-cat">{cat}</div>
-          {#each items as s}
-            <div
-              class={"station" + (s.id === app.music.current ? " on" : "")}
-              role="button"
-              tabindex="0"
-              onclick={() => app.pickStation(s.id)}
-              onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); app.pickStation(s.id); } }}
-            >
-              <span class="st-art">
-                <Icon
-                  name={s.ico}
-                  size={14}
-                  color={s.id === app.music.current ? "var(--accent)" : "var(--fg-muted)"}
-                />
-              </span>
-              <span class="st-name">{s.name}</span>
-              {#if s.id === app.music.current && app.music.playing}
-                <span class="st-eq"><i></i><i></i><i></i></span>
-              {:else}
-                <span class="st-kind mono">{s.kind}</span>
-              {/if}
-              {@render favBtn(s.id)}
-            </div>
-          {/each}
-        {/each}
-
-        <!-- User-added YouTube / URL stations — drag to reorder -->
-        <div class="music-cat">My stations</div>
+        <!-- User-added YouTube / URL stations FIRST — drag to reorder -->
+        {#if app.customStations.length}
+          <div class="music-cat">Your stations</div>
+        {/if}
         {#each app.customStations as s, i (s.id)}
           <div
             class={"station" + (s.id === app.music.current ? " on" : "")}
@@ -203,6 +168,33 @@
             >
               <Icon name="x" size={11} />
             </button>
+          </div>
+        {/each}
+
+        <!-- Built-in stations — songs first, then noises (mock.ts order) -->
+        <div class="music-cat">Stations</div>
+        {#each stations as s (s.id)}
+          <div
+            class={"station" + (s.id === app.music.current ? " on" : "")}
+            role="button"
+            tabindex="0"
+            onclick={() => app.pickStation(s.id)}
+            onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); app.pickStation(s.id); } }}
+          >
+            <span class="st-art">
+              <Icon
+                name={s.ico}
+                size={14}
+                color={s.id === app.music.current ? "var(--accent)" : "var(--fg-muted)"}
+              />
+            </span>
+            <span class="st-name">{s.name}</span>
+            {#if s.id === app.music.current && app.music.playing}
+              <span class="st-eq"><i></i><i></i><i></i></span>
+            {:else}
+              <span class="st-kind mono">{s.kind}</span>
+            {/if}
+            {@render favBtn(s.id)}
           </div>
         {/each}
 
