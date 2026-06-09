@@ -877,27 +877,36 @@ pub fn global_search(state: State<AppState>, query: String) -> Result<Vec<Search
         hits.extend(repo::text_search(&c, &query, 5)?);
     }
 
-    // Semantic over the vector index (may hit the embedding provider; the stub
-    // embedder keeps this working offline). Failures degrade to text-only.
+    // Semantic over the vector index, appended AFTER the exact matches so the
+    // default Enter target is always a predictable name hit. Skipped entirely
+    // on the stub embedder — its hash vectors rank essentially at random, which
+    // made every search "navigate" to whichever subject was ingested first.
     let embedder = embed::from_settings(&provider, gemini_key.as_deref(), ollama_url.as_deref());
-    if let Ok(mut v) = embedder.embed(&[query.clone()]) {
-        let qvec = v.pop().unwrap_or_default();
-        let c = state.db.lock().unwrap();
-        if let Ok(chunks) = repo::search_chunks(&c, None, &qvec, 8) {
-            for h in chunks {
-                // A name match for the same source may already be present.
-                if hits.iter().any(|x| x.kind == "source" && x.id == h.source_id) {
-                    continue;
+    if embedder.name() != "stub" {
+        if let Ok(mut v) = embedder.embed(&[query.clone()]) {
+            let qvec = v.pop().unwrap_or_default();
+            let c = state.db.lock().unwrap();
+            if let Ok(mut chunks) = repo::search_chunks(&c, None, &qvec, 8) {
+                chunks.sort_by(|a, b| b.score.total_cmp(&a.score));
+                for h in chunks {
+                    // Junk floor: weakly-related chunks aren't navigation targets.
+                    if h.score < 0.3 {
+                        continue;
+                    }
+                    // A name match for the same source may already be present.
+                    if hits.iter().any(|x| x.kind == "source" && x.id == h.source_id) {
+                        continue;
+                    }
+                    let subject = repo::get_source(&c, &h.source_id).ok().map(|s| s.subject_id);
+                    hits.push(SearchHit {
+                        kind: "chunk".into(),
+                        id: h.source_id.clone(),
+                        subject_id: subject,
+                        title: h.source_name,
+                        snippet: h.text.chars().take(160).collect(),
+                        score: h.score,
+                    });
                 }
-                let subject = repo::get_source(&c, &h.source_id).ok().map(|s| s.subject_id);
-                hits.push(SearchHit {
-                    kind: "chunk".into(),
-                    id: h.source_id.clone(),
-                    subject_id: subject,
-                    title: h.source_name,
-                    snippet: h.text.chars().take(160).collect(),
-                    score: h.score,
-                });
             }
         }
     }

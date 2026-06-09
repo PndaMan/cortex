@@ -16,13 +16,15 @@
   let runId = 0; // drop stale responses when the user keeps typing
 
   const GROUPS: Record<string, { label: string; icon: string }> = {
-    chunk: { label: "In your sources", icon: "search" },
+    chunk: { label: "Related content", icon: "search" },
     source: { label: "Sources", icon: "doc" },
     note: { label: "Notes", icon: "pencil" },
     event: { label: "Calendar", icon: "calendar" },
     material: { label: "Materials", icon: "grid" },
   };
-  const ORDER = ["chunk", "source", "note", "event", "material"];
+  // Exact matches first — Enter must land on a predictable target; semantic
+  // "related content" chunks trail at the bottom.
+  const ORDER = ["source", "note", "event", "material", "chunk"];
   const grouped = $derived(
     ORDER.map((k) => ({ kind: k, items: hits.filter((h) => h.kind === k) })).filter(
       (g) => g.items.length > 0
