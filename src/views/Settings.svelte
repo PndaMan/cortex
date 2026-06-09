@@ -735,7 +735,7 @@
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Profile</div>
-          <h1 class="read set-title">Who the AI thinks you are</h1>
+          <h1 class="set-title">Who the AI thinks you are</h1>
           <p class="set-sub">Shared with every chat and generation so answers fit your level and style. Stays on this machine.</p>
         </header>
 
@@ -880,7 +880,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Models</div>
-          <h1 class="read set-title">A model for every task</h1>
+          <h1 class="set-title">A model for every task</h1>
           <p class="set-sub">Route each job to the provider that does it best. Token budgets cap spend per call.</p>
         </header>
 
@@ -931,7 +931,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">API keys</div>
-          <h1 class="read set-title">Bring your own keys</h1>
+          <h1 class="set-title">Bring your own keys</h1>
           <p class="set-sub">Stored in the OS keychain, never synced. Nothing routes through Cortex servers.</p>
         </header>
 
@@ -997,7 +997,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Appearance</div>
-          <h1 class="read set-title">Make it yours</h1>
+          <h1 class="set-title">Make it yours</h1>
           <p class="set-sub">Cortex re-skins live from your Omarchy theme, or pick one manually.</p>
         </header>
 
@@ -1109,7 +1109,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Keybinds</div>
-          <h1 class="read set-title">Helix-style, your way</h1>
+          <h1 class="set-title">Helix-style, your way</h1>
           <p class="set-sub">Click any binding to rebind it. Press Esc while listening to cancel.</p>
         </header>
 
@@ -1243,7 +1243,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Integrations</div>
-          <h1 class="read set-title">Local models, web search & backups</h1>
+          <h1 class="set-title">Local models, web search & backups</h1>
           <p class="set-sub">Optional, self-hosted services. Cortex stays fully local without any of them — or run them all with the <span class="mono">homelab/</span> docker compose.</p>
         </header>
 
@@ -1377,7 +1377,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Audio</div>
-          <h1 class="read set-title">Study sound & voices</h1>
+          <h1 class="set-title">Study sound & voices</h1>
           <p class="set-sub">Defaults for the music player and generated audio overviews.</p>
         </header>
 
@@ -1495,7 +1495,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Google Calendar</div>
-          <h1 class="read set-title">Sync your calendar</h1>
+          <h1 class="set-title">Sync your calendar</h1>
           <p class="set-sub">Two-way sync with Google Calendar. The native Cortex calendar works fully without this — connecting just mirrors events both ways.</p>
         </header>
 
@@ -1562,7 +1562,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Data & privacy</div>
-          <h1 class="read set-title">Local-first by default</h1>
+          <h1 class="set-title">Local-first by default</h1>
           <p class="set-sub">Everything lives in a SQLite database on this machine. You own it.</p>
         </header>
 
@@ -1646,7 +1646,7 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">About</div>
-          <h1 class="read set-title">Cortex</h1>
+          <h1 class="set-title">Cortex</h1>
           <p class="set-sub">A desktop study OS for serious students.</p>
         </header>
 

@@ -21,7 +21,7 @@
     <header class="dash-head">
       <div>
         <div class="eyebrow">{dayName} · week {weekNum}</div>
-        <h1 class="dash-title read">Your subjects</h1>
+        <h1 class="dash-title">Your subjects</h1>
       </div>
       <div class="row gap-2">
         <button class="btn btn--sm btn--primary" onclick={() => app.setView("add-subject")}>

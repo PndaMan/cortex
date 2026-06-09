@@ -235,7 +235,7 @@
     <div class="set-pane">
       <header class="set-head">
         <div class="eyebrow">Exam mode</div>
-        <h1 class="read set-title">Sit a timed exam</h1>
+        <h1 class="set-title">Sit a timed exam</h1>
         <p class="set-sub">Generate a timed MCQ + written exam from {app.activeSubject?.name ?? "your subject"} and have it graded instantly.</p>
       </header>
 
@@ -432,7 +432,7 @@
     <div class="set-pane">
       <header class="set-head">
         <div class="eyebrow">Results</div>
-        <h1 class="read set-title">{exam?.title}</h1>
+        <h1 class="set-title">{exam?.title}</h1>
         {#if results?.graded_by}
           <p class="set-sub mono">Written answers graded by {results.graded_by} — double-check anything that looks off.</p>
         {/if}

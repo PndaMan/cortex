@@ -188,7 +188,7 @@
     </button>
     <div>
       <div class="eyebrow">Add source</div>
-      <h1 class="addsrc-title read">New source</h1>
+      <h1 class="addsrc-title">New source</h1>
     </div>
     {#if selectedSubject}
       <div class="addsrc-crumb mono faint">
@@ -323,7 +323,8 @@
     overflow: hidden;
   }
   .addsrc-head { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
-  .addsrc-title { font-size: clamp(22px, 3vw, 32px); margin: 0; line-height: 1.1; }
+  /* .addsrc-title typography comes from the shared .page-title rule (app.css). */
+  .addsrc-title { margin: 0; }
   .addsrc-crumb { margin-left: auto; font-size: var(--t-xs); }
   .addsrc-grid {
     flex: 1 1 auto;

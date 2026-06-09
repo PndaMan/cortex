@@ -123,10 +123,38 @@
 .leader-item .lk { color: var(--mode-select); font-weight: 700; width: 15px; text-align: center; }
 .leader-item .ld { margin-left: auto; color: var(--fg-faint); font-size: var(--t-2xs); }
 
+/* ============ SHARED PAGE HEADER ============
+   One uniform identity for every navbar/sidebar page heading, matching the
+   Cheatsheet reference: a small mono uppercase accent eyebrow (.eyebrow, in
+   cortex.css) + a huge MONO display title + an optional faint mono meta line.
+   Every per-view title class below is mapped onto .page-title so they all read
+   identically. Keep titles capped at the cheatsheet's size (do not grow). */
+.page-title,
+.dash-title,
+.addsrc-title,
+.addpage-title,
+.notes-page-title,
+.set-title,
+.cs-title {
+  font-family: var(--font-mono);
+  font-size: clamp(1.5rem, 1.1rem + 1.5vw, 2.2rem);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--fg-bright);
+  font-weight: 600;
+  margin: 5px 0 7px;
+  overflow-wrap: break-word;
+}
+.page-sub {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-faint);
+  line-height: 1.5;
+}
+
 /* ============ DASHBOARD ============ */
 .dash { max-width: 1120px; margin: 0 auto; padding: var(--sp-8) var(--sp-8) var(--sp-9); }
 .dash-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: var(--sp-7); }
-.dash-title { font-size: var(--r-2xl); color: var(--fg-bright); font-weight: 500; margin-top: 4px; }
 .subj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--sp-4); }
 .subj-card { text-align: left; display: flex; flex-direction: column; padding: var(--sp-4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--rad-4); cursor: pointer; transition: border-color var(--dur), background var(--dur), transform var(--dur); }
 .subj-card:hover { border-color: var(--border-strong); background: var(--surface-2); transform: translateY(-1px); }
@@ -212,8 +240,8 @@
 /* Let the title/meta block grow to fill the row (minus the actions) instead of
    collapsing into a narrow left column. min-width:0 lets it actually take the space. */
 .cs-doc-head > div:first-child { min-width: 0; }
-.cs-title { font-size: clamp(1.5rem, 1.1rem + 1.5vw, 2.2rem); line-height: 1.15; color: var(--fg-bright); font-weight: 600; letter-spacing: -0.01em; margin: 5px 0 7px; overflow-wrap: break-word; }
-.cs-sub { font-size: var(--t-xs); color: var(--fg-faint); }
+/* .cs-title styled by the shared .page-title rule above. */
+.cs-sub { font-family: var(--font-mono); font-size: var(--t-xs); color: var(--fg-faint); }
 .cs-doc-actions { display: flex; gap: 8px; flex-wrap: wrap; align-self: flex-end; order: -1; }
 
 .draft-banner { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; padding: 14px 16px; margin-bottom: var(--sp-6); cursor: pointer; background: color-mix(in oklab, var(--accent) 9%, var(--surface)); border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent); border-radius: var(--rad-3); transition: background var(--dur); }
@@ -617,7 +645,7 @@
 .addpage { max-width: 620px; margin: 0 auto; padding: var(--sp-8) var(--sp-7) var(--sp-9); }
 .addpage-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: var(--sp-7); }
 .addpage-head .btn { margin-top: 4px; }
-.addpage-title { font-size: var(--r-2xl); color: var(--fg-bright); font-weight: 500; letter-spacing: -0.01em; margin: 6px 0 4px; }
+/* .addpage-title styled by the shared .page-title rule above. */
 .add-methods { display: flex; flex-direction: column; gap: 9px; }
 .add-method { display: flex; align-items: center; gap: 14px; padding: 15px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--rad-3); cursor: pointer; text-align: left; transition: border-color var(--dur-fast), background var(--dur-fast); }
 .add-method:hover { border-color: var(--fg-faint); background: var(--surface-2); }
@@ -892,7 +920,7 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
 .set-body { overflow-y: auto; min-height: 0; }
 .set-pane { max-width: 720px; margin: 0 auto; padding: var(--sp-8) var(--sp-7) var(--sp-9); }
 .set-head { margin-bottom: var(--sp-6); }
-.set-title { font-size: var(--r-2xl); color: var(--fg-bright); font-weight: 500; letter-spacing: -0.01em; margin: 6px 0 8px; }
+/* .set-title styled by the shared .page-title rule above. */
 .set-sub { font-size: var(--t-md); color: var(--fg-muted); line-height: 1.5; max-width: 560px; }
 
 .set-group { margin-bottom: var(--sp-7); }

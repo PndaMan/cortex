@@ -149,7 +149,7 @@
     </button>
     <div>
       <div class="eyebrow">Generate material</div>
-      <h1 class="addpage-title read">New study material</h1>
+      <h1 class="addpage-title">New study material</h1>
       <div class="mono faint" style="font-size: var(--t-xs)">
         from {app.activeSubject?.name ?? "your subject"} · pick a format and sources
       </div>
@@ -177,22 +177,16 @@
 
       {#if countLimit && countValue !== null}
         <div class="gm2-block">
-          <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label class="onb-label mono">HOW MANY <span class="faint">{type === "quiz" ? "questions" : "cards"}</span></label>
+          <div class="onb-label mono">{type === "quiz" ? "QUESTIONS" : "CARDS"}</div>
           <div class="gm2-count">
-            <button class="btn btn--icon btn--sm" onclick={() => setCount(countValue - 1)} title="Fewer" disabled={countValue <= countLimit.min}>−</button>
-            <input
-              class="input gm2-count-in mono"
-              type="number"
-              min={countLimit.min}
-              max={countLimit.max}
-              value={countValue}
-              oninput={(e) => setCount(parseInt(e.currentTarget.value, 10))}
-            />
-            <button class="btn btn--icon btn--sm" onclick={() => setCount(countValue + 1)} title="More" disabled={countValue >= countLimit.max}>+</button>
-            <div class="gm2-count-presets">
+            <div class="gm2-step">
+              <button class="btn btn--icon btn--sm" onclick={() => setCount(countValue - 1)} aria-label="fewer" disabled={countValue <= countLimit.min}>−</button>
+              <span class="mono gm2-step-v">{countValue}</span>
+              <button class="btn btn--icon btn--sm" onclick={() => setCount(countValue + 1)} aria-label="more" disabled={countValue >= countLimit.max}>+</button>
+            </div>
+            <div class="seg gm2-count-presets">
               {#each [Math.round(countLimit.def / 2), countLimit.def, Math.min(countLimit.max, countLimit.def * 2)] as p}
-                <button class="gm2-preset mono{countValue === p ? ' on' : ''}" onclick={() => setCount(p)}>{p}</button>
+                <button class="seg-opt{countValue === p ? ' on' : ''}" onclick={() => setCount(p)}>{p}</button>
               {/each}
             </div>
           </div>
@@ -202,12 +196,12 @@
       <div class="gm2-block">
         <div class="field">
           <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label class="onb-label mono">TITLE <span class="faint">auto-suggested</span></label>
+          <label class="onb-label mono">TITLE <span class="gm2-label-hint">auto-suggested</span></label>
           <input class="input" bind:value={title} placeholder={suggested || "Select sources first…"} />
         </div>
         <div class="field">
           <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label class="onb-label mono">CUSTOM INSTRUCTIONS <span class="faint">optional · steers the AI</span></label>
+          <label class="onb-label mono">CUSTOM INSTRUCTIONS <span class="gm2-label-hint">optional</span></label>
           <textarea
             class="input set-textarea"
             bind:value={customPrompt}
@@ -324,17 +318,15 @@
   .gm2-format-label { font-size: var(--t-sm); font-weight: 600; }
   .gm2-format-desc { font-size: var(--t-2xs); color: var(--fg-faint); }
 
-  /* count stepper */
-  .gm2-count { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .gm2-count-in { width: 72px; text-align: center; }
-  .gm2-count-presets { display: flex; gap: 4px; margin-left: auto; }
-  .gm2-preset {
-    min-width: 30px; height: 24px; padding: 0 7px;
-    background: var(--surface); border: 1px solid var(--border); border-radius: var(--rad-2);
-    color: var(--fg-muted); font-size: var(--t-xs); cursor: pointer;
-  }
-  .gm2-preset:hover { border-color: var(--border-strong); color: var(--fg-bright); }
-  .gm2-preset.on { border-color: var(--accent-dim); background: color-mix(in oklab, var(--accent) 12%, transparent); color: var(--fg-bright); }
+  /* count stepper — mirrors the ExamView / Settings pomodoro stepper, with the
+     7/14/28 quick-picks as a .seg segmented control. */
+  .gm2-count { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .gm2-step { display: flex; align-items: center; gap: 8px; }
+  .gm2-step-v { min-width: 36px; text-align: center; color: var(--fg-bright); font-variant-numeric: tabular-nums; }
+  .gm2-count-presets { margin-left: auto; }
+
+  /* label qualifier — quietly subordinate to the uppercase mono eyebrow label */
+  .gm2-label-hint { text-transform: none; letter-spacing: normal; color: var(--fg-faint); font-weight: 400; }
 
   /* right column / source panel */
   .gm2-right { display: flex; flex-direction: column; min-height: 0; gap: 8px; }

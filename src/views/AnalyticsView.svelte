@@ -181,7 +181,7 @@
     <header class="dash-head">
       <div>
         <div class="eyebrow">Insights</div>
-        <h1 class="dash-title read">Study analytics</h1>
+        <h1 class="dash-title">Study analytics</h1>
       </div>
     </header>
 
