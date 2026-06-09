@@ -40,9 +40,19 @@ class MusicController {
   // When a YouTube/URL station is active, playback lives in the mpv sidecar, so
   // pause/resume/volume route to Tauri commands instead of the local engines.
   private isYoutube = false;
+  // Bumped on every play/switch so callbacks from a superseded station (late
+  // errors, stale promises) can't clobber the state of the one now playing.
+  private token = 0;
   // Set by the store so playback failures surface to the user instead of being
   // swallowed (SomaFM streams need internet; a dead network shows a toast).
   onError: ((msg: string) => void) | null = null;
+  // Authoritative engine state, pushed to the store: the UI reflects what is
+  // actually happening (buffering spinner, failed start → paused icon).
+  onState: ((s: { playing: boolean; buffering: boolean }) => void) | null = null;
+
+  private emit(playing: boolean, buffering = false) {
+    this.onState?.({ playing, buffering });
+  }
 
   private ensureAudio(): HTMLAudioElement {
     if (!this.audio) {
@@ -52,9 +62,14 @@ class MusicController {
       // NOTE: do NOT set crossOrigin — SomaFM Icecast streams send no CORS
       // headers, so "anonymous" makes the WebView block the load entirely.
       // We never feed the stream through Web Audio, so opaque playback is fine.
-      this.audio.onerror = () => {
+      const a = this.audio;
+      a.onwaiting = () => { if (!this.isYoutube) this.emit(true, true); };
+      a.onplaying = () => { if (!this.isYoutube) this.emit(true, false); };
+      a.onerror = () => {
+        if (this.isYoutube) return; // stale event from an abandoned stream
         const msg = "Stream failed to load — check your internet connection.";
         console.warn("[music]", msg, this.audio?.error);
+        this.emit(false);
         this.onError?.(msg);
       };
     }
@@ -84,16 +99,25 @@ class MusicController {
     this.stopGenerated();
     this.isYoutube = true;
     this.current = stationId;
-    api.youtubePlay(url, Math.round(this.volume * 100)).catch((err) => {
-      console.warn("[music] youtube play failed", err);
-      this.onError?.(String(err));
-    });
+    const tok = ++this.token;
+    this.emit(true, true); // buffering until mpv accepts the load
+    api.youtubePlay(url, Math.round(this.volume * 100))
+      .then(() => {
+        if (tok === this.token) this.emit(true, false);
+      })
+      .catch((err) => {
+        if (tok !== this.token) return; // user already switched away
+        console.warn("[music] youtube play failed", err);
+        this.emit(false);
+        this.onError?.(String(err));
+      });
   }
 
   /** Resume the current station after a pause (routes by engine). */
   resume() {
     if (this.isYoutube) {
       api.youtubeResume().catch(() => {});
+      this.emit(true);
       return;
     }
     if (this.current) this.play(this.current);
@@ -108,26 +132,34 @@ class MusicController {
     }
     const st = STATIONS[stationId] ?? STATIONS.lofi;
     this.current = stationId;
+    const tok = ++this.token;
 
     if (st.kind === "stream") {
       this.stopGenerated();
       const a = this.ensureAudio();
       if (!a.src.includes(st.url)) a.src = st.url;
       a.volume = this.volume;
+      this.emit(true, true); // buffering until the 'playing' event fires
       a.play().catch((err) => {
+        if (tok !== this.token) return; // superseded by a newer switch
         // Autoplay rejection (before a user gesture) is benign; a real network
         // failure is not — surface anything that isn't a NotAllowedError.
         if (err?.name !== "NotAllowedError") {
           console.warn("[music] play failed", err);
+          this.emit(false);
           this.onError?.("Couldn't start the stream — check your connection.");
+        } else {
+          console.info("[music] autoplay blocked — waiting for a user gesture");
+          this.emit(false);
         }
       });
       return;
     }
 
-    // generated (noise / binaural)
+    // generated (noise / binaural) — starts instantly, no buffering
     this.audio?.pause();
     this.stopGenerated();
+    this.emit(true);
     const ctx = this.ensureCtx();
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
     const gain = ctx.createGain();
@@ -176,6 +208,8 @@ class MusicController {
   }
 
   pause() {
+    this.token++; // cancel any in-flight start
+    this.emit(false);
     if (this.isYoutube) { api.youtubePause().catch(() => {}); return; }
     this.audio?.pause();
     this.stopGenerated();
@@ -191,3 +225,6 @@ class MusicController {
 }
 
 export const music = new MusicController();
+
+/** Built-in station ids (used to validate a saved default still exists). */
+export const BUILTIN_STATION_IDS = Object.keys(STATIONS);

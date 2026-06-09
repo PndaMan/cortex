@@ -54,6 +54,20 @@ fn data_dir(app: &AppHandle) -> Result<PathBuf> {
         .map_err(|e| Error::Other(e.to_string()))
 }
 
+/// Quit any mpv orphaned by a previous session. If the app crashed, shutdown()
+/// never ran — the old mpv (own process group) keeps streaming forever, and a
+/// fresh launch used to delete its socket and spawn a SECOND mpv next to it.
+/// A live listener on the leftover socket can only be that orphan: tell it to
+/// quit before clearing the socket. Called once at app startup.
+pub fn cleanup_stale(app: &AppHandle) {
+    let Ok(dir) = data_dir(app) else { return };
+    let socket = socket_path(&dir);
+    if socket.exists() {
+        let _ = ipc(&socket, &json!({ "command": ["quit"] }));
+        let _ = std::fs::remove_file(&socket);
+    }
+}
+
 fn socket_path(dir: &Path) -> PathBuf {
     dir.join("mpv.sock")
 }
@@ -113,7 +127,12 @@ fn ensure_mpv(socket: &Path, ytdlp: &Path, volume: u8) -> Result<()> {
         }
         *guard = None;
     }
-    let _ = std::fs::remove_file(socket); // clear any stale socket
+    // A leftover socket with a live listener is an orphan from a crashed
+    // session — quit it so two mpvs never play at once, then clear the socket.
+    if socket.exists() {
+        let _ = ipc(socket, &json!({ "command": ["quit"] }));
+        let _ = std::fs::remove_file(socket);
+    }
     let mut cmd = Command::new("mpv");
     cmd.arg("--no-video")
         .arg("--idle=yes")

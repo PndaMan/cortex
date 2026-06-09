@@ -115,12 +115,37 @@ pub fn set_event_done(state: State<AppState>, id: String, done: bool) -> Result<
 
 /// Return reminders that are due now and mark them notified so the frontend can
 /// raise a notification exactly once. The frontend polls this periodically.
+/// With `system_notify` (window hidden in the tray) they are ALSO raised as OS
+/// notifications, since in-app toasts would go unseen.
 #[tauri::command]
-pub fn check_reminders(state: State<AppState>) -> Result<Vec<CalEvent>> {
-    let c = state.db.lock().unwrap();
-    let due = repo::due_reminders(&c, now_ms())?;
-    for e in &due {
-        repo::mark_notified(&c, &e.id)?;
+pub fn check_reminders(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    system_notify: Option<bool>,
+) -> Result<Vec<CalEvent>> {
+    let due = {
+        let c = state.db.lock().unwrap();
+        let due = repo::due_reminders(&c, now_ms())?;
+        for e in &due {
+            repo::mark_notified(&c, &e.id)?;
+        }
+        due
+    };
+    if system_notify.unwrap_or(false) {
+        use tauri_plugin_notification::NotificationExt;
+        for e in &due {
+            let body = e
+                .location
+                .as_deref()
+                .map(|l| format!("at {l}"))
+                .unwrap_or_else(|| "Reminder".to_string());
+            let _ = app
+                .notification()
+                .builder()
+                .title(format!("⏰ {}", e.title))
+                .body(body)
+                .show();
+        }
     }
     Ok(due)
 }

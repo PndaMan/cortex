@@ -4,7 +4,7 @@
 
 import * as api from "./api";
 import type { Subject, Source } from "./api";
-import { music } from "./music";
+import { music, BUILTIN_STATION_IDS } from "./music";
 import { keybinds } from "./keybinds.svelte";
 
 export type View =
@@ -403,6 +403,9 @@ class AppStore {
   pending = $state(0); // cheatsheet draft sections awaiting review (real count set by Cheatsheet view)
   // playing starts false — browsers block autoplay until a user gesture.
   music = $state<Music>({ current: "lofi", playing: false, volume: 60 });
+  // True while a stream/mpv station is connecting, so the panel can show a
+  // buffering indicator instead of looking frozen.
+  musicBuffering = $state(false);
   // User-added YouTube/URL stations (streamed ad-free via the mpv sidecar).
   customStations = $state<api.CustomStation[]>([]);
   // Favourited station ids (built-in or custom), pinned to a "Favourites" group
@@ -423,6 +426,14 @@ class AppStore {
     setTimeout(() => void this.revealWindow(), 3000);
     // Surface stream/playback failures instead of swallowing them.
     music.onError = (m) => this.pushToast({ kind: "warning", title: "Music", body: m });
+    // The engine is the authority on playback state: a failed stream/mpv start
+    // flips the icon back to paused, and buffering drives the panel spinner.
+    music.onState = (s) => {
+      if (this.music.playing !== s.playing) this.music = { ...this.music, playing: s.playing };
+      this.musicBuffering = s.buffering;
+    };
+    // Tray menu "Play / pause music" (works while the window is hidden).
+    void api.onTrayMusicToggle(() => this.toggleMusic());
     // Toast on every focus↔break transition.
     this.pomo.onPhaseChange((to) => {
       if (to === "work") {
@@ -497,9 +508,28 @@ class AppStore {
             ? true
             : hasSearx;
       }
-      if (all["default_station"]) this.music = { ...this.music, current: all["default_station"] };
-      // Load user-added YouTube/URL stations so they show in the music panel.
+      // Load user-added YouTube/URL stations so they show in the music panel —
+      // before restoring the default station, which may be one of them.
       this.customStations = await api.listCustomStations().catch(() => []);
+      // Restore the saved default station only if it still exists (a deleted
+      // custom station would otherwise silently fall back mid-playback).
+      {
+        const saved = all["default_station"];
+        if (
+          saved &&
+          (BUILTIN_STATION_IDS.includes(saved) || this.customStations.some((s) => s.id === saved))
+        ) {
+          this.music = { ...this.music, current: saved };
+        }
+      }
+      // Restore the saved volume (previously reset to 60% on every launch).
+      {
+        const vol = parseInt(all["music_volume"] ?? "", 10);
+        if (Number.isFinite(vol) && vol >= 0 && vol <= 100) {
+          this.music = { ...this.music, volume: vol };
+          music.setVolume(vol / 100);
+        }
+      }
       try {
         const favs = JSON.parse(all["station_favs"] ?? "[]");
         this.stationFavs = Array.isArray(favs) ? favs.filter((x) => typeof x === "string") : [];
@@ -562,8 +592,11 @@ class AppStore {
     if (this.#reminderTimer) return; // single poller
     const tick = async () => {
       try {
-        const due = await api.checkReminders();
+        // While the window is hidden (closed to tray), reminders surface as
+        // system notifications from the backend instead of in-app toasts.
+        const due = await api.checkReminders(document.hidden);
         for (const e of due) {
+          if (document.hidden) continue;
           this.pushToast({
             kind: "info",
             title: `⏰ ${e.title}`,
@@ -949,9 +982,15 @@ class AppStore {
     if (cs) music.playYoutube(id, cs.url);
     else music.play(id);
   }
+  #volumeTimer: ReturnType<typeof setTimeout> | null = null;
   setVolume(v: number) {
     this.music = { ...this.music, volume: v };
     music.setVolume(v / 100);
+    // Persist (debounced — the slider fires continuously while dragging).
+    if (this.#volumeTimer) clearTimeout(this.#volumeTimer);
+    this.#volumeTimer = setTimeout(() => {
+      api.setSetting("music_volume", String(Math.round(v))).catch(() => {});
+    }, 500);
   }
 
   /** Add a user station that streams from a pasted URL (YouTube video/live). */

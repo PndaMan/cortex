@@ -514,7 +514,8 @@ export const setEventDone = (id: string, done: boolean) =>
 /** Set the deadline study checklist (ticked topic ids). */
 export const setEventChecklist = (id: string, topicIds: string[]) =>
   invoke<CalEvent>("set_event_checklist", { id, topicIds });
-export const checkReminders = () => invoke<CalEvent[]>("check_reminders");
+export const checkReminders = (systemNotify = false) =>
+  invoke<CalEvent[]>("check_reminders", { systemNotify });
 
 // ---- citations (per-subject bibliography) ----
 export interface Reference {
@@ -630,3 +631,6 @@ export const srsStats = (subjectId: string, kind: "quiz" | "flashcard") =>
 export const onIngestProgress = (
   cb: (p: IngestProgress) => void
 ): Promise<UnlistenFn> => listen<IngestProgress>("ingest:progress", (e) => cb(e.payload));
+/** Fired by the tray menu's "Play / pause music" item. */
+export const onTrayMusicToggle = (cb: () => void): Promise<UnlistenFn> =>
+  listen("tray-music-toggle", () => cb());

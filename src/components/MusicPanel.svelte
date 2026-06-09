@@ -85,7 +85,9 @@
         </div>
         <div class="mn-info">
           <div class="mn-name">{cur.name}</div>
-          <div class="mn-sub mono">{cur.kind} · ad-free</div>
+          <div class="mn-sub mono">
+            {#if app.musicBuffering}buffering…{:else}{cur.kind} · ad-free{/if}
+          </div>
         </div>
         <button class="mn-play" onclick={() => app.toggleMusic()} title="Play / pause">
           <Icon name={app.music.playing ? "pause" : "play"} size={16} />
