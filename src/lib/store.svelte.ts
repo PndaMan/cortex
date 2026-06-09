@@ -668,18 +668,22 @@ class AppStore {
   #appFlushTimer: ReturnType<typeof setInterval> | null = null;
   #appIdleTimer: ReturnType<typeof setInterval> | null = null;
   #lastActivityAt = Date.now();
+  #appFocused = true;
   // Don't log sub-minute noise (tab flicks, quick window switches).
   static #APP_MIN_MS = 60_000;
   static #APP_FLUSH_MS = 5 * 60_000;
   static #APP_IDLE_MS = 10 * 60_000;
 
-  /** Should we be accumulating right now? Visible + recently active + not in a
-   *  pomodoro work session (whose time is logged separately as "work"). */
+  /** Should we be accumulating right now? Focused + visible + recently active +
+   *  not in a pomodoro work session (whose time is logged separately as
+   *  "work"). Focus means switching to another window stops the clock
+   *  IMMEDIATELY; the 10-minute idle window only covers reading-without-input
+   *  while Cortex itself stays focused. */
   #appShouldAccumulate(): boolean {
     const hidden = typeof document !== "undefined" && document.hidden;
     const idle = Date.now() - this.#lastActivityAt >= AppStore.#APP_IDLE_MS;
     const pomoWork = this.pomo.running && this.pomo.phase === "work";
-    return !hidden && !idle && !pomoWork;
+    return this.#appFocused && !hidden && !idle && !pomoWork;
   }
 
   /** Flush the in-progress segment (if long enough) and stop accumulating.
@@ -729,6 +733,18 @@ class AppStore {
     for (const ev of ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"] as const) {
       window.addEventListener(ev, activity, { passive: true });
     }
+    // Switching to another window stops the clock immediately; coming back
+    // resumes it (the interaction that refocuses also refreshes activity).
+    this.#appFocused = document.hasFocus?.() ?? true;
+    window.addEventListener("focus", () => {
+      this.#appFocused = true;
+      this.#lastActivityAt = Date.now();
+      this.#appReconcile();
+    });
+    window.addEventListener("blur", () => {
+      this.#appFocused = false;
+      this.#appFlush();
+    });
     document.addEventListener("visibilitychange", () => this.#appReconcile());
     // Best-effort final flush when the window/app goes away.
     window.addEventListener("beforeunload", () => this.#appFlush());
