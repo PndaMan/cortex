@@ -331,6 +331,9 @@ pub async fn submit_exam(
             }
         }
 
+        // Which model judged the written answers — surfaced in the results UI so
+        // a bad grade is attributable ("graded by …"). MCQ-only exams are local.
+        let mut graded_by = String::from("local (multiple choice only)");
         // Grade ALL written answers in a single LLM call (when there are any).
         if !written_prompt_items.is_empty() {
             let mut model = llm::from_spec_or_any(&spec, &keys)
@@ -341,16 +344,25 @@ pub async fn submit_exam(
                 apply_budget(&mut model, &c, "quiz");
             }
             let items_json = serde_json::to_string(&written_prompt_items).unwrap_or_default();
+            // `verify` comes FIRST in the output object on purpose: forcing the
+            // model to quote and check the student's actual claims before it
+            // writes a score measurably cuts misreadings (e.g. accusing the
+            // student of reversing notation they stated correctly).
             let system =
-                "You are an exam grader. You are given the SOURCE MATERIAL and a JSON array of \
-                 written answers to grade, each with {id, question, marks, answer}. For EACH item \
-                 award a score from 0 to its `marks` (fractional allowed) based on correctness and \
-                 completeness against the material, and give one short sentence of feedback. \
-                 Respond with ONLY a raw JSON array [{\"id\":\"...\",\"score\":<number>,\
-                 \"feedback\":\"...\"}], one entry per item, same ids. No prose, no code fences.";
+                "You are a careful exam grader. You are given SOURCE MATERIAL and a JSON array of \
+                 written answers, each {id, question, marks, answer}. For EACH item, FIRST verify: \
+                 in 1-3 sentences, restate the factual claims the student ACTUALLY made — quote \
+                 their wording; NEVER attribute to the student anything they did not write — and \
+                 check each claim against the material. THEN award a score from 0 to `marks` \
+                 (fractional allowed) for correctness and completeness, crediting everything the \
+                 student got right. Feedback: 1-2 sentences consistent with your verification. \
+                 Respond with ONLY a raw JSON array \
+                 [{\"id\":\"...\",\"verify\":\"...\",\"score\":<number>,\"feedback\":\"...\"}], \
+                 one entry per item, same ids, fields in that order. No prose, no code fences.";
             let user = format!(
                 "SOURCE MATERIAL:\n{context}\n\nANSWERS TO GRADE (JSON):\n{items_json}\n\nGrade now."
             );
+            graded_by = model.name();
             let raw = model.complete(system, &user)?;
             // Best-effort: if grading JSON is unusable, written items score 0 with a
             // note rather than failing the whole submission.
@@ -421,6 +433,7 @@ pub async fn submit_exam(
             "total": total,
             "questions": per_question,
             "topics": topic_breakdown,
+            "graded_by": graded_by,
         });
 
         // Persist the answers verbatim alongside the grading.

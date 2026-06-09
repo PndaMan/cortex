@@ -417,6 +417,9 @@
       <header class="set-head">
         <div class="eyebrow">Results</div>
         <h1 class="read set-title">{exam?.title}</h1>
+        {#if results?.graded_by}
+          <p class="set-sub mono">Written answers graded by {results.graded_by} — double-check anything that looks off.</p>
+        {/if}
       </header>
 
       <!-- Score as an AnalyticsView-style stat card row. -->
