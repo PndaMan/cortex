@@ -48,16 +48,20 @@ export const diff = {
   ] as DiffSection[],
 };
 
+// Built-in stations, all streamed ad-free through the mpv sidecar (see
+// src/lib/music.ts for the matching ids → YouTube URLs). Songs first, then
+// noises — the music panel renders them in this order under one "Stations"
+// header. Ids must match music.ts so playback resolves.
 export const stations: Station[] = [
-  { id: "lofi", name: "Groove Salad · chill", kind: "ambient downtempo", cat: "Beats", ico: "music" },
-  { id: "jazz", name: "Sonic Universe · jazz", kind: "jazz fusion", cat: "Beats", ico: "music" },
-  { id: "classical", name: "Drone Zone · ambient", kind: "atmospheric ambient", cat: "Instrumental", ico: "music" },
-  { id: "piano", name: "Deep Space One · space", kind: "deep space ambient", cat: "Instrumental", ico: "music" },
-  { id: "brown", name: "Brown noise · deep", kind: "generated noise", cat: "Noise", ico: "waveform" },
-  { id: "rain", name: "Rain · white-noise", kind: "generated noise", cat: "Noise", ico: "waveform" },
-  { id: "cafe", name: "Café ambience", kind: "generated noise", cat: "Noise", ico: "waveform" },
-  { id: "focus", name: "Space Station · focus", kind: "space ambient", cat: "Focus", ico: "bolt" },
-  { id: "binaural", name: "Binaural · 40Hz gamma", kind: "generated tones", cat: "Focus", ico: "bolt" },
+  // ── songs ──
+  { id: "synthwave", name: "Neon Drive", kind: "synthwave", cat: "Stations", ico: "music" },
+  { id: "lofi", name: "Lofi Girl", kind: "lofi hip-hop", cat: "Stations", ico: "music" },
+  { id: "jazz", name: "Late Night Keys", kind: "jazz", cat: "Stations", ico: "music" },
+  { id: "classical", name: "Grand Hall", kind: "classical", cat: "Stations", ico: "music" },
+  // ── noises ──
+  { id: "rain", name: "Rainfall", kind: "rain noise", cat: "Stations", ico: "waveform" },
+  { id: "forest", name: "Forest Floor", kind: "forest noise", cat: "Stations", ico: "waveform" },
+  { id: "binaural", name: "Deep Focus 40 Hz", kind: "40 Hz binaural", cat: "Stations", ico: "bolt" },
 ];
 
 // Flashcards for the study session (Anki-style)
