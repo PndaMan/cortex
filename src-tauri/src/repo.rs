@@ -1037,7 +1037,7 @@ pub fn snapshot_cheatsheet_version(
            AND id NOT IN (
              SELECT id FROM cheatsheet_versions
              WHERE subject_id=?1 AND IFNULL(topic_id,'')=IFNULL(?2,'')
-             ORDER BY created_at DESC LIMIT ?3
+             ORDER BY created_at DESC, rowid DESC LIMIT ?3
            )",
         params![subject_id, topic_id, KEEP],
     )?;
@@ -1054,7 +1054,7 @@ pub fn list_cheatsheet_versions(
     let mut stmt = conn.prepare(
         "SELECT id, created_at, note, sections FROM cheatsheet_versions
          WHERE subject_id=?1 AND IFNULL(topic_id,'')=IFNULL(?2,'')
-         ORDER BY created_at DESC",
+         ORDER BY created_at DESC, rowid DESC",
     )?;
     let rows = stmt.query_map(params![subject_id, topic_id], |r| {
         let sections: String = r.get(3)?;
@@ -1083,6 +1083,26 @@ pub fn get_cheatsheet_version(conn: &Connection, version_id: &str) -> Result<Vec
     Ok(sections
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default())
+}
+
+/// Read a version's owning scope (subject_id, topic_id) plus its sections — used
+/// by restore, which needs to know which sheet to overwrite. Errors if the
+/// version id doesn't exist.
+pub fn get_cheatsheet_version_full(
+    conn: &Connection,
+    version_id: &str,
+) -> Result<(String, Option<String>, Vec<CsSection>)> {
+    let row: Option<(String, Option<String>, String)> = conn
+        .query_row(
+            "SELECT subject_id, topic_id, sections FROM cheatsheet_versions WHERE id=?1",
+            params![version_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let (subject_id, topic_id, sections_json) =
+        row.ok_or_else(|| Error::Other(format!("version not found: {version_id}")))?;
+    let sections: Vec<CsSection> = serde_json::from_str(&sections_json).unwrap_or_default();
+    Ok((subject_id, topic_id, sections))
 }
 
 // ---- materials persistence --------------------------------------------
@@ -3026,5 +3046,57 @@ mod tests {
         assert_eq!(w.correct, 2);
         assert!(w.lapses >= 1, "the lapse is attributed to the topic");
         assert!(!w.reason.is_empty());
+    }
+
+    #[test]
+    fn cheatsheet_version_restore_roundtrips() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let sid = insert_subject(&c, "Algorithms", None, None, None).unwrap();
+
+        let sec = |title: &str, term: &str, def: &str| CsSection {
+            id: title.to_lowercase().replace(' ', "-"),
+            title: title.into(),
+            state: "approved".into(),
+            items: vec![CsItem { t: term.into(), d: def.into() }],
+            image: None,
+            image_query: None,
+        };
+
+        // v1: save + snapshot the original sheet.
+        let v1 = vec![sec("Key Concepts", "Big-O", "growth rate")];
+        save_cheatsheet(&c, &sid, None, &v1).unwrap();
+        snapshot_cheatsheet_version(&c, &sid, None, &v1, "generated").unwrap();
+
+        // v2: edit to a different sheet (now the live one).
+        let v2 = vec![sec("Key Concepts", "Big-O", "EDITED growth rate")];
+        save_cheatsheet(&c, &sid, None, &v2).unwrap();
+        snapshot_cheatsheet_version(&c, &sid, None, &v2, "edited").unwrap();
+
+        // The oldest stored version is the original (newest-first ordering).
+        let versions = list_cheatsheet_versions(&c, &sid, None).unwrap();
+        assert_eq!(versions.len(), 2);
+        let original_id = versions.last().unwrap().id.clone();
+
+        // get_cheatsheet_version_full returns the right scope + payload.
+        let (got_sub, got_topic, got_secs) =
+            get_cheatsheet_version_full(&c, &original_id).unwrap();
+        assert_eq!(got_sub, sid);
+        assert_eq!(got_topic, None);
+        assert_eq!(got_secs[0].items[0].d, "growth rate");
+
+        // Restore the original: snapshot current, overwrite live sheet, re-snapshot.
+        let current = get_cheatsheet_sections(&c, &sid, None).unwrap();
+        snapshot_cheatsheet_version(&c, &sid, None, &current, "before restore").unwrap();
+        save_cheatsheet(&c, &sid, None, &got_secs).unwrap();
+        snapshot_cheatsheet_version(&c, &sid, None, &got_secs, "restored").unwrap();
+
+        // Live sheet now matches the original; the edit is preserved in history.
+        let live = get_cheatsheet_sections(&c, &sid, None).unwrap();
+        assert_eq!(live[0].items[0].d, "growth rate");
+        let after = list_cheatsheet_versions(&c, &sid, None).unwrap();
+        assert_eq!(after.len(), 4, "before-restore + restored snapshots added");
+        assert_eq!(after[0].note, "restored");
+        assert_eq!(after[1].note, "before restore");
     }
 }

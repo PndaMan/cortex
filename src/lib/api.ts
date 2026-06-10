@@ -236,6 +236,9 @@ export const listCheatsheetVersions = (subjectId: string, topicId?: string) =>
   invoke<CheatsheetVersionMeta[]>("list_cheatsheet_versions", { subjectId, topicId });
 export const getCheatsheetVersion = (versionId: string) =>
   invoke<CsSection[]>("get_cheatsheet_version", { versionId });
+/** Restore a stored version as the live sheet (snapshots current first). Returns the restored sheet. */
+export const restoreCheatsheetVersion = (versionId: string) =>
+  invoke<CheatsheetData>("restore_cheatsheet_version", { versionId });
 /** Render a self-contained HTML doc to a PDF at `dest` (headless Chromium). */
 export const exportPdf = (html: string, dest: string) =>
   invoke<void>("export_pdf", { html, dest });

@@ -1968,6 +1968,47 @@ pub fn get_cheatsheet_version(state: State<AppState>, version_id: String) -> Res
     repo::get_cheatsheet_version(&c, &version_id)
 }
 
+/// Restore a stored version as the live cheatsheet. First snapshots the CURRENT
+/// sheet as a new "before restore" version (so the restore itself is undoable),
+/// then overwrites the live sheet with the chosen version's sections — scoped to
+/// the version's own subject/topic. Returns the restored cheatsheet.
+#[tauri::command]
+pub fn restore_cheatsheet_version(
+    state: State<AppState>,
+    version_id: String,
+) -> Result<CheatsheetData> {
+    let c = state.db.lock().unwrap();
+    // The version row carries the scope it belongs to — restore overwrites THAT sheet.
+    let (subject_id, topic_id, sections) = repo::get_cheatsheet_version_full(&c, &version_id)?;
+    let topic = topic_id.as_deref();
+
+    // Snapshot the current live sheet first so the restore can itself be undone.
+    let current = repo::get_cheatsheet_sections(&c, &subject_id, topic)?;
+    if !current.is_empty() {
+        repo::snapshot_cheatsheet_version(&c, &subject_id, topic, &current, "before restore")?;
+    }
+
+    // Overwrite the live sheet with the chosen version, then record the restore.
+    repo::save_cheatsheet(&c, &subject_id, topic, &sections)?;
+    repo::snapshot_cheatsheet_version(&c, &subject_id, topic, &sections, "restored")?;
+
+    // Mirror get_cheatsheet's response shape so the view can apply it directly.
+    let subj = repo::get_subject(&c, &subject_id)?;
+    let tname = topic
+        .and_then(|tid| subj.topics.iter().find(|t| t.id == tid))
+        .map(|t| t.name.clone())
+        .unwrap_or_else(|| subj.name.clone());
+    let (_, n) = repo::context_text(&c, &subject_id, topic, None, 1)?;
+    Ok(CheatsheetData {
+        subject: subj.name,
+        topic: tname,
+        sources: n,
+        sources_used: n,
+        model: "stored".into(),
+        sections,
+    })
+}
+
 // ---- AI: material generation -----------------------------------------
 
 /// Generate a study material (flashcards | quiz) from a subject/topic's sources.
