@@ -938,9 +938,10 @@ class AppStore {
     this.diffOpen = true;
   }
   reviewDiff() {
-    this.view = "subject";
-    this.subjectTab = "cheatsheet";
-    setTimeout(() => (this.diffOpen = true), 30);
+    // The review hub is a global overlay — open it from anywhere without
+    // navigating. (The Cheatsheet view, when mounted, reloads on
+    // cheatsheetReloadNonce so any restore/merge is reflected there.)
+    this.diffOpen = true;
   }
   mergeDiff() {
     this.diffOpen = false;

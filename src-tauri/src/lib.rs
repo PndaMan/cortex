@@ -202,6 +202,7 @@ pub fn run() {
             commands::update_cheatsheet,
             commands::list_cheatsheet_versions,
             commands::get_cheatsheet_version,
+            commands::restore_cheatsheet_version,
             commands::export_pdf,
             commands::export_database,
             commands::export_anki,
