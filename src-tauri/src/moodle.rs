@@ -326,15 +326,18 @@ pub fn moodle_disconnect(state: tauri::State<AppState>) -> Result<()> {
 pub async fn moodle_sync(app: AppHandle) -> Result<MoodleSummary> {
     tauri::async_runtime::spawn_blocking(move || -> Result<MoodleSummary> {
         let state = app.state::<AppState>();
-        let (url, token, userid) = {
+        let (url, token) = {
             let c = state.db.lock().unwrap();
-            let (url, token) =
-                read_cfg(&c).ok_or_else(|| Error::Other("Moodle is not connected".into()))?;
-            let uid = repo::get_setting(&c, K_USERID)?
-                .and_then(|s| s.parse::<i64>().ok())
-                .unwrap_or(0);
-            (url, token, uid)
+            read_cfg(&c).ok_or_else(|| Error::Other("Moodle is not connected".into()))?
         };
+        // Fetch the userid fresh (authoritative) rather than trusting a stored value
+        // — a stale/0 userid makes core_enrol_get_users_courses fail with
+        // "Invalid parameter value detected". This also re-verifies the token.
+        let (userid, _name) = site_info(&url, &token)?;
+        {
+            let c = state.db.lock().unwrap();
+            repo::set_setting(&c, K_USERID, &userid.to_string())?;
+        }
         let now = now_ms();
         let mut summary = MoodleSummary {
             courses: 0,
