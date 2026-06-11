@@ -1,16 +1,28 @@
-//! Live homelab sync (last-write-wins, whole-database).
+//! Live homelab sync (smart row-level merge, whole vault).
 //!
-//! The local SQLite DB is the unit of sync. We PUT a consistent snapshot to a
-//! WebDAV endpoint after changes (debounced by the frontend) and, on launch,
-//! pull a newer remote copy before opening the DB. "Newer" is decided by a
-//! logical stamp file (`cortex.stamp`, epoch-ms of the last push) rather than
-//! HTTP dates, so it's immune to clock/header quirks. This is single-user
-//! multi-device: concurrent edits resolve last-write-wins, not per-record.
+//! The vault is the local SQLite DB **plus** the on-disk binary originals
+//! (`sources/`, `recordings/`). Both are synced to a WebDAV endpoint.
+//!
+//! Conflict handling is per-record, not per-database:
+//!   • On launch we pull the remote DB and MERGE it into the local one — union
+//!     by primary key, newest `updated_at` wins. A row present on only one side
+//!     is never dropped, so nothing is deleted "needlessly".
+//!   • Genuine deletes propagate via the `tombstones` table (written by DB
+//!     triggers): a delete wins over a row unless the row was edited *after* the
+//!     delete. See migration 0019.
+//!   • Binary originals sync both directions and are never deleted. Filenames
+//!     are `{source_id}.{ext}`, so after syncing we re-point each source's
+//!     (absolute, machine-specific) `stored_path` to the local copy — without
+//!     bumping `updated_at`, so the path difference can't cause sync churn.
+//!
+//! A logical stamp file (`cortex.stamp`, epoch-ms of the last push) decides
+//! when the remote has advanced; it's immune to clock/header quirks.
 
 use crate::db::AppState;
 use crate::error::{Error, Result};
 use crate::repo;
 use rusqlite::Connection;
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
@@ -124,55 +136,190 @@ fn get_bytes(cfg: &SyncCfg, name: &str) -> Result<Vec<u8>> {
         .map_err(|e| Error::Other(format!("sync: read {name}: {e}")))
 }
 
-// ---- launch pull ------------------------------------------------------------
+// ---- pull + merge (background, never blocks startup) ------------------------
 
-/// Before the app opens its DB connection: if the remote holds a newer snapshot
-/// than the local copy, replace the local DB with it. Best-effort and silent —
-/// any failure just leaves the local DB untouched so the app still starts.
-pub fn pull_on_launch(db_path: &Path) {
-    if !db_path.exists() {
-        return; // fresh install — nothing to pull into yet
-    }
-    let (cfg, local_at) = {
-        let Ok(conn) = Connection::open(db_path) else {
-            return;
+/// Pull the remote snapshot and MERGE it row-by-row into the LIVE local DB
+/// (union by id, newest `updated_at` wins, tombstones applied). Local-only rows
+/// survive — nothing is dropped. Runs async off the UI thread; the frontend
+/// calls it on launch *after* the window is shown, so startup never waits on
+/// homelab network I/O. Returns true if a newer remote was merged in.
+#[tauri::command]
+pub async fn sync_pull(app: AppHandle) -> Result<bool> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<bool> {
+        let state = app.state::<AppState>();
+        let (cfg, local_at) = {
+            let c = state.db.lock().unwrap();
+            let Some(cfg) = read_cfg(&c) else {
+                return Ok(false); // sync disabled / unconfigured
+            };
+            let local_at = repo::get_setting(&c, K_LAST_AT)
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
+            (cfg, local_at)
         };
-        let Some(cfg) = read_cfg(&conn) else {
-            return;
+        let remote = match remote_stamp(&cfg)? {
+            Some(s) => s,
+            None => return Ok(false), // nothing on the remote yet
         };
-        let local_at = repo::get_setting(&conn, K_LAST_AT)
-            .ok()
-            .flatten()
-            .and_then(|s| s.parse::<i64>().ok())
-            .unwrap_or(0);
-        (cfg, local_at)
-        // conn drops here, closing the handle before we replace the file
-    };
-    let remote = match remote_stamp(&cfg) {
-        Ok(Some(s)) => s,
-        _ => return,
-    };
-    if remote <= local_at {
-        return; // local is current or newer — push will handle the reverse
-    }
-    let Ok(bytes) = get_bytes(&cfg, REMOTE_DB) else {
-        return;
-    };
-    let tmp = db_path.with_extension("db.synctmp");
-    if std::fs::write(&tmp, &bytes).is_err() {
-        return;
-    }
-    if std::fs::rename(&tmp, db_path).is_err() {
+        if remote <= local_at {
+            return Ok(false); // remote hasn't advanced since our last merge
+        }
+        let bytes = get_bytes(&cfg, REMOTE_DB)?;
+        let tmp = std::env::temp_dir().join(format!("cortex-pull-{remote}.db"));
+        std::fs::write(&tmp, &bytes).map_err(Error::Io)?;
+        {
+            let c = state.db.lock().unwrap();
+            merge_attached(&c, &tmp)?;
+            // We now hold the remote version; the launch push uploads the union
+            // back with a fresh, higher stamp.
+            repo::set_setting(&c, K_LAST_AT, &remote.to_string())?;
+        }
         let _ = std::fs::remove_file(&tmp);
-        return;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| Error::Other(format!("sync pull task failed: {e}")))?
+}
+
+/// Names of user tables to merge (everything except internal/never-merged ones).
+fn user_tables(conn: &Connection, schema: &str) -> Result<Vec<String>> {
+    let mut st = conn.prepare(&format!(
+        "SELECT name FROM {schema}.sqlite_master WHERE type='table' \
+         AND name NOT LIKE 'sqlite_%' AND name NOT IN ('settings','tombstones')"
+    ))?;
+    let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+/// Column names of a table in the given schema (`main` / `rmt`), declared order.
+fn columns_of(conn: &Connection, schema: &str, table: &str) -> Result<Vec<String>> {
+    let mut st = conn.prepare(&format!("PRAGMA {schema}.table_info(\"{table}\")"))?;
+    let rows = st.query_map([], |r| r.get::<_, String>(1))?; // col 1 = name
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+/// Local columns of a table.
+fn columns(conn: &Connection, table: &str) -> Result<Vec<String>> {
+    columns_of(conn, "main", table)
+}
+
+/// Does `schema` contain a table named `name`?
+fn has_table(conn: &Connection, schema: &str, name: &str) -> bool {
+    conn.query_row(
+        &format!("SELECT 1 FROM {schema}.sqlite_master WHERE type='table' AND name=?1"),
+        [name],
+        |_| Ok(()),
+    )
+    .is_ok()
+}
+
+/// Smart merge of `remote` into `local` (both standalone SQLite files):
+///   • tables with `id` + `updated_at`  → upsert; remote overwrites local only
+///     when strictly newer (in-place UPDATE, never a delete-then-insert that
+///     could cascade away children).
+///   • other tables                     → additive INSERT OR IGNORE (remote-only
+///     rows added, existing rows untouched).
+///   • tombstones unioned, then applied (with FK ON so deletes cascade) — a
+///     delete removes a row only when the row wasn't edited after the delete.
+/// `settings` is never merged (each device keeps its own creds/sync state).
+#[cfg(test)]
+fn merge_db(local: &Path, remote: &Path) -> Result<()> {
+    let conn = Connection::open(local)?;
+    merge_attached(&conn, remote)
+}
+
+/// The merge itself, run against an already-open connection (the launch path
+/// uses the *live* DB connection so the merge happens in the background after
+/// the window is shown — never blocking startup on network I/O).
+fn merge_attached(conn: &Connection, remote: &Path) -> Result<()> {
+    // Bulk inserts may transiently violate FKs (a child arriving before its
+    // parent); we re-enable FK only for the tombstone-apply pass.
+    conn.pragma_update(None, "foreign_keys", "OFF")?;
+    conn.execute(
+        "ATTACH DATABASE ?1 AS rmt",
+        [remote.to_string_lossy().as_ref()],
+    )?;
+
+    let local_tables = user_tables(conn, "main")?;
+    let remote_tables: HashSet<String> =
+        user_tables(conn,"rmt")?.into_iter().collect();
+
+    for t in &local_tables {
+        if !remote_tables.contains(t) {
+            continue; // table missing on remote (older app version) — skip
+        }
+        // Use only columns present in BOTH schemas, so an older remote (missing
+        // a column a later migration added) doesn't blow up the SELECT.
+        let remote_cols: HashSet<String> =
+            columns_of(conn, "rmt", t)?.into_iter().collect();
+        let cols: Vec<String> = columns(conn, t)?
+            .into_iter()
+            .filter(|c| remote_cols.contains(c))
+            .collect();
+        if cols.is_empty() {
+            continue;
+        }
+        let has_id = cols.iter().any(|c| c == "id");
+        let has_upd = cols.iter().any(|c| c == "updated_at");
+        let collist = cols
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = if has_id && has_upd {
+            let set = cols
+                .iter()
+                .filter(|c| *c != "id")
+                .map(|c| format!("\"{c}\"=excluded.\"{c}\""))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "INSERT INTO main.\"{t}\" ({collist}) SELECT {collist} FROM rmt.\"{t}\" WHERE true \
+                 ON CONFLICT(id) DO UPDATE SET {set} WHERE excluded.updated_at > \"{t}\".updated_at"
+            )
+        } else {
+            format!(
+                "INSERT OR IGNORE INTO main.\"{t}\" ({collist}) SELECT {collist} FROM rmt.\"{t}\""
+            )
+        };
+        conn.execute(&sql, [])?;
     }
-    // The fresh snapshot is self-contained; stale WAL/SHM would corrupt it.
-    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
-    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
-    // Record that we now hold the remote version.
-    if let Ok(c2) = Connection::open(db_path) {
-        let _ = repo::set_setting(&c2, K_LAST_AT, &remote.to_string());
+
+    // Union tombstones from both sides — only if the remote has the table. A DB
+    // written by the OLD sync (schema < 0019) has no `tombstones`; selecting
+    // from it would error. Local tombstones still apply below regardless.
+    if has_table(conn, "rmt", "tombstones") {
+        conn.execute(
+            "INSERT OR REPLACE INTO main.tombstones \
+             SELECT entity_table, entity_id, MAX(deleted_at) FROM ( \
+               SELECT * FROM main.tombstones UNION ALL SELECT * FROM rmt.tombstones \
+             ) GROUP BY entity_table, entity_id",
+            [],
+        )?;
     }
+
+    // Apply tombstones with FK ON so a parent delete cascades to its children.
+    conn.pragma_update(None, "foreign_keys", "ON")?;
+    for t in &local_tables {
+        let cols = columns(conn,t)?;
+        if cols.iter().any(|c| c == "id") && cols.iter().any(|c| c == "updated_at") {
+            let sql = format!(
+                "DELETE FROM main.\"{t}\" WHERE id IN \
+                   (SELECT entity_id FROM main.tombstones WHERE entity_table='{t}') \
+                 AND updated_at <= (SELECT deleted_at FROM main.tombstones \
+                   WHERE entity_table='{t}' AND entity_id=main.\"{t}\".id)"
+            );
+            conn.execute(&sql, [])?;
+        }
+    }
+
+    conn.execute("DETACH DATABASE rmt", [])?;
+    // Fold the WAL back into the main file so the merged result is self-contained.
+    let _: std::result::Result<String, _> =
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0));
+    Ok(())
 }
 
 // ---- commands ---------------------------------------------------------------
@@ -253,8 +400,210 @@ pub async fn sync_push(app: AppHandle) -> Result<i64> {
             let c = state.db.lock().unwrap();
             repo::set_setting(&c, K_LAST_AT, &ts.to_string())?;
         }
+        // Sync the binary vault (originals + recordings), both directions, no
+        // deletes — then re-point source paths to the local copies. Best-effort:
+        // a file/WebDAV hiccup must not fail the DB push that already succeeded.
+        if let Some(data_dir) = db_path.parent() {
+            sync_files(&cfg, data_dir, "sources");
+            sync_files(&cfg, data_dir, "recordings");
+            let c = state.db.lock().unwrap();
+            let _ = repoint_source_files(&c, &data_dir.join("sources"));
+        }
         Ok(ts)
     })
     .await
     .map_err(|e| Error::Other(format!("sync push task failed: {e}")))?
+}
+
+// ---- binary file sync (WebDAV) ---------------------------------------------
+
+fn dav_request(
+    cfg: &SyncCfg,
+    method: &[u8],
+    path: &str,
+) -> reqwest::blocking::RequestBuilder {
+    let m = reqwest::Method::from_bytes(method).unwrap_or(reqwest::Method::GET);
+    auth(client().request(m, file_url(cfg, path)), cfg)
+}
+
+/// Create a remote collection (directory). Ignores already-exists / 405.
+fn mkcol(cfg: &SyncCfg, path: &str) {
+    let _ = dav_request(cfg, b"MKCOL", path).send();
+}
+
+/// File names directly under a remote collection, via PROPFIND Depth:1.
+fn propfind_names(cfg: &SyncCfg, dir: &str) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let body = "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\">\
+                <d:prop><d:resourcetype/></d:prop></d:propfind>";
+    let resp = dav_request(cfg, b"PROPFIND", dir)
+        .header("Depth", "1")
+        .header("Content-Type", "application/xml")
+        .body(body)
+        .send();
+    let Ok(resp) = resp else {
+        return out;
+    };
+    if !resp.status().is_success() && resp.status().as_u16() != 207 {
+        return out; // dir missing or PROPFIND unsupported — treat as empty
+    }
+    let text = resp.text().unwrap_or_default();
+    for href in extract_hrefs(&text) {
+        let trimmed = href.trim_end_matches('/');
+        if let Some(name) = trimmed.rsplit('/').next() {
+            // Skip the collection's own entry; real files always carry an ext.
+            if !name.is_empty() && name.contains('.') {
+                out.insert(name.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Pull the text inside every `<…href>…</…href>` (namespace-prefix agnostic).
+fn extract_hrefs(xml: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(i) = rest.find("href") {
+        rest = &rest[i + 4..];
+        let Some(gt) = rest.find('>') else { break };
+        let after = &rest[gt + 1..];
+        let Some(lt) = after.find('<') else { break };
+        let val = after[..lt].trim();
+        if !val.is_empty() {
+            out.push(val.to_string());
+        }
+        rest = &after[lt..];
+    }
+    out
+}
+
+/// Sync one local subdir of binary originals with `files/{sub}` on the remote,
+/// both directions, never deleting. Filenames are content-addressed
+/// (`{id}.{ext}`), so presence is identity — no byte comparison needed.
+fn sync_files(cfg: &SyncCfg, data_dir: &Path, sub: &str) {
+    let local_dir = data_dir.join(sub);
+    mkcol(cfg, "files");
+    mkcol(cfg, &format!("files/{sub}"));
+    let remote = propfind_names(cfg, &format!("files/{sub}"));
+
+    // Upload local files the remote lacks.
+    let mut local: HashSet<String> = HashSet::new();
+    if let Ok(rd) = std::fs::read_dir(&local_dir) {
+        for entry in rd.flatten() {
+            if !entry.path().is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            local.insert(name.clone());
+            if !remote.contains(&name) {
+                if let Ok(bytes) = std::fs::read(entry.path()) {
+                    let _ = put(cfg, &format!("files/{sub}/{name}"), bytes);
+                }
+            }
+        }
+    }
+
+    // Download remote files we don't have locally.
+    let _ = std::fs::create_dir_all(&local_dir);
+    for name in &remote {
+        if local.contains(name) {
+            continue;
+        }
+        if let Ok(bytes) = get_bytes(cfg, &format!("files/{sub}/{name}")) {
+            let _ = std::fs::write(local_dir.join(name), bytes);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{now_ms, AppState};
+    use std::fs;
+
+    fn ins(c: &Connection, id: &str, name: &str, upd: i64) {
+        c.execute(
+            "INSERT INTO subjects (id,name,created_at,updated_at) VALUES (?1,?2,?3,?4)",
+            rusqlite::params![id, name, upd, upd],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn merge_unions_keeps_local_and_applies_tombstones() {
+        let dir = std::env::temp_dir().join(format!("cortex-merge-{}", now_ms()));
+        fs::create_dir_all(&dir).unwrap();
+        let lp = dir.join("local.db");
+        let rp = dir.join("remote.db");
+
+        {
+            let local = AppState::new(&lp).unwrap();
+            let remote = AppState::new(&rp).unwrap();
+            let lc = local.db.lock().unwrap();
+            let rc = remote.db.lock().unwrap();
+
+            ins(&lc, "shared", "old-name", 100); // remote newer → should win
+            ins(&rc, "shared", "new-name", 200);
+            ins(&lc, "local-only", "keep-me", 100); // must survive the merge
+            ins(&rc, "remote-only", "bring-me", 100); // must arrive
+            ins(&lc, "doomed", "x", 100); // deleted on remote → tombstone wins
+            ins(&rc, "doomed", "x", 100);
+            rc.execute("DELETE FROM subjects WHERE id='doomed'", []).unwrap();
+
+            for c in [&lc, &rc] {
+                let _: std::result::Result<String, _> =
+                    c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0));
+            }
+        } // connections close here
+
+        merge_db(&lp, &rp).unwrap();
+
+        let c = Connection::open(&lp).unwrap();
+        let name: String = c
+            .query_row("SELECT name FROM subjects WHERE id='shared'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(name, "new-name", "newer updated_at must win (ISC-11)");
+        let count = |id: &str| -> i64 {
+            c.query_row(
+                "SELECT count(*) FROM subjects WHERE id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(count("local-only"), 1, "local-only row must survive (ISC-12)");
+        assert_eq!(count("remote-only"), 1, "remote-only row must arrive (ISC-10)");
+        assert_eq!(count("doomed"), 0, "tombstoned row must be deleted");
+
+        drop(c);
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+/// Re-point each source's absolute, machine-specific `stored_path` to the local
+/// copy of its file (named `{id}.{ext}`). Deliberately does NOT touch
+/// `updated_at` — a path is local state, not a user edit; bumping it would make
+/// the row look "newer" and ping-pong the path between devices forever.
+fn repoint_source_files(conn: &Connection, sources_dir: &Path) -> Result<()> {
+    let Ok(rd) = std::fs::read_dir(sources_dir) else {
+        return Ok(());
+    };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let fname = entry.file_name().to_string_lossy().to_string();
+        let Some((id, _ext)) = fname.rsplit_once('.') else {
+            continue;
+        };
+        if let Some(p) = path.to_str() {
+            let _ = conn.execute(
+                "UPDATE sources SET stored_path=?2 WHERE id=?1 AND stored_path IS NOT ?2",
+                rusqlite::params![id, p],
+            );
+        }
+    }
+    Ok(())
 }

@@ -256,7 +256,7 @@
     whisperState = await testEndpoint(whisperUrl);
   }
 
-  // ---- live homelab sync (last-write-wins DB snapshot) ----
+  // ---- live homelab sync (smart per-record merge + binary file sync) ----
   let syncUrl   = $state("");
   let syncUser  = $state("");
   let syncPass  = $state("");
@@ -1290,7 +1290,7 @@ Notes: {about}</pre>
           <div class="set-group-h svc-h">
             <div>
               <h3 class="set-group-t">Live sync</h3>
-              <p class="set-group-d">Auto-store your library to a homelab WebDAV target and fetch the newest copy on launch. Last-write-wins across devices (whole-database, not per-record).</p>
+              <p class="set-group-d">Sync your whole vault to a homelab WebDAV target — database <em>and</em> source files. Smart per-record merge across devices: newest edit wins, rows from either device are kept, and nothing is deleted unless you actually deleted it.</p>
             </div>
             <span class="status-pill status-pill--{syncPill().cls}"><span class="dot"></span>{syncPill().label}</span>
           </div>
@@ -1298,7 +1298,7 @@ Notes: {about}</pre>
             <div class="set-row">
               <div class="set-row-l">
                 <div class="set-row-t">Enable live sync</div>
-                <div class="set-row-d">Push after changes (debounced) + pull a newer copy on launch.</div>
+                <div class="set-row-d">Merges the remote vault in on launch (in the background — never blocks startup), then pushes your changes (debounced).</div>
               </div>
               <div class="set-row-r">
                 <button type="button" class={"st-toggle" + (syncOn ? " on" : "")} onclick={toggleSync} disabled={!syncUrl.trim()} role="switch" aria-checked={syncOn} aria-label="live sync"><span class="st-knob"></span></button>
@@ -1330,7 +1330,7 @@ Notes: {about}</pre>
                   <Icon name="upload" size={12} /> {app.syncState === "syncing" ? "Syncing…" : "Sync now"}
                 </button>
               </div>
-              <div class="set-row-d">Last synced: <span class="mono">{fmtSyncTime(app.syncLastAt)}</span>. Bring up a WebDAV target with the <span class="mono">homelab/</span> compose.</div>
+              <div class="set-row-d">Last synced: <span class="mono">{fmtSyncTime(app.syncLastAt)}</span>. Files live under <span class="mono">files/</span> on the target; the DB merges by record. Bring up a WebDAV target with the <span class="mono">homelab/</span> compose.</div>
             </div>
           </div>
         </section>

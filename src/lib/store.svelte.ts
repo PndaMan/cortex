@@ -750,7 +750,9 @@ class AppStore {
     this.scheduleSync(); // data changed → push to homelab (debounced)
   }
 
-  // ---- live homelab sync (last-write-wins DB snapshot) ----
+  // ---- live homelab sync (smart row-level merge + binary file sync) ----
+  // The native side merges the remote DB into the local one on launch (union by
+  // id, newest wins, tombstones for deletes) and syncs originals/recordings.
   // "off" until we learn sync is enabled; then idle/syncing/synced/error.
   syncState = $state<"off" | "idle" | "syncing" | "synced" | "error">("off");
   syncLastAt = $state(0);
@@ -761,8 +763,25 @@ class AppStore {
       const s = await api.syncStatus();
       this.syncState = s.enabled && s.configured ? "idle" : "off";
       this.syncLastAt = s.last_at;
+      // Sync runs in the BACKGROUND after the window is up — it must never block
+      // startup on homelab network I/O. Pull+merge the remote vault, refresh the
+      // UI if anything arrived, then push our union + binary files back.
+      if (this.syncState === "idle") void this.launchSync();
     } catch {
       this.syncState = "off";
+    }
+  }
+
+  /** Background launch sync: pull+merge, refresh on change, then push. */
+  async launchSync() {
+    this.syncState = "syncing";
+    try {
+      const merged = await api.syncPull();
+      if (merged) await this.refresh(); // surface rows that just arrived
+      this.syncLastAt = await api.syncPush();
+      this.syncState = "synced";
+    } catch {
+      this.syncState = "error";
     }
   }
 

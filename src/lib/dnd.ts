@@ -90,6 +90,16 @@ export function reorderable(node: HTMLElement, opts: ReorderOpts) {
 
   function onPointerDown(e: PointerEvent) {
     if (e.button !== 0 || !e.isPrimary) return;
+    // Don't hijack presses that land on an interactive control INSIDE the row
+    // (edit/add/delete buttons, the expand twisty). Capturing the pointer there
+    // makes WebKitGTK retarget the synthesized click to the capturing row, so
+    // the control's own handler never runs and the icons appear dead. The row
+    // itself carries role="button", so only bail for a nested interactive el.
+    const el = e.target as HTMLElement | null;
+    if (el && el !== node) {
+      const interactive = el.closest("button, [role='button'], a, input, select, textarea");
+      if (interactive && interactive !== node && node.contains(interactive)) return;
+    }
     pressing = true;
     startX = e.clientX;
     startY = e.clientY;

@@ -183,7 +183,7 @@ export const reingestSource = (id: string) => invoke<IngestResult>("reingest_sou
 /** Sources that failed to ingest (error / draft-with-error), across all subjects. */
 export const listFailedSources = () => invoke<Source[]>("list_failed_sources");
 
-// ---- live homelab sync (last-write-wins DB snapshot) ----
+// ---- live homelab sync (smart row-level merge + binary file sync) ----
 export interface SyncStatus {
   enabled: boolean;
   configured: boolean;
@@ -192,8 +192,10 @@ export interface SyncStatus {
 export const syncStatus = () => invoke<SyncStatus>("sync_status");
 export const syncTest = (url: string, user: string, pass: string) =>
   invoke<boolean>("sync_test", { url, user, pass });
-/** Push a snapshot of the local DB to the homelab; returns the push timestamp (ms). */
+/** Push the local DB (union snapshot) + binary files to the homelab; returns the push timestamp (ms). */
 export const syncPush = () => invoke<number>("sync_push");
+/** Pull + merge the remote vault into the local DB; returns true if a newer remote was merged. */
+export const syncPull = () => invoke<boolean>("sync_pull");
 export const listChunks = (sourceId: string) =>
   invoke<ChunkInfo[]>("list_chunks", { sourceId });
 export const addSource = (input: AddSourceInput) =>

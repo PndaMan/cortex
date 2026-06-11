@@ -46,9 +46,10 @@ pub fn run() {
                 .expect("resolve app data dir");
             std::fs::create_dir_all(&dir).expect("create app data dir");
             let db_path = dir.join("cortex.db");
-            // Live sync: if the homelab holds a newer snapshot, pull it BEFORE
-            // opening the DB (best-effort; never blocks startup on failure).
-            sync::pull_on_launch(&db_path);
+            // NOTE: the homelab pull/merge intentionally does NOT run here — it
+            // would block startup on network I/O (up to the HTTP timeout if the
+            // homelab is unreachable). The frontend calls `sync_pull` in the
+            // background after the window is shown; see store loadSyncStatus.
             let state = AppState::new(&db_path).expect("init database");
             app.manage(state);
 
@@ -245,6 +246,7 @@ pub fn run() {
             sync::sync_status,
             sync::sync_test,
             sync::sync_push,
+            sync::sync_pull,
             // notes
             notes::create_note,
             notes::list_notes,
