@@ -367,6 +367,26 @@
   function mdCourseName(courseId: string): string {
     return mdData.courses.find((c) => c.id === courseId)?.fullname || courseId;
   }
+  async function mdLoginSso() {
+    try {
+      await api.moodleLoginSso(mdUrl);
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Could not open SSO login", body: String(e) });
+    }
+  }
+  // SSO login happens in a separate window; react to its result here.
+  $effect(() => {
+    let un1: (() => void) | undefined;
+    let un2: (() => void) | undefined;
+    api.onMoodleSsoDone(async (name) => {
+      app.pushToast({ kind: "success", title: "Moodle connected", body: name || undefined });
+      await loadMoodle();
+    }).then((u) => (un1 = u));
+    api.onMoodleSsoError((msg) =>
+      app.pushToast({ kind: "error", title: "SSO login failed", body: msg })
+    ).then((u) => (un2 = u));
+    return () => { un1?.(); un2?.(); };
+  });
 
   // Diagrams/images from the homelab SearXNG. Mirrors app.webImagesEnabled and
   // persists an explicit choice so it survives the "default-on-when-connected".
@@ -1699,6 +1719,7 @@ Notes: {about}</pre>
                     <button class="btn btn--ghost btn--sm" type="button" onclick={mdDisconnect} disabled={mdBusy}>Disconnect</button>
                     <button class="btn btn--primary btn--sm" type="button" onclick={mdSyncNow} disabled={mdBusy}><Icon name="refresh" size={12} /> {mdBusy ? "Syncing…" : "Sync now"}</button>
                   {:else}
+                    <button class="btn btn--sm" type="button" onclick={mdLoginSso}>Sign in via browser (SSO)</button>
                     <button class="btn btn--primary btn--sm" type="button" onclick={mdConnect} disabled={mdBusy || (mdAuthMode==='token' ? !mdToken.trim() : !mdUser.trim())}>{mdBusy ? "Connecting…" : "Connect"}</button>
                   {/if}
                 </div>

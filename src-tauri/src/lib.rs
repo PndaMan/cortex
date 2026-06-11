@@ -258,6 +258,7 @@ pub fn run() {
             sync::sync_pull,
             moodle::moodle_connect,
             moodle::moodle_set_token,
+            moodle::moodle_login_sso,
             moodle::moodle_status,
             moodle::moodle_disconnect,
             moodle::moodle_sync,

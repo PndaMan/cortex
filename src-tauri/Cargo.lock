@@ -600,6 +600,7 @@ dependencies = [
 name = "cortex"
 version = "1.0.0"
 dependencies = [
+ "base64 0.22.1",
  "gdk",
  "gtk",
  "libc",

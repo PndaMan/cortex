@@ -211,6 +211,90 @@ pub async fn moodle_set_token(app: AppHandle, url: String, token: String) -> Res
     .map_err(|e| Error::Other(format!("moodle set-token task failed: {e}")))?
 }
 
+/// SSO login: open the Moodle mobile launch flow in a window. The user signs in
+/// through their institution's SSO (e.g. Stellenbosch Microsoft + MFA) and Moodle
+/// redirects to `cortexmoodle://token=<base64>`; we intercept that, decode the
+/// token, verify it and store it. Emits `moodle-sso-done` (full name) on success
+/// or `moodle-sso-error` (message) on failure.
+const SSO_SCHEME: &str = "cortexmoodle";
+
+#[tauri::command]
+pub fn moodle_login_sso(app: AppHandle, url: String) -> Result<()> {
+    let url = norm_url(&url);
+    let passport = now_ms(); // unique-enough nonce for the launch request
+    let launch = format!(
+        "{url}/admin/tool/mobile/launch.php?service={SERVICE}&passport={passport}&urlscheme={SSO_SCHEME}"
+    );
+    let launch_url: tauri::Url = launch
+        .parse()
+        .map_err(|e| Error::Other(format!("bad launch url: {e}")))?;
+
+    let app_cb = app.clone();
+    let site = url.clone();
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        "moodle-login",
+        tauri::WebviewUrl::External(launch_url),
+    )
+    .title("Sign in to Moodle")
+    .inner_size(520.0, 760.0)
+    .on_navigation(move |u| {
+        // Intercept the custom-scheme callback; let every real navigation proceed.
+        if u.scheme() == SSO_SCHEME {
+            let token_b64 = u
+                .as_str()
+                .split("token=")
+                .nth(1)
+                .unwrap_or("")
+                .to_string();
+            let app2 = app_cb.clone();
+            let site2 = site.clone();
+            std::thread::spawn(move || {
+                use tauri::Emitter;
+                match handle_sso_token(&app2, &site2, &token_b64) {
+                    Ok(name) => {
+                        let _ = app2.emit("moodle-sso-done", name);
+                    }
+                    Err(e) => {
+                        let _ = app2.emit("moodle-sso-error", e.to_string());
+                    }
+                }
+                if let Some(w) = app2.get_webview_window("moodle-login") {
+                    let _ = w.close();
+                }
+            });
+            return false; // don't actually navigate to the custom scheme
+        }
+        true
+    })
+    .build()
+    .map_err(|e| Error::Other(format!("could not open login window: {e}")))?;
+    Ok(())
+}
+
+/// Decode the launch callback token, verify it, and persist it. The payload is
+/// base64 of `<site-or-hash>:::<token>[:::<privatetoken>]`.
+fn handle_sso_token(app: &AppHandle, url: &str, token_b64: &str) -> Result<String> {
+    use base64::Engine;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(token_b64.trim())
+        .map_err(|e| Error::Other(format!("token decode failed: {e}")))?;
+    let s = String::from_utf8_lossy(&decoded);
+    let token = s
+        .split(":::")
+        .nth(1)
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| Error::Other("no token in SSO callback".into()))?;
+    let (uid, fullname) = site_info(url, &token)?;
+    let state = app.state::<AppState>();
+    let c = state.db.lock().unwrap();
+    repo::set_setting(&c, K_URL, url)?;
+    repo::set_setting(&c, K_TOKEN, &token)?;
+    repo::set_setting(&c, K_USERID, &uid.to_string())?;
+    Ok(fullname)
+}
+
 #[tauri::command]
 pub fn moodle_status(state: tauri::State<AppState>) -> Result<MoodleStatus> {
     let c = state.db.lock().unwrap();

@@ -211,6 +211,14 @@ export const moodleConnect = (url: string, username: string, password: string) =
 /** Connect with a pasted web-services token (SSO sites). Returns the user's full name. */
 export const moodleSetToken = (url: string, token: string) =>
   invoke<string>("moodle_set_token", { url, token });
+/** Open the Moodle SSO launch flow in a window; token captured via the callback. */
+export const moodleLoginSso = (url: string) => invoke<void>("moodle_login_sso", { url });
+/** Fired when the SSO login window captures + stores a token. Payload: user's name. */
+export const onMoodleSsoDone = (cb: (name: string) => void): Promise<UnlistenFn> =>
+  listen<string>("moodle-sso-done", (e) => cb(e.payload));
+/** Fired when the SSO login flow fails. Payload: error message. */
+export const onMoodleSsoError = (cb: (msg: string) => void): Promise<UnlistenFn> =>
+  listen<string>("moodle-sso-error", (e) => cb(e.payload));
 export const moodleStatus = () => invoke<MoodleStatus>("moodle_status");
 export const moodleDisconnect = () => invoke<void>("moodle_disconnect");
 export const moodleSync = () => invoke<MoodleSummary>("moodle_sync");
