@@ -394,7 +394,28 @@ fn grade_exam_inner(app: &AppHandle, id: &str, answers: &[ExamAnswer]) -> Result
                 "SOURCE MATERIAL:\n{context}\n\nANSWERS TO GRADE (JSON):\n{items_json}\n\nGrade now."
             );
             graded_by = model.name();
-            let raw = model.complete(system, &user)?;
+            // A truncated grading reply is worthless: enforce a generous output
+            // floor regardless of the user's budget sliders (the verify field
+            // makes replies longer, and a mid-array cutoff is exactly what
+            // produced the "grading is temporarily unavailable" zeros).
+            let floor = 2048 + 700 * written_prompt_items.len() as u32;
+            model.set_max_tokens(floor.max(4096));
+            let mut raw = model.complete(system, &user)?;
+            if llm::extract_json(&raw).is_err() {
+                eprintln!(
+                    "[exam] grading reply unparseable (model {}), retrying once: {}",
+                    graded_by,
+                    raw.chars().take(300).collect::<String>()
+                );
+                raw = model.complete(
+                    system,
+                    &format!(
+                        "{user}\n\nIMPORTANT: your previous reply could not be parsed. \
+                         Respond with ONLY the raw JSON array — no thinking, no prose, \
+                         no code fences, starting with [ and ending with ]."
+                    ),
+                )?;
+            }
             // Best-effort: if grading JSON is unusable, written items score 0 with a
             // note rather than failing the whole submission.
             if let Ok(graded) = llm::extract_json(&raw) {
@@ -432,11 +453,16 @@ fn grade_exam_inner(app: &AppHandle, id: &str, answers: &[ExamAnswer]) -> Result
                     }
                 }
             } else {
+                eprintln!("[exam] grading reply unparseable after retry (model {graded_by})");
                 for (qi, _, _) in &written_meta {
                     if let Some(obj) = per_question[*qi].as_object_mut() {
                         obj.insert(
                             "feedback".into(),
-                            json!("Grading is temporarily unavailable; try resubmitting."),
+                            json!(format!(
+                                "The grading model ({graded_by}) returned an unreadable reply twice — \
+                                 not graded. Press Remark to retry, or switch the Quiz model in \
+                                 Settings → Models."
+                            )),
                         );
                     }
                 }

@@ -80,7 +80,7 @@ export const LEADER_ACTIONS: LeaderAction[] = [
   { key: "r", label: "Record",      detail: "lecture recorder" },
   { key: "f", label: "Flashcards",  detail: "decks & study" },
   { key: "e", label: "Materials",   detail: "study materials" },
-  { key: "d", label: "Review diff", detail: "cheatsheet draft" },
+  { key: "d", label: "Review cheatsheet", detail: "draft + history" },
   { key: "o", label: "Notes",       detail: "markdown notes" },
   { key: "a", label: "Calendar",    detail: "events & tasks" },
   { key: "i", label: "Insights",    detail: "study analytics" },

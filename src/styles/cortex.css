@@ -4,8 +4,13 @@
    Theme tokens re-skin live (mirrors Omarchy palette swap)
    ============================================================ */
 
-/* ---------- FONTS ---------- */
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap');
+/* ---------- FONTS ----------
+   Bundled locally (src/styles/fonts.css → src/assets/fonts/). The previous
+   Google Fonts @import raced first paint: when the network was slow/offline,
+   pages fell back to the system monospace, so headings rendered in DIFFERENT
+   fonts depending on load timing. Local files = deterministic typography and
+   no third-party request from a local-first app. */
+@import './fonts.css';
 
 /* ============================================================
    THEME PALETTES  (semantic tokens defined per data-theme)

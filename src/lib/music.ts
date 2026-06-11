@@ -86,3 +86,13 @@ export const music = new MusicController();
 
 /** Built-in station ids (used to validate a saved default still exists). */
 export const BUILTIN_STATION_IDS = Object.keys(STATIONS);
+
+/** URL for a built-in station id, or undefined (used to prewarm the default). */
+export function builtinStationUrl(id: string): string | undefined {
+  return STATIONS[id]?.url;
+}
+
+/** Every built-in station URL — used to prewarm the resolved-stream cache. */
+export function builtinStationUrls(): string[] {
+  return Object.values(STATIONS).map((s) => s.url);
+}

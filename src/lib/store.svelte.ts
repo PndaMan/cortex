@@ -4,7 +4,7 @@
 
 import * as api from "./api";
 import type { Subject, Source } from "./api";
-import { music, BUILTIN_STATION_IDS } from "./music";
+import { music, BUILTIN_STATION_IDS, builtinStationUrl, builtinStationUrls } from "./music";
 import { keybinds } from "./keybinds.svelte";
 
 export type View =
@@ -407,7 +407,22 @@ class AppStore {
       this.chatBusy = false;
     }
   }
-  musicOpen = $state(false);
+  // Backing state for the music panel. Exposed via get/set so opening it can
+  // prewarm the resolved-stream cache for EVERY station (built-in + custom) —
+  // any station the user clicks next then starts near-instantly. All existing
+  // `app.musicOpen = true/false` call sites keep working unchanged.
+  #musicOpen = $state(false);
+  get musicOpen() {
+    return this.#musicOpen;
+  }
+  set musicOpen(open: boolean) {
+    const wasClosed = !this.#musicOpen;
+    this.#musicOpen = open;
+    if (open && wasClosed) {
+      const urls = [...builtinStationUrls(), ...this.customStations.map((s) => s.url)];
+      api.youtubePrewarm(urls).catch(() => {});
+    }
+  }
   diffOpen = $state(false);
   helpOpen = $state(false);
   pomodoroOpen = $state(false);
@@ -564,6 +579,17 @@ class AppStore {
         ) {
           this.music = { ...this.music, current: saved };
         }
+        // Prewarm the resolved-stream cache for whatever station will play first
+        // (the saved default, else the "lofi" fallback) so its first play is
+        // near-instant. Fire-and-forget; never blocks startup.
+        {
+          const firstId = saved && (BUILTIN_STATION_IDS.includes(saved) || this.customStations.some((s) => s.id === saved))
+            ? saved
+            : "lofi";
+          const firstUrl =
+            this.customStations.find((s) => s.id === firstId)?.url ?? builtinStationUrl(firstId);
+          if (firstUrl) api.youtubePrewarm([firstUrl]).catch(() => {});
+        }
       }
       // Restore the saved volume (previously reset to 60% on every launch).
       {
@@ -656,33 +682,42 @@ class AppStore {
   }
 
   // ---- passive study-time tracking ----
-  // Most studying happens just reading the cheatsheet, not via the pomodoro
-  // timer, so focus minutes would otherwise read 0. Accumulate focused in-app
-  // time and flush it as "app" pomodoro_sessions rows attributed to the active
-  // subject. We only count time while the window is visible AND focused, and
-  // NOT while a pomodoro WORK session is running (that span is already logged as
-  // "work" — counting both would double it).
+  // Most studying happens just READING the cheatsheet — long stretches with no
+  // clicks or keys — so gating on window focus undercounted badly (focus also
+  // flaps under tiling WMs). Instead: time counts while the window is VISIBLE
+  // and the user has interacted (mouse/key/wheel/touch) within the last 10
+  // minutes; past that they've plausibly walked away and the segment is cut at
+  // the idle threshold. Never counts while a pomodoro WORK session runs (that
+  // span is already logged as "work" — counting both would double it).
   #appSegStart = 0; // wall-clock ms the current accumulating segment began (0 = idle)
   #appSegSubject: string | null = null; // subject the current segment is attributed to
   #appFlushTimer: ReturnType<typeof setInterval> | null = null;
+  #appIdleTimer: ReturnType<typeof setInterval> | null = null;
+  #lastActivityAt = Date.now();
   #appFocused = true;
   // Don't log sub-minute noise (tab flicks, quick window switches).
   static #APP_MIN_MS = 60_000;
   static #APP_FLUSH_MS = 5 * 60_000;
+  static #APP_IDLE_MS = 10 * 60_000;
 
-  /** Should we be accumulating right now? Visible + focused + not in a pomodoro
-   *  work session (whose time is logged separately as "work"). */
+  /** Should we be accumulating right now? Focused + visible + recently active +
+   *  not in a pomodoro work session (whose time is logged separately as
+   *  "work"). Focus means switching to another window stops the clock
+   *  IMMEDIATELY; the 10-minute idle window only covers reading-without-input
+   *  while Cortex itself stays focused. */
   #appShouldAccumulate(): boolean {
     const hidden = typeof document !== "undefined" && document.hidden;
+    const idle = Date.now() - this.#lastActivityAt >= AppStore.#APP_IDLE_MS;
     const pomoWork = this.pomo.running && this.pomo.phase === "work";
-    return this.#appFocused && !hidden && !pomoWork;
+    return this.#appFocused && !hidden && !idle && !pomoWork;
   }
 
-  /** Flush the in-progress segment (if long enough) and stop accumulating. */
-  #appFlush() {
+  /** Flush the in-progress segment (if long enough) and stop accumulating.
+   *  `endAt` caps the credited span (used to cut a segment at the idle line). */
+  #appFlush(endAt?: number) {
     if (this.#appSegStart === 0) return;
     const start = this.#appSegStart;
-    const end = Date.now();
+    const end = Math.max(start, Math.min(endAt ?? Date.now(), Date.now()));
     const subject = this.#appSegSubject;
     this.#appSegStart = 0;
     this.#appSegSubject = null;
@@ -715,16 +750,41 @@ class AppStore {
 
   startAppTimeTracking() {
     if (this.#appFlushTimer || typeof window === "undefined") return; // once
+    this.#lastActivityAt = Date.now();
+    // Any interaction proves presence — and restarts counting after idle.
+    const activity = () => {
+      this.#lastActivityAt = Date.now();
+      if (this.#appSegStart === 0) this.#appReconcile();
+    };
+    for (const ev of ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"] as const) {
+      window.addEventListener(ev, activity, { passive: true });
+    }
+    // Switching to another window stops the clock immediately; coming back
+    // resumes it (the interaction that refocuses also refreshes activity).
     this.#appFocused = document.hasFocus?.() ?? true;
-    window.addEventListener("focus", () => { this.#appFocused = true; this.#appReconcile(); });
-    window.addEventListener("blur", () => { this.#appFocused = false; this.#appReconcile(); });
+    window.addEventListener("focus", () => {
+      this.#appFocused = true;
+      this.#lastActivityAt = Date.now();
+      this.#appReconcile();
+    });
+    window.addEventListener("blur", () => {
+      this.#appFocused = false;
+      this.#appFlush();
+    });
     document.addEventListener("visibilitychange", () => this.#appReconcile());
     // Best-effort final flush when the window/app goes away.
     window.addEventListener("beforeunload", () => this.#appFlush());
     window.addEventListener("pagehide", () => this.#appFlush());
+    // Cut the segment at the idle line once 10 minutes pass with no input —
+    // the read-without-touching stretch up to that line still counts.
+    this.#appIdleTimer = setInterval(() => {
+      if (this.#appSegStart !== 0 && !this.#appShouldAccumulate()) {
+        this.#appFlush(this.#lastActivityAt + AppStore.#APP_IDLE_MS);
+      }
+    }, 60_000);
     // Periodic flush so long uninterrupted sessions still land rows (and so the
-    // dashboard updates without waiting for a blur). Each flush rolls straight
-    // into a new segment via reconcile.
+    // dashboard updates without waiting for an idle gap). Each flush rolls
+    // straight into a new segment via reconcile.
     this.#appFlushTimer = setInterval(() => {
       this.#appFlush();
       this.#appReconcile();
@@ -923,9 +983,10 @@ class AppStore {
     this.diffOpen = true;
   }
   reviewDiff() {
-    this.view = "subject";
-    this.subjectTab = "cheatsheet";
-    setTimeout(() => (this.diffOpen = true), 30);
+    // The review hub is a global overlay — open it from anywhere without
+    // navigating. (The Cheatsheet view, when mounted, reloads on
+    // cheatsheetReloadNonce so any restore/merge is reflected there.)
+    this.diffOpen = true;
   }
   mergeDiff() {
     this.diffOpen = false;
@@ -1075,6 +1136,10 @@ class AppStore {
   // ---- theme ----
   applyTheme(t: Theme) {
     document.documentElement.setAttribute("data-theme", t);
+    // Synchronous cache so the NEXT launch/refresh paints the right theme
+    // before the async settings read returns (kills the osaka-jade flash).
+    // The settings table stays the source of truth; this is just a hint.
+    try { localStorage.setItem("cortex-theme", t); } catch { /* storage off */ }
   }
   setTheme(t: Theme) {
     this.theme = t;
