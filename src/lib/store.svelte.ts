@@ -840,8 +840,9 @@ class AppStore {
       if (merged) await this.refresh(); // surface rows that just arrived
       this.syncLastAt = await api.syncPush();
       this.syncState = "synced";
-    } catch {
+    } catch (e) {
       this.syncState = "error";
+      this.pushToast({ kind: "error", title: "Sync failed", body: String(e) });
     }
   }
 
@@ -860,8 +861,9 @@ class AppStore {
     try {
       this.syncLastAt = await api.syncPush();
       this.syncState = "synced";
-    } catch {
+    } catch (e) {
       this.syncState = "error";
+      this.pushToast({ kind: "error", title: "Sync failed", body: String(e) });
     }
   }
 

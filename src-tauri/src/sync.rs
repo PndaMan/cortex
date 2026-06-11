@@ -579,6 +579,45 @@ mod tests {
         drop(c);
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn merge_tolerates_old_remote_without_tombstones() {
+        // Mimics the homelab DB pushed by the PREVIOUS sync system: schema < 0019,
+        // so it has no `tombstones` table. The merge must not error on it.
+        let dir = std::env::temp_dir().join(format!("cortex-oldremote-{}", now_ms()));
+        fs::create_dir_all(&dir).unwrap();
+        let lp = dir.join("local.db");
+        let rp = dir.join("remote.db");
+
+        {
+            let local = AppState::new(&lp).unwrap();
+            let remote = AppState::new(&rp).unwrap();
+            let lc = local.db.lock().unwrap();
+            let rc = remote.db.lock().unwrap();
+            ins(&rc, "from-laptop", "all-my-data", 100); // remote-only row to pull in
+            // Strip the new bits so `remote` looks like an old-schema DB.
+            rc.execute("DROP TRIGGER IF EXISTS tomb_subjects", []).unwrap();
+            rc.execute("DROP TABLE IF EXISTS tombstones", []).unwrap();
+            for c in [&lc, &rc] {
+                let _: std::result::Result<String, _> =
+                    c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0));
+            }
+        }
+
+        merge_db(&lp, &rp).expect("merging an old-schema remote must not error");
+
+        let c = Connection::open(&lp).unwrap();
+        let n: i64 = c
+            .query_row(
+                "SELECT count(*) FROM subjects WHERE id='from-laptop'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "remote-only row must arrive even from an old-schema DB");
+        drop(c);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
 
 /// Re-point each source's absolute, machine-specific `stored_path` to the local
