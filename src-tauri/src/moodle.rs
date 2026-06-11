@@ -221,6 +221,13 @@ const SSO_SCHEME: &str = "cortexmoodle";
 #[tauri::command]
 pub fn moodle_login_sso(app: AppHandle, url: String) -> Result<()> {
     let url = norm_url(&url);
+    // Persist the site now so the cortexmoodle:// protocol handler knows which
+    // server to verify the token against when the callback fires.
+    {
+        let state = app.state::<AppState>();
+        let c = state.db.lock().unwrap();
+        repo::set_setting(&c, K_URL, &url)?;
+    }
     let passport = now_ms(); // unique-enough nonce for the launch request
     let launch = format!(
         "{url}/admin/tool/mobile/launch.php?service={SERVICE}&passport={passport}&urlscheme={SSO_SCHEME}"
@@ -229,8 +236,9 @@ pub fn moodle_login_sso(app: AppHandle, url: String) -> Result<()> {
         .parse()
         .map_err(|e| Error::Other(format!("bad launch url: {e}")))?;
 
-    let app_cb = app.clone();
-    let site = url.clone();
+    // The cortexmoodle:// callback is caught by the URI-scheme protocol handler
+    // registered in lib.rs (it receives the RAW callback URI, so the base64 token
+    // isn't corrupted by URL normalization like on_navigation's parsed Url would be).
     tauri::WebviewWindowBuilder::new(
         &app,
         "moodle-login",
@@ -238,54 +246,58 @@ pub fn moodle_login_sso(app: AppHandle, url: String) -> Result<()> {
     )
     .title("Sign in to Moodle")
     .inner_size(520.0, 760.0)
-    .on_navigation(move |u| {
-        // Intercept the custom-scheme callback; let every real navigation proceed.
-        if u.scheme() == SSO_SCHEME {
-            let token_b64 = u
-                .as_str()
-                .split("token=")
-                .nth(1)
-                .unwrap_or("")
-                .to_string();
-            let app2 = app_cb.clone();
-            let site2 = site.clone();
-            std::thread::spawn(move || {
-                use tauri::Emitter;
-                match handle_sso_token(&app2, &site2, &token_b64) {
-                    Ok(name) => {
-                        let _ = app2.emit("moodle-sso-done", name);
-                    }
-                    Err(e) => {
-                        let _ = app2.emit("moodle-sso-error", e.to_string());
-                    }
-                }
-                if let Some(w) = app2.get_webview_window("moodle-login") {
-                    let _ = w.close();
-                }
-            });
-            return false; // don't actually navigate to the custom scheme
-        }
-        true
-    })
     .build()
     .map_err(|e| Error::Other(format!("could not open login window: {e}")))?;
     Ok(())
 }
 
+/// Handle the raw `cortexmoodle://token=<base64>` callback URI from the SSO launch
+/// flow: extract the token verbatim, verify it, persist it, and notify the UI.
+/// Called by the URI-scheme protocol handler (raw string → no token corruption).
+pub fn handle_sso_uri(app: &AppHandle, raw_uri: &str) {
+    use tauri::Emitter;
+    let token_b64 = raw_uri
+        .split("token=")
+        .nth(1)
+        .unwrap_or("")
+        .trim_end_matches(['/', '#', '?'])
+        .to_string();
+    let url = {
+        let state = app.state::<AppState>();
+        let c = state.db.lock().unwrap();
+        repo::get_setting(&c, K_URL).ok().flatten().unwrap_or_default()
+    };
+    match handle_sso_token(app, &url, &token_b64) {
+        Ok(name) => {
+            let _ = app.emit("moodle-sso-done", name);
+        }
+        Err(e) => {
+            let _ = app.emit("moodle-sso-error", e.to_string());
+        }
+    }
+    if let Some(w) = app.get_webview_window("moodle-login") {
+        let _ = w.close();
+    }
+}
+
 /// Decode the launch callback token, verify it, and persist it. The payload is
-/// base64 of `<site-or-hash>:::<token>[:::<privatetoken>]`.
+/// base64 of `<site-or-hash>:::<token>[:::<privatetoken>]` (or, rarely, just the
+/// token). We take the token segment verbatim.
 fn handle_sso_token(app: &AppHandle, url: &str, token_b64: &str) -> Result<String> {
     use base64::Engine;
+    if token_b64.is_empty() {
+        return Err(Error::Other("no token in SSO callback".into()));
+    }
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(token_b64.trim())
         .map_err(|e| Error::Other(format!("token decode failed: {e}")))?;
     let s = String::from_utf8_lossy(&decoded);
-    let token = s
-        .split(":::")
-        .nth(1)
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| Error::Other("no token in SSO callback".into()))?;
+    let parts: Vec<&str> = s.split(":::").collect();
+    let token = if parts.len() >= 2 { parts[1] } else { parts[0] };
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Err(Error::Other("empty token in SSO callback".into()));
+    }
     let (uid, fullname) = site_info(url, &token)?;
     let state = app.state::<AppState>();
     let c = state.db.lock().unwrap();

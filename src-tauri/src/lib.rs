@@ -45,6 +45,21 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        // Moodle SSO callback: the launch flow redirects to cortexmoodle://token=…
+        // This handler receives the RAW callback URI (so the base64 token isn't
+        // corrupted by URL normalization) and hands it to the moodle module.
+        .register_uri_scheme_protocol("cortexmoodle", |ctx, request| {
+            let raw = request.uri().to_string();
+            let app = ctx.app_handle().clone();
+            std::thread::spawn(move || moodle::handle_sso_uri(&app, &raw));
+            tauri::http::Response::builder()
+                .header("Content-Type", "text/html; charset=utf-8")
+                .body(
+                    b"<html><body style=\"font-family:system-ui;padding:2rem;background:#111;color:#eee\">Signed in to Moodle. You can close this window.</body></html>"
+                        .to_vec(),
+                )
+                .unwrap()
+        })
         .setup(|app| {
             // Per-app data dir (created if missing); DB lives at cortex.db.
             let dir = app
