@@ -1,0 +1,648 @@
+//! Moodle integration (experimental).
+//!
+//! Pulls a student's data from a Moodle uni portal via the Web Services REST
+//! API and caches it locally. Auth is a `moodle_mobile_app` token obtained from
+//! `/login/token.php` (username+password) or pasted by the user (for SSO sites
+//! where password→token is blocked — they extract a token via the browser).
+//!
+//! We only ever store the TOKEN, never the password. All requests are read-only.
+//! Note: exam dates/venues are typically NOT in Moodle — they live in a separate
+//! timetabling system — so this covers grades, assignments, calendar deadlines
+//! and announcements, not seat/room allocation.
+
+use crate::db::{now_ms, AppState};
+use crate::error::{Error, Result};
+use crate::repo;
+use rusqlite::{params, Connection};
+use serde_json::Value;
+use tauri::{AppHandle, Manager};
+
+const K_URL: &str = "moodle_url";
+const K_TOKEN: &str = "moodle_token";
+const K_USERID: &str = "moodle_userid";
+const K_LAST_SYNC: &str = "moodle_last_sync";
+const SERVICE: &str = "moodle_mobile_app";
+
+fn client() -> reqwest::blocking::Client {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(45))
+        .user_agent("Cortex/1.0")
+        .build()
+        .unwrap_or_default()
+}
+
+/// Normalize a site URL: ensure a scheme, drop any trailing slash.
+fn norm_url(raw: &str) -> String {
+    let t = raw.trim().trim_end_matches('/');
+    if t.starts_with("http://") || t.starts_with("https://") {
+        t.to_string()
+    } else {
+        format!("https://{t}")
+    }
+}
+
+/// Call a Web Services function. Moodle returns HTTP 200 even for errors, with an
+/// `exception`/`message` body — so we inspect the body, not the status.
+fn ws(url: &str, token: &str, func: &str, params: &[(String, String)]) -> Result<Value> {
+    let endpoint = format!("{url}/webservice/rest/server.php");
+    let mut q: Vec<(String, String)> = vec![
+        ("wstoken".into(), token.to_string()),
+        ("moodlewsfunction".into(), func.to_string()),
+        ("moodlewsrestformat".into(), "json".into()),
+    ];
+    q.extend_from_slice(params);
+    let resp = client().get(&endpoint).query(&q).send()?;
+    let val: Value = resp.json()?;
+    if let Some(obj) = val.as_object() {
+        if obj.contains_key("exception") {
+            let msg = obj
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("request failed");
+            return Err(Error::Other(format!("Moodle: {msg}")));
+        }
+    }
+    Ok(val)
+}
+
+/// Exchange username+password for a mobile-service token.
+fn fetch_token(url: &str, user: &str, pass: &str) -> Result<String> {
+    let endpoint = format!("{url}/login/token.php");
+    let resp = client()
+        .post(&endpoint)
+        .form(&[
+            ("username", user),
+            ("password", pass),
+            ("service", SERVICE),
+        ])
+        .send()?;
+    let val: Value = resp.json()?;
+    if let Some(t) = val.get("token").and_then(|t| t.as_str()) {
+        return Ok(t.to_string());
+    }
+    let err = val
+        .get("error")
+        .and_then(|e| e.as_str())
+        .unwrap_or("login failed (web services may be disabled, or this site uses SSO — paste a token instead)");
+    Err(Error::Other(format!("Moodle login: {err}")))
+}
+
+/// `core_webservice_get_site_info` → (userid, fullname). Doubles as a token check.
+fn site_info(url: &str, token: &str) -> Result<(i64, String)> {
+    let v = ws(url, token, "core_webservice_get_site_info", &[])?;
+    let uid = v
+        .get("userid")
+        .and_then(|x| x.as_i64())
+        .ok_or_else(|| Error::Other("Moodle: token rejected (no userid returned)".into()))?;
+    let name = v
+        .get("fullname")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok((uid, name))
+}
+
+fn read_cfg(c: &Connection) -> Option<(String, String)> {
+    let url = repo::get_setting(c, K_URL).ok().flatten()?;
+    let token = repo::get_setting(c, K_TOKEN).ok().flatten()?;
+    if url.trim().is_empty() || token.trim().is_empty() {
+        return None;
+    }
+    Some((url, token))
+}
+
+// ---- output shapes ----------------------------------------------------------
+
+#[derive(serde::Serialize)]
+pub struct MoodleStatus {
+    pub configured: bool,
+    pub user_id: i64,
+    pub last_sync: i64,
+}
+
+#[derive(serde::Serialize)]
+pub struct MoodleSummary {
+    pub courses: usize,
+    pub grades: usize,
+    pub deadlines: usize,
+    pub announcements: usize,
+}
+
+#[derive(serde::Serialize)]
+pub struct MoodleCourse {
+    pub id: String,
+    pub shortname: String,
+    pub fullname: String,
+}
+#[derive(serde::Serialize)]
+pub struct MoodleGrade {
+    pub course_id: String,
+    pub item_name: String,
+    pub grade: String,
+    pub percentage: String,
+    pub feedback: String,
+}
+#[derive(serde::Serialize)]
+pub struct MoodleDeadline {
+    pub id: String,
+    pub course_id: String,
+    pub name: String,
+    pub due_at: i64,
+    pub kind: String,
+    pub status: String,
+    pub url: String,
+}
+#[derive(serde::Serialize)]
+pub struct MoodleAnnouncement {
+    pub id: String,
+    pub course_id: String,
+    pub subject: String,
+    pub message: String,
+    pub posted_at: i64,
+}
+#[derive(serde::Serialize)]
+pub struct MoodleData {
+    pub courses: Vec<MoodleCourse>,
+    pub grades: Vec<MoodleGrade>,
+    pub deadlines: Vec<MoodleDeadline>,
+    pub announcements: Vec<MoodleAnnouncement>,
+}
+
+// ---- commands ---------------------------------------------------------------
+
+/// Connect with username+password (non-SSO sites). Stores token+url+userid.
+#[tauri::command]
+pub async fn moodle_connect(
+    app: AppHandle,
+    url: String,
+    username: String,
+    password: String,
+) -> Result<String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String> {
+        let url = norm_url(&url);
+        let token = fetch_token(&url, &username, &password)?; // password used here, then dropped
+        let (uid, fullname) = site_info(&url, &token)?;
+        let state = app.state::<AppState>();
+        let c = state.db.lock().unwrap();
+        repo::set_setting(&c, K_URL, &url)?;
+        repo::set_setting(&c, K_TOKEN, &token)?;
+        repo::set_setting(&c, K_USERID, &uid.to_string())?;
+        Ok(fullname)
+    })
+    .await
+    .map_err(|e| Error::Other(format!("moodle connect task failed: {e}")))?
+}
+
+/// Connect with a pasted token (SSO sites). Verifies it via site_info.
+#[tauri::command]
+pub async fn moodle_set_token(app: AppHandle, url: String, token: String) -> Result<String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String> {
+        let url = norm_url(&url);
+        let token = token.trim().to_string();
+        let (uid, fullname) = site_info(&url, &token)?;
+        let state = app.state::<AppState>();
+        let c = state.db.lock().unwrap();
+        repo::set_setting(&c, K_URL, &url)?;
+        repo::set_setting(&c, K_TOKEN, &token)?;
+        repo::set_setting(&c, K_USERID, &uid.to_string())?;
+        Ok(fullname)
+    })
+    .await
+    .map_err(|e| Error::Other(format!("moodle set-token task failed: {e}")))?
+}
+
+#[tauri::command]
+pub fn moodle_status(state: tauri::State<AppState>) -> Result<MoodleStatus> {
+    let c = state.db.lock().unwrap();
+    let configured = read_cfg(&c).is_some();
+    let user_id = repo::get_setting(&c, K_USERID)?
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    let last_sync = repo::get_setting(&c, K_LAST_SYNC)?
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    Ok(MoodleStatus {
+        configured,
+        user_id,
+        last_sync,
+    })
+}
+
+#[tauri::command]
+pub fn moodle_disconnect(state: tauri::State<AppState>) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    for k in [K_TOKEN, K_USERID, K_LAST_SYNC] {
+        let _ = repo::set_setting(&c, k, "");
+    }
+    Ok(())
+}
+
+/// Pull courses → grades → assignments/calendar → announcements into the cache.
+#[tauri::command]
+pub async fn moodle_sync(app: AppHandle) -> Result<MoodleSummary> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<MoodleSummary> {
+        let state = app.state::<AppState>();
+        let (url, token, userid) = {
+            let c = state.db.lock().unwrap();
+            let (url, token) =
+                read_cfg(&c).ok_or_else(|| Error::Other("Moodle is not connected".into()))?;
+            let uid = repo::get_setting(&c, K_USERID)?
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
+            (url, token, uid)
+        };
+        let now = now_ms();
+        let mut summary = MoodleSummary {
+            courses: 0,
+            grades: 0,
+            deadlines: 0,
+            announcements: 0,
+        };
+
+        // --- courses ---
+        let courses_v = ws(
+            &url,
+            &token,
+            "core_enrol_get_users_courses",
+            &[("userid".into(), userid.to_string())],
+        )?;
+        let mut course_ids: Vec<i64> = Vec::new();
+        if let Some(arr) = courses_v.as_array() {
+            let c = state.db.lock().unwrap();
+            for course in arr {
+                let id = course.get("id").and_then(|x| x.as_i64()).unwrap_or(0);
+                if id == 0 {
+                    continue;
+                }
+                course_ids.push(id);
+                let short = course.get("shortname").and_then(|x| x.as_str()).unwrap_or("");
+                let full = course.get("fullname").and_then(|x| x.as_str()).unwrap_or("");
+                c.execute(
+                    "INSERT OR REPLACE INTO moodle_courses (id, shortname, fullname, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![id.to_string(), short, full, now],
+                )?;
+                summary.courses += 1;
+            }
+        }
+
+        // --- grades (per course) ---
+        for cid in &course_ids {
+            let gv = ws(
+                &url,
+                &token,
+                "gradereport_user_get_grade_items",
+                &[
+                    ("courseid".into(), cid.to_string()),
+                    ("userid".into(), userid.to_string()),
+                ],
+            );
+            let Ok(gv) = gv else { continue }; // some courses block the grade report
+            let c = state.db.lock().unwrap();
+            if let Some(users) = gv.get("usergrades").and_then(|x| x.as_array()) {
+                for ug in users {
+                    if let Some(items) = ug.get("gradeitems").and_then(|x| x.as_array()) {
+                        for it in items {
+                            let item_id = it.get("id").and_then(|x| x.as_i64()).unwrap_or(0);
+                            let name = it.get("itemname").and_then(|x| x.as_str()).unwrap_or("");
+                            if name.is_empty() {
+                                continue;
+                            }
+                            let grade = it
+                                .get("gradeformatted")
+                                .and_then(|x| x.as_str())
+                                .unwrap_or("");
+                            let pct = it
+                                .get("percentageformatted")
+                                .and_then(|x| x.as_str())
+                                .unwrap_or("");
+                            let fb = it.get("feedback").and_then(|x| x.as_str()).unwrap_or("");
+                            c.execute(
+                                "INSERT OR REPLACE INTO moodle_grades \
+                                 (id, course_id, item_name, grade, percentage, feedback, updated_at) \
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                                params![
+                                    format!("{cid}:{item_id}"),
+                                    cid.to_string(),
+                                    name,
+                                    grade,
+                                    pct,
+                                    fb,
+                                    now
+                                ],
+                            )?;
+                            summary.grades += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- assignments → deadlines ---
+        if !course_ids.is_empty() {
+            let mut ps: Vec<(String, String)> = Vec::new();
+            for (i, cid) in course_ids.iter().enumerate() {
+                ps.push((format!("courseids[{i}]"), cid.to_string()));
+            }
+            if let Ok(av) = ws(&url, &token, "mod_assign_get_assignments", &ps) {
+                let c = state.db.lock().unwrap();
+                if let Some(courses) = av.get("courses").and_then(|x| x.as_array()) {
+                    for course in courses {
+                        let cid = course.get("id").and_then(|x| x.as_i64()).unwrap_or(0);
+                        if let Some(assigns) = course.get("assignments").and_then(|x| x.as_array()) {
+                            for a in assigns {
+                                let aid = a.get("id").and_then(|x| x.as_i64()).unwrap_or(0);
+                                let name = a.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                                let due = a.get("duedate").and_then(|x| x.as_i64()).unwrap_or(0);
+                                if due == 0 {
+                                    continue; // no due date set
+                                }
+                                c.execute(
+                                    "INSERT OR REPLACE INTO moodle_deadlines \
+                                     (id, course_id, name, due_at, kind, status, url, updated_at) \
+                                     VALUES (?1, ?2, ?3, ?4, 'assignment', '', ?5, ?6)",
+                                    params![
+                                        format!("assign:{aid}"),
+                                        cid.to_string(),
+                                        name,
+                                        due,
+                                        format!("{url}/mod/assign/view.php?id={aid}"),
+                                        now
+                                    ],
+                                )?;
+                                summary.deadlines += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- calendar action events → deadlines ---
+        let from = (now / 1000) - 30 * 24 * 3600; // last 30 days onward
+        if let Ok(cv) = ws(
+            &url,
+            &token,
+            "core_calendar_get_action_events_by_timesort",
+            &[("timesortfrom".into(), from.to_string())],
+        ) {
+            let c = state.db.lock().unwrap();
+            if let Some(events) = cv.get("events").and_then(|x| x.as_array()) {
+                for e in events {
+                    let eid = e.get("id").and_then(|x| x.as_i64()).unwrap_or(0);
+                    let name = e.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                    let when = e.get("timesort").and_then(|x| x.as_i64()).unwrap_or(0);
+                    let cid = e
+                        .get("course")
+                        .and_then(|cc| cc.get("id"))
+                        .and_then(|x| x.as_i64())
+                        .unwrap_or(0);
+                    let evtype = e.get("eventtype").and_then(|x| x.as_str()).unwrap_or("");
+                    let link = e
+                        .get("url")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if name.is_empty() || when == 0 {
+                        continue;
+                    }
+                    c.execute(
+                        "INSERT OR REPLACE INTO moodle_deadlines \
+                         (id, course_id, name, due_at, kind, status, url, updated_at) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, ?7)",
+                        params![
+                            format!("event:{eid}"),
+                            cid.to_string(),
+                            name,
+                            when,
+                            if evtype.contains("exam") { "exam" } else { "event" },
+                            link,
+                            now
+                        ],
+                    )?;
+                    summary.deadlines += 1;
+                }
+            }
+        }
+
+        // --- announcements (news forums) ---
+        if !course_ids.is_empty() {
+            let mut ps: Vec<(String, String)> = Vec::new();
+            for (i, cid) in course_ids.iter().enumerate() {
+                ps.push((format!("courseids[{i}]"), cid.to_string()));
+            }
+            if let Ok(fv) = ws(&url, &token, "mod_forum_get_forums_by_courses", &ps) {
+                let news: Vec<(i64, i64)> = fv
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter(|f| f.get("type").and_then(|t| t.as_str()) == Some("news"))
+                            .map(|f| {
+                                (
+                                    f.get("id").and_then(|x| x.as_i64()).unwrap_or(0),
+                                    f.get("course").and_then(|x| x.as_i64()).unwrap_or(0),
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for (fid, cid) in news {
+                    if fid == 0 {
+                        continue;
+                    }
+                    if let Ok(dv) = ws(
+                        &url,
+                        &token,
+                        "mod_forum_get_forum_discussions",
+                        &[("forumid".into(), fid.to_string())],
+                    ) {
+                        let c = state.db.lock().unwrap();
+                        if let Some(discs) = dv.get("discussions").and_then(|x| x.as_array()) {
+                            for d in discs {
+                                let did = d.get("id").and_then(|x| x.as_i64()).unwrap_or(0);
+                                let subj = d.get("subject").and_then(|x| x.as_str()).unwrap_or("");
+                                let msg = d.get("message").and_then(|x| x.as_str()).unwrap_or("");
+                                let posted =
+                                    d.get("timemodified").and_then(|x| x.as_i64()).unwrap_or(0);
+                                c.execute(
+                                    "INSERT OR REPLACE INTO moodle_announcements \
+                                     (id, course_id, subject, message, posted_at, updated_at) \
+                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                                    params![
+                                        format!("disc:{did}"),
+                                        cid.to_string(),
+                                        subj,
+                                        msg,
+                                        posted,
+                                        now
+                                    ],
+                                )?;
+                                summary.announcements += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        {
+            let c = state.db.lock().unwrap();
+            repo::set_setting(&c, K_LAST_SYNC, &now.to_string())?;
+        }
+        Ok(summary)
+    })
+    .await
+    .map_err(|e| Error::Other(format!("moodle sync task failed: {e}")))?
+}
+
+/// Return the cached Moodle data for the UI.
+#[tauri::command]
+pub fn moodle_data(state: tauri::State<AppState>) -> Result<MoodleData> {
+    let c = state.db.lock().unwrap();
+    let courses = {
+        let mut st = c.prepare("SELECT id, shortname, fullname FROM moodle_courses ORDER BY fullname")?;
+        let rows = st.query_map([], |r| {
+            Ok(MoodleCourse {
+                id: r.get(0)?,
+                shortname: r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                fullname: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            })
+        })?;
+        rows.filter_map(|x| x.ok()).collect()
+    };
+    let grades = {
+        let mut st = c.prepare(
+            "SELECT course_id, item_name, grade, percentage, feedback FROM moodle_grades ORDER BY course_id",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok(MoodleGrade {
+                course_id: r.get(0)?,
+                item_name: r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                grade: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                percentage: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                feedback: r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            })
+        })?;
+        rows.filter_map(|x| x.ok()).collect()
+    };
+    let deadlines = {
+        let mut st = c.prepare(
+            "SELECT id, course_id, name, due_at, kind, status, url FROM moodle_deadlines ORDER BY due_at",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok(MoodleDeadline {
+                id: r.get(0)?,
+                course_id: r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                name: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                due_at: r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                kind: r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                status: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                url: r.get::<_, Option<String>>(6)?.unwrap_or_default(),
+            })
+        })?;
+        rows.filter_map(|x| x.ok()).collect()
+    };
+    let announcements = {
+        let mut st = c.prepare(
+            "SELECT id, course_id, subject, message, posted_at FROM moodle_announcements ORDER BY posted_at DESC",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok(MoodleAnnouncement {
+                id: r.get(0)?,
+                course_id: r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                subject: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                message: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                posted_at: r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+            })
+        })?;
+        rows.filter_map(|x| x.ok()).collect()
+    };
+    Ok(MoodleData {
+        courses,
+        grades,
+        deadlines,
+        announcements,
+    })
+}
+
+/// Link (or unlink, with course_id=None) a Cortex subject to a Moodle course.
+#[tauri::command]
+pub fn moodle_link_subject(
+    state: tauri::State<AppState>,
+    subject_id: String,
+    course_id: Option<String>,
+) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    c.execute(
+        "UPDATE subjects SET moodle_course_id=?2, updated_at=?3 WHERE id=?1",
+        params![subject_id, course_id, now_ms()],
+    )?;
+    Ok(())
+}
+
+/// Normalize for matching: lowercase alphanumerics only.
+fn squash(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// Auto-link unlinked subjects to Moodle courses by fuzzy code/name match.
+/// Returns the number of subjects newly linked.
+#[tauri::command]
+pub fn moodle_autolink(state: tauri::State<AppState>) -> Result<usize> {
+    let c = state.db.lock().unwrap();
+    let courses: Vec<(String, String, String)> = {
+        let mut st = c.prepare("SELECT id, shortname, fullname FROM moodle_courses")?;
+        let rows = st.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            ))
+        })?;
+        rows.filter_map(|x| x.ok()).collect()
+    };
+    let subjects: Vec<(String, String, String)> = {
+        let mut st = c.prepare(
+            "SELECT id, name, IFNULL(code,'') FROM subjects WHERE moodle_course_id IS NULL OR moodle_course_id=''",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+        })?;
+        rows.filter_map(|x| x.ok()).collect()
+    };
+
+    let mut linked = 0usize;
+    for (sid, name, code) in &subjects {
+        let n_name = squash(name);
+        let n_code = squash(code);
+        let mut best: Option<&str> = None;
+        for (cid, short, full) in &courses {
+            let n_short = squash(short);
+            let n_full = squash(full);
+            let code_hit = !n_code.is_empty()
+                && (n_short.contains(&n_code) || n_full.contains(&n_code));
+            let name_hit = !n_name.is_empty()
+                && n_name.len() >= 4
+                && (n_full.contains(&n_name)
+                    || n_name.contains(&n_full) && !n_full.is_empty()
+                    || n_short.contains(&n_name));
+            if code_hit || name_hit {
+                best = Some(cid);
+                if code_hit {
+                    break; // code match is high-confidence
+                }
+            }
+        }
+        if let Some(cid) = best {
+            c.execute(
+                "UPDATE subjects SET moodle_course_id=?2, updated_at=?3 WHERE id=?1",
+                params![sid, cid, now_ms()],
+            )?;
+            linked += 1;
+        }
+    }
+    Ok(linked)
+}

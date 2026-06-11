@@ -44,6 +44,7 @@
     { id: "keybinds",   label: "Keybinds",      icon: "cmd" },
     { id: "homelab",    label: "Integrations",  icon: "globe" },
     { id: "calendar",   label: "Google Calendar", icon: "globe" },
+    { id: "experimental", label: "Experimental", icon: "bolt" },
     { id: "audio",      label: "Audio",         icon: "music" },
     { id: "data",       label: "Data & privacy",icon: "doc" },
     { id: "about",      label: "About",         icon: "diamond" },
@@ -296,6 +297,75 @@
       case "idle":    return { cls: "ready", label: "On" };
       default:        return { cls: "pending", label: "Off" };
     }
+  }
+
+  // ---- Experimental features ----
+  let expMoodle = $state(false);
+  function toggleExpMoodle() {
+    expMoodle = !expMoodle;
+    api.setSetting("exp_moodle", expMoodle ? "true" : "false").catch(() => {});
+  }
+
+  // ---- Moodle (SUNLearn) integration ----
+  let mdUrl   = $state("https://learn.sun.ac.za");
+  let mdUser  = $state("");
+  let mdPass  = $state("");
+  let mdToken = $state("");
+  let mdAuthMode = $state<"password" | "token">("token"); // SU uses Microsoft SSO → token paste
+  let mdBusy  = $state(false);
+  let mdStatus = $state<api.MoodleStatus>({ configured: false, user_id: 0, last_sync: 0 });
+  let mdData = $state<api.MoodleData>({ courses: [], grades: [], deadlines: [], announcements: [] });
+  let mdSummary = $state<api.MoodleSummary | null>(null);
+
+  async function loadMoodle() {
+    try {
+      mdStatus = await api.moodleStatus();
+      if (mdStatus.configured) mdData = await api.moodleData();
+    } catch { /* not configured yet */ }
+  }
+  async function mdConnect() {
+    mdBusy = true;
+    try {
+      const name = mdAuthMode === "password"
+        ? await api.moodleConnect(mdUrl, mdUser.trim(), mdPass)
+        : await api.moodleSetToken(mdUrl, mdToken);
+      mdPass = ""; // never keep the password around
+      app.pushToast({ kind: "success", title: "Moodle connected", body: name || undefined });
+      await loadMoodle();
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Moodle connect failed", body: String(e) });
+    } finally { mdBusy = false; }
+  }
+  async function mdSyncNow() {
+    mdBusy = true;
+    try {
+      mdSummary = await api.moodleSync();
+      app.pushToast({ kind: "success", title: "Moodle synced",
+        body: `${mdSummary.courses} courses · ${mdSummary.grades} grades · ${mdSummary.deadlines} deadlines · ${mdSummary.announcements} announcements` });
+      await loadMoodle();
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Moodle sync failed", body: String(e) });
+    } finally { mdBusy = false; }
+  }
+  async function mdAutolink() {
+    try {
+      const n = await api.moodleAutolink();
+      app.pushToast({ kind: n ? "success" : "info", title: `Auto-linked ${n} subject${n === 1 ? "" : "s"}` });
+      await app.refresh();
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Auto-link failed", body: String(e) });
+    }
+  }
+  async function mdDisconnect() {
+    try {
+      await api.moodleDisconnect();
+      mdToken = "";
+      await loadMoodle();
+      app.pushToast({ kind: "info", title: "Moodle disconnected" });
+    } catch { /* ignore */ }
+  }
+  function mdCourseName(courseId: string): string {
+    return mdData.courses.find((c) => c.id === courseId)?.fullname || courseId;
   }
 
   // Diagrams/images from the homelab SearXNG. Mirrors app.webImagesEnabled and
@@ -642,6 +712,10 @@
       if (s.profile_about)     about    = s.profile_about;
       if (s.profile_style)     style    = s.profile_style;
       if (s.profile_explain)   explain  = s.profile_explain.split(",").filter(Boolean);
+
+      expMoodle = s.exp_moodle === "true";
+      if (s.moodle_url) mdUrl = s.moodle_url;
+      void loadMoodle();
 
       // Hydration complete — persist effects may now write without clobbering.
       loaded = true;
@@ -1554,6 +1628,107 @@ Notes: {about}</pre>
               </div>
             </div>
           </div>
+        </section>
+      </div>
+
+    <!-- ===== EXPERIMENTAL ===== -->
+    {:else if tab === "experimental"}
+      <div class="set-pane">
+        <header class="set-head">
+          <div class="eyebrow">Settings</div>
+          <h2 class="set-title">Experimental</h2>
+          <p class="set-sub">Early features that may be rough or change. Toggle one on to try it.</p>
+        </header>
+
+        <section class="set-group">
+          <div class="set-group-h svc-h">
+            <div>
+              <h3 class="set-group-t">University portal (Moodle / SUNLearn)</h3>
+              <p class="set-group-d">Pull grades, assignments, deadlines and announcements from your Moodle portal (Stellenbosch SUNLearn = <span class="mono">learn.sun.ac.za</span>) into Cortex.</p>
+            </div>
+            <button class={"st-toggle" + (expMoodle ? " on" : "")} type="button" onclick={toggleExpMoodle} role="switch" aria-checked={expMoodle} aria-label="enable moodle"><span class="st-knob"></span></button>
+          </div>
+
+          {#if expMoodle}
+            <div class="set-card">
+              <div class="set-row">
+                <div class="set-row-l">
+                  <div class="set-row-t">Connection</div>
+                  <div class="set-row-d">{mdStatus.configured ? `Connected · last sync ${fmtSyncTime(mdStatus.last_sync)}` : "Not connected"}</div>
+                </div>
+                <span class="status-pill status-pill--{mdStatus.configured ? 'ready' : 'pending'}"><span class="dot"></span>{mdStatus.configured ? "Connected" : "Off"}</span>
+              </div>
+
+              <div class="set-row stacked">
+                <div class="set-row-t">Moodle site URL</div>
+                <input class="input mono" bind:value={mdUrl} placeholder="https://learn.sun.ac.za" />
+              </div>
+
+              <div class="set-row">
+                <div class="set-row-l">
+                  <div class="set-row-t">Sign-in method</div>
+                  <div class="set-row-d">Stellenbosch uses Microsoft SSO, so username/password usually won't work — paste a web-services token instead.</div>
+                </div>
+                <div class="set-row-r" style="gap:6px">
+                  <button class={"btn btn--sm" + (mdAuthMode === 'token' ? ' btn--primary' : ' btn--ghost')} type="button" onclick={() => (mdAuthMode = 'token')}>Token</button>
+                  <button class={"btn btn--sm" + (mdAuthMode === 'password' ? ' btn--primary' : ' btn--ghost')} type="button" onclick={() => (mdAuthMode = 'password')}>Password</button>
+                </div>
+              </div>
+
+              {#if mdAuthMode === 'password'}
+                <div class="set-row stacked">
+                  <div class="set-row-t">Username</div>
+                  <input class="input mono" bind:value={mdUser} placeholder="student number" />
+                </div>
+                <div class="set-row stacked">
+                  <div class="set-row-t">Password</div>
+                  <input class="input mono" type="password" bind:value={mdPass} placeholder="••••••••" />
+                </div>
+              {:else}
+                <div class="set-row stacked">
+                  <div class="set-row-t">Web-services token</div>
+                  <input class="input mono" bind:value={mdToken} placeholder="paste your Moodle token" />
+                  <div class="set-row-d">Obtain it from the official SUNLearn / Moodle app or a browser login. Stored locally; your password is never sent to Cortex.</div>
+                </div>
+              {/if}
+
+              <div class="set-row">
+                <div class="set-row-l"><div class="set-row-d">Connect, then sync to pull your data.</div></div>
+                <div class="set-row-r" style="gap:8px">
+                  {#if mdStatus.configured}
+                    <button class="btn btn--ghost btn--sm" type="button" onclick={mdDisconnect} disabled={mdBusy}>Disconnect</button>
+                    <button class="btn btn--primary btn--sm" type="button" onclick={mdSyncNow} disabled={mdBusy}><Icon name="refresh" size={12} /> {mdBusy ? "Syncing…" : "Sync now"}</button>
+                  {:else}
+                    <button class="btn btn--primary btn--sm" type="button" onclick={mdConnect} disabled={mdBusy || (mdAuthMode==='token' ? !mdToken.trim() : !mdUser.trim())}>{mdBusy ? "Connecting…" : "Connect"}</button>
+                  {/if}
+                </div>
+              </div>
+
+              {#if mdStatus.configured}
+                <div class="set-row">
+                  <div class="set-row-l">
+                    <div class="set-row-t">Link subjects to courses</div>
+                    <div class="set-row-d">Auto-match your Cortex subjects to Moodle courses by code/name.</div>
+                  </div>
+                  <div class="set-row-r"><button class="btn btn--sm" type="button" onclick={mdAutolink}>Auto-link</button></div>
+                </div>
+              {/if}
+
+              {#if mdData.courses.length}
+                <div class="set-row stacked">
+                  <div class="set-row-t">Synced data</div>
+                  <div class="set-row-d">{mdData.courses.length} courses · {mdData.grades.length} grades · {mdData.deadlines.length} deadlines · {mdData.announcements.length} announcements</div>
+                  {#each mdData.deadlines.slice(0, 6) as d}
+                    <div class="set-row-d mono">⏰ {d.due_at ? new Date(d.due_at * 1000).toLocaleDateString() : "—"} · {d.name}{d.course_id ? ` (${mdCourseName(d.course_id)})` : ""}</div>
+                  {/each}
+                </div>
+              {/if}
+
+              <div class="set-row">
+                <div class="set-row-l"><div class="set-row-d faint">Note: exam venues and the exam/class timetable are NOT in Moodle — at Stellenbosch they live in SUNStudent (my.sun), which has no public API or calendar feed. Import those manually for now.</div></div>
+              </div>
+            </div>
+          {/if}
         </section>
       </div>
 

@@ -196,6 +196,28 @@ export const syncTest = (url: string, user: string, pass: string) =>
 export const syncPush = () => invoke<number>("sync_push");
 /** Pull + merge the remote vault into the local DB; returns true if a newer remote was merged. */
 export const syncPull = () => invoke<boolean>("sync_pull");
+
+// ---- Moodle integration (experimental) ----
+export interface MoodleStatus { configured: boolean; user_id: number; last_sync: number }
+export interface MoodleSummary { courses: number; grades: number; deadlines: number; announcements: number }
+export interface MoodleCourse { id: string; shortname: string; fullname: string }
+export interface MoodleGrade { course_id: string; item_name: string; grade: string; percentage: string; feedback: string }
+export interface MoodleDeadline { id: string; course_id: string; name: string; due_at: number; kind: string; status: string; url: string }
+export interface MoodleAnnouncement { id: string; course_id: string; subject: string; message: string; posted_at: number }
+export interface MoodleData { courses: MoodleCourse[]; grades: MoodleGrade[]; deadlines: MoodleDeadline[]; announcements: MoodleAnnouncement[] }
+/** Connect with username+password (non-SSO). Returns the user's full name. */
+export const moodleConnect = (url: string, username: string, password: string) =>
+  invoke<string>("moodle_connect", { url, username, password });
+/** Connect with a pasted web-services token (SSO sites). Returns the user's full name. */
+export const moodleSetToken = (url: string, token: string) =>
+  invoke<string>("moodle_set_token", { url, token });
+export const moodleStatus = () => invoke<MoodleStatus>("moodle_status");
+export const moodleDisconnect = () => invoke<void>("moodle_disconnect");
+export const moodleSync = () => invoke<MoodleSummary>("moodle_sync");
+export const moodleData = () => invoke<MoodleData>("moodle_data");
+export const moodleLinkSubject = (subjectId: string, courseId: string | null) =>
+  invoke<void>("moodle_link_subject", { subjectId, courseId });
+export const moodleAutolink = () => invoke<number>("moodle_autolink");
 export const listChunks = (sourceId: string) =>
   invoke<ChunkInfo[]>("list_chunks", { sourceId });
 export const addSource = (input: AddSourceInput) =>

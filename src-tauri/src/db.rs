@@ -24,6 +24,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0017_pomodoro_sessions.sql"),
     include_str!("../migrations/0018_exams.sql"),
     include_str!("../migrations/0019_tombstones.sql"),
+    include_str!("../migrations/0020_moodle.sql"),
 ];
 
 /// Shared application state: a single SQLite connection behind a Mutex.

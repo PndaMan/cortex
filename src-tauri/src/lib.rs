@@ -14,6 +14,7 @@ mod google;
 mod ingest;
 mod llm;
 mod models;
+mod moodle;
 mod mpv;
 mod notes;
 mod repo;
@@ -255,6 +256,14 @@ pub fn run() {
             sync::sync_test,
             sync::sync_push,
             sync::sync_pull,
+            moodle::moodle_connect,
+            moodle::moodle_set_token,
+            moodle::moodle_status,
+            moodle::moodle_disconnect,
+            moodle::moodle_sync,
+            moodle::moodle_data,
+            moodle::moodle_link_subject,
+            moodle::moodle_autolink,
             // notes
             notes::create_note,
             notes::list_notes,
