@@ -256,23 +256,31 @@ pub fn moodle_login_sso(app: AppHandle, url: String) -> Result<()> {
 /// Called by the URI-scheme protocol handler (raw string → no token corruption).
 pub fn handle_sso_uri(app: &AppHandle, raw_uri: &str) {
     use tauri::Emitter;
-    let token_b64 = raw_uri
+    // Everything after "token=", minus any trailing fragment/query/slash. The
+    // value may be percent-encoded (base64's + / = encoded as %2B %2F %3D).
+    let token_raw = raw_uri
         .split("token=")
         .nth(1)
         .unwrap_or("")
-        .trim_end_matches(['/', '#', '?'])
+        .split(['#', '?'])
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('/')
         .to_string();
     let url = {
         let state = app.state::<AppState>();
         let c = state.db.lock().unwrap();
         repo::get_setting(&c, K_URL).ok().flatten().unwrap_or_default()
     };
-    match handle_sso_token(app, &url, &token_b64) {
+    match handle_sso_token(app, &url, &token_raw) {
         Ok(name) => {
             let _ = app.emit("moodle-sso-done", name);
         }
         Err(e) => {
-            let _ = app.emit("moodle-sso-error", e.to_string());
+            // Attach non-secret diagnostics so a remaining failure is debuggable
+            // without us being able to reach the institution's Moodle.
+            let diag = sso_diag(raw_uri, &token_raw);
+            let _ = app.emit("moodle-sso-error", format!("{e} {diag}"));
         }
     }
     if let Some(w) = app.get_webview_window("moodle-login") {
@@ -280,14 +288,41 @@ pub fn handle_sso_uri(app: &AppHandle, raw_uri: &str) {
     }
 }
 
-/// Decode the launch callback token, verify it, and persist it. The payload is
-/// base64 of `<site-or-hash>:::<token>[:::<privatetoken>]` (or, rarely, just the
-/// token). We take the token segment verbatim.
-fn handle_sso_token(app: &AppHandle, url: &str, token_b64: &str) -> Result<String> {
+/// Non-secret diagnostics about the callback: lengths + structure only.
+fn sso_diag(raw_uri: &str, token_raw: &str) -> String {
     use base64::Engine;
-    if token_b64.is_empty() {
+    let pd = percent_encoding::percent_decode_str(token_raw)
+        .decode_utf8_lossy()
+        .to_string();
+    let (dec_len, parts) = match base64::engine::general_purpose::STANDARD.decode(pd.trim()) {
+        Ok(b) => {
+            let s = String::from_utf8_lossy(&b);
+            (b.len(), s.split(":::").count())
+        }
+        Err(_) => (0usize, 0usize),
+    };
+    format!(
+        "[has_token={} raw_len={} b64_len={} decoded_len={} parts={}]",
+        raw_uri.contains("token="),
+        raw_uri.len(),
+        pd.len(),
+        dec_len,
+        parts
+    )
+}
+
+/// Decode the launch callback token, verify it, and persist it. The raw value may
+/// be percent-encoded; after decoding it's base64 of
+/// `<site-or-hash>:::<token>[:::<privatetoken>]` (or, rarely, just the token).
+fn handle_sso_token(app: &AppHandle, url: &str, token_raw: &str) -> Result<String> {
+    use base64::Engine;
+    if token_raw.is_empty() {
         return Err(Error::Other("no token in SSO callback".into()));
     }
+    // Percent-decode first (idempotent for un-encoded input), then base64-decode.
+    let token_b64 = percent_encoding::percent_decode_str(token_raw)
+        .decode_utf8_lossy()
+        .to_string();
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(token_b64.trim())
         .map_err(|e| Error::Other(format!("token decode failed: {e}")))?;
