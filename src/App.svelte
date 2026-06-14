@@ -16,6 +16,9 @@
   import ContextMenu from "./components/ContextMenu.svelte";
   import Dialog from "./components/Dialog.svelte";
   import EditModal from "./components/EditModal.svelte";
+  import SubjectPanel from "./components/SubjectPanel.svelte";
+  import NotificationCenter from "./components/NotificationCenter.svelte";
+  import NotificationDetail from "./components/NotificationDetail.svelte";
   import PomodoroPanel from "./components/PomodoroPanel.svelte";
   import LiveActivity from "./components/LiveActivity.svelte";
   import { keybinds } from "./lib/keybinds.svelte";
@@ -201,6 +204,8 @@
       if (e.key === "Escape") {
         // 1. Close any transient overlay first.
         if (app.findOpen) { app.findOpen = false; return; }
+        if (app.detail) { app.closeDetail(); return; }
+        if (app.notifOpen) { app.notifOpen = false; return; }
         if (app.cmdkOpen || app.leaderOpen || app.musicOpen || app.searchOpen) {
           app.cmdkOpen = false; app.leaderOpen = false; app.musicOpen = false; app.searchOpen = false; return;
         }
@@ -259,6 +264,7 @@
       if (e.key === k.recorder) { app.setView("recorder"); return; }
       if (e.key === k.cycleTheme) { app.cycleTheme(); return; }
       if (e.key === k.music) { app.musicOpen = true; return; }
+      if (e.key === k.notifications) { e.preventDefault(); app.toggleNotifications(); return; }
       if (e.key === k.insert) {
         const ta = document.querySelector<HTMLTextAreaElement>(".compose-box textarea");
         if (ta) { e.preventDefault(); ta.focus(); app.setMode("INS"); }
@@ -367,6 +373,9 @@
     <SourceMetaModal />
     <Dialog />
     <EditModal />
+    <SubjectPanel />
+    <NotificationCenter />
+    <NotificationDetail />
     <PomodoroPanel />
     <LiveActivity />
     <ContextMenu />

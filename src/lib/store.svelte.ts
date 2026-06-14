@@ -21,6 +21,19 @@ export type View =
   | "exam"
   | "settings";
 export type Mode = "NOR" | "INS" | "SEL";
+// One item in the notification centre, derived from cached Moodle data.
+export interface NotifItem {
+  id: string;
+  kind: "announcement" | "deadline" | "exam";
+  title: string;
+  course: string;
+  ts: number; // ms — post time (announcements) or due time (deadlines)
+  url: string;
+  message: string; // announcement body (HTML); empty for deadlines
+  subjectId: string | null; // linked Cortex subject, if any
+}
+// A NotifItem opened in the shared themed detail reader (NotificationDetail).
+export type DetailView = NotifItem;
 export type Toast = {
   id: string;
   kind: "info" | "success" | "warning" | "error";
@@ -278,6 +291,126 @@ class AppStore {
   chatScope = $state<{ topicName?: string; sourceName?: string } | null>(null);
   // When set, AddSource preselects this topic (used by the per-topic + button).
   addSourceTopicId = $state<string | null>(null);
+  // When set, the Settings view opens on this tab once (e.g. Overview deep-links
+  // to "experimental" for Moodle setup). Settings consumes + clears it on mount.
+  settingsTab = $state<string | null>(null);
+  openSettings(tab?: string) {
+    this.settingsTab = tab ?? null;
+    this.setView("settings");
+  }
+  // Subject detail panel (modal) — opened by clicking the subject header.
+  subjectPanelOpen = $state(false);
+  openSubjectPanel() { this.subjectPanelOpen = true; }
+  closeSubjectPanel() { this.subjectPanelOpen = false; }
+
+  // ── notification centre ─────────────────────────────────────────────────────
+  // Aggregates Moodle announcements + upcoming deadlines (across all linked
+  // courses) into a unified, read-trackable feed. Read state is per-device UI
+  // state, persisted to localStorage (not the synced DB).
+  notifOpen = $state(false);
+  toggleNotifications() { this.notifOpen = !this.notifOpen; }
+  // Shared themed detail reader for an announcement/deadline (opened from the
+  // notification centre AND the subject panel, so they look identical).
+  detail = $state<DetailView | null>(null);
+  openDetail(d: DetailView) { this.detail = d; }
+  closeDetail() { this.detail = null; }
+  moodleData = $state<api.MoodleData>({ courses: [], grades: [], deadlines: [], announcements: [] });
+  notifReadIds = $state<Record<string, true>>({});
+
+  loadNotifReads() {
+    try {
+      const raw = localStorage.getItem("cortex_notif_read");
+      if (raw) this.notifReadIds = JSON.parse(raw) as Record<string, true>;
+    } catch { /* ignore corrupt/absent */ }
+  }
+  #saveNotifReads() {
+    try { localStorage.setItem("cortex_notif_read", JSON.stringify(this.notifReadIds)); } catch { /* quota */ }
+  }
+
+  /** Refresh the cached Moodle data (drives the badge + notification centre). */
+  async loadMoodleData() {
+    try {
+      const st = await api.moodleStatus();
+      this.moodleData = st.configured
+        ? await api.moodleData()
+        : { courses: [], grades: [], deadlines: [], announcements: [] };
+    } catch { /* not configured / offline */ }
+  }
+
+  // Built from cached Moodle data + the subject↔course links. Announcements use
+  // their post time; deadlines that are still upcoming (or <12h past) are included.
+  notifications = $derived.by<NotifItem[]>(() => {
+    const md = this.moodleData;
+    const byCourse = new Map<string, string>(); // course_id → subject_id
+    for (const s of this.subjects) if (s.moodle_course_id) byCourse.set(s.moodle_course_id, s.id);
+    const cName = (cid: string) => {
+      const c = md.courses.find((x) => x.id === cid);
+      return c ? c.fullname || c.shortname || "" : "";
+    };
+    const items: NotifItem[] = [];
+    for (const a of md.announcements) {
+      items.push({
+        id: a.id, kind: "announcement", title: a.subject, course: cName(a.course_id),
+        ts: a.posted_at * 1000, url: a.url, message: a.message,
+        subjectId: byCourse.get(a.course_id) ?? null,
+      });
+    }
+    const cutoff = Date.now() - 12 * 3600 * 1000;
+    for (const d of md.deadlines) {
+      const ts = d.due_at * 1000;
+      if (ts < cutoff) continue; // skip well-past deadlines
+      items.push({
+        id: d.id, kind: d.kind === "exam" ? "exam" : "deadline", title: d.name, course: cName(d.course_id),
+        ts, url: d.url, message: "", subjectId: byCourse.get(d.course_id) ?? null,
+      });
+    }
+    return items;
+  });
+
+  unreadCount = $derived(this.notifications.filter((n) => !this.notifReadIds[n.id]).length);
+
+  markAllNotificationsRead() {
+    const next = { ...this.notifReadIds };
+    for (const n of this.notifications) next[n.id] = true;
+    this.notifReadIds = next;
+    this.#saveNotifReads();
+  }
+  markNotificationRead(id: string) {
+    if (this.notifReadIds[id]) return;
+    this.notifReadIds = { ...this.notifReadIds, [id]: true };
+    this.#saveNotifReads();
+  }
+
+  /** User-triggered Moodle re-sync (notification centre / panel). Toasts on failure. */
+  moodleSyncing = $state(false);
+  async syncMoodle() {
+    if (this.moodleSyncing) return;
+    this.moodleSyncing = true;
+    try {
+      await api.moodleSync();
+      await this.loadMoodleData();
+      this.notifyEventsChanged(); // sync mirrors deadlines into the calendar
+    } catch (e) {
+      this.pushToast({ kind: "error", title: "Moodle sync failed", body: String(e) });
+    } finally {
+      this.moodleSyncing = false;
+    }
+  }
+
+  // Auto-sync Moodle on launch (background): show cached immediately, then refresh.
+  #moodleSynced = false;
+  async autoSyncMoodle() {
+    if (this.#moodleSynced) return;
+    this.#moodleSynced = true;
+    try {
+      const st = await api.moodleStatus();
+      if (!st.configured) return;
+      await this.loadMoodleData();      // cached data first (instant badge)
+      await api.moodleSync();           // refresh from Moodle
+      await this.loadMoodleData();      // reload with fresh data
+      this.notifyEventsChanged();       // deadlines now mirrored into the calendar
+    } catch { /* offline / not configured — silent */ }
+  }
 
   // chrome / modal state
   mode = $state<Mode>("NOR");
@@ -619,6 +752,10 @@ class AppStore {
     // Auto-retry sources that failed to ingest last time (offline, model not set
     // up, transient errors). Fire-and-forget so it never blocks first render.
     void this.retryFailedSources();
+    // Notification centre: restore read-state, then auto-sync Moodle in the
+    // background so the unread badge + feed are current on launch.
+    this.loadNotifReads();
+    void this.autoSyncMoodle();
   }
 
   /** Re-ingest sources stuck in error/draft, one at a time so we don't hammer

@@ -9,7 +9,6 @@
 // will see the live status, even after navigating back.
 
 import { app } from "./store.svelte";
-import * as api from "./api";
 
 export type JobKind =
   | "cheatsheet"
@@ -119,11 +118,9 @@ class Jobs {
         } catch {
           /* view-side reload failure shouldn't crash the job */
         }
-        // When a source finishes ingesting, auto-refresh its topic's cheatsheet —
-        // but only if that bucket already has a sheet (new topics wait for a first
-        // manual generate). Keeps the per-topic sheet (and the composed whole-
-        // subject sheet) in step with the sources without a manual regenerate.
-        if (opts.kind === "source") void this.#maybeAutoRegenCheatsheet(result);
+        // Adding a source no longer auto-regenerates the cheatsheet — that fired an
+        // expensive LLM synthesis on every ingest. Regenerate manually from the
+        // cheatsheet view (or the "Regenerate cheatsheet" command) when ready.
       })
       .catch((e: unknown) => {
         if (this.#cancelled.delete(id)) return; // user cancelled — ignore error too
@@ -133,32 +130,6 @@ class Jobs {
       });
 
     return id;
-  }
-
-  // After a source ingests: if its bucket (topic, or ungrouped "General") already
-  // has a generated cheatsheet, regenerate that bucket in the background so the
-  // sheet reflects the new source. No-op when no sheet exists yet.
-  async #maybeAutoRegenCheatsheet(result: unknown) {
-    const src = (result as { source?: { subject_id?: string; topic_id?: string | null } })?.source;
-    if (!src?.subject_id) return;
-    const subjectId = src.subject_id;
-    const topicId = src.topic_id ?? undefined;
-    try {
-      const existing = await api.getCheatsheet(subjectId, topicId);
-      if (!existing || existing.sections.length === 0) return;
-      this.start({
-        kind: "cheatsheet",
-        label: existing.topic,
-        subjectId,
-        topicId: src.topic_id ?? null,
-        run: () => api.generateCheatsheet(subjectId, topicId, false),
-        onDone: () => {
-          app.cheatsheetReloadNonce++;
-        },
-      });
-    } catch {
-      /* best-effort: a failed lookup shouldn't affect the ingest result */
-    }
   }
 
   dismiss(id: string) {

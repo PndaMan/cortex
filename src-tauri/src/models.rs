@@ -16,6 +16,9 @@ pub struct Subject {
     pub topics: Vec<Topic>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Moodle course id this subject is linked to (Settings → Experimental), if any.
+    #[serde(default)]
+    pub moodle_course_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

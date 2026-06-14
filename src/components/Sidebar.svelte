@@ -105,6 +105,18 @@
     <img class="glyph" src={logo} alt="Cortex" />
     <span class="b-name">Cortex</span>
     <span class="b-spacer"></span>
+    <button
+      class="sb-bell"
+      type="button"
+      title="Notifications (u)"
+      aria-label="Notifications{app.unreadCount > 0 ? ` — ${app.unreadCount} unread` : ''}"
+      onclick={() => app.toggleNotifications()}
+    >
+      <Icon name="bell" size={15} />
+      {#if app.unreadCount > 0}
+        <span class="sb-bell-badge">{app.unreadCount > 99 ? "99+" : app.unreadCount}</span>
+      {/if}
+    </button>
     <button class="b-cmd" type="button" title="Minimize sidebar (b)" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;display:inline-flex;align-items:center;transform:rotate(180deg)" onclick={() => app.toggleSidebar()}>
       <Icon name="chevron" size={15} />
     </button>
@@ -390,6 +402,22 @@
 </div>
 
 <style>
+  /* Notification bell + unread badge in the brand row */
+  .sb-bell {
+    position: relative; display: inline-flex; align-items: center; justify-content: center;
+    background: none; border: none; padding: 3px; margin-right: 2px; cursor: pointer;
+    color: var(--fg-faint); border-radius: var(--rad-2); transition: color var(--dur-fast), background var(--dur-fast);
+  }
+  .sb-bell:hover { color: var(--fg-bright); background: var(--surface-2); }
+  .sb-bell-badge {
+    position: absolute; top: -3px; right: -3px;
+    min-width: 15px; height: 15px; padding: 0 4px;
+    background: var(--accent); color: var(--accent-fg);
+    font-size: 9.5px; font-weight: 700; line-height: 15px; text-align: center;
+    border-radius: 999px; border: 1.5px solid var(--surface);
+    font-family: var(--font-mono);
+  }
+
   /* Per-subject inline rename / delete controls — faint, brighten on row hover */
   .sb-subj-row .s-actions {
     display: flex;

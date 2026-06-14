@@ -51,6 +51,13 @@
   ] as const;
 
   let tab = $state<string>("profile");
+  // Honour a deep-link from elsewhere (e.g. the subject Overview → Moodle setup).
+  $effect(() => {
+    if (app.settingsTab) {
+      tab = app.settingsTab;
+      app.settingsTab = null;
+    }
+  });
 
   // This view owns the global keys while open
   $effect(() => {
@@ -316,6 +323,12 @@
   let mdStatus = $state<api.MoodleStatus>({ configured: false, user_id: 0, last_sync: 0 });
   let mdData = $state<api.MoodleData>({ courses: [], grades: [], deadlines: [], announcements: [] });
   let mdSummary = $state<api.MoodleSummary | null>(null);
+  // Upcoming deadlines (future, soonest first) for the synced-data preview.
+  const mdUpcoming = $derived(
+    mdData.deadlines
+      .filter((d) => d.due_at * 1000 >= Date.now() - 12 * 3600 * 1000)
+      .sort((a, b) => a.due_at - b.due_at)
+  );
 
   async function loadMoodle() {
     try {
@@ -1738,16 +1751,30 @@ Notes: {about}</pre>
               {#if mdData.courses.length}
                 <div class="set-row stacked">
                   <div class="set-row-t">Synced data</div>
-                  <div class="set-row-d">{mdData.courses.length} courses · {mdData.grades.length} grades · {mdData.deadlines.length} deadlines · {mdData.announcements.length} announcements</div>
-                  {#each mdData.deadlines.slice(0, 6) as d}
-                    <div class="set-row-d mono">⏰ {d.due_at ? new Date(d.due_at * 1000).toLocaleDateString() : "—"} · {d.name}{d.course_id ? ` (${mdCourseName(d.course_id)})` : ""}</div>
-                  {/each}
+                  <div class="md-stats">
+                    <span class="md-stat"><b>{mdData.courses.length}</b> courses</span>
+                    <span class="md-stat"><b>{mdData.grades.length}</b> grades</span>
+                    <span class="md-stat"><b>{mdData.deadlines.length}</b> deadlines</span>
+                    <span class="md-stat"><b>{mdData.announcements.length}</b> announcements</span>
+                  </div>
+                  {#if mdUpcoming.length}
+                    <div class="md-up-h mono">Upcoming deadlines</div>
+                    <ul class="md-up">
+                      {#each mdUpcoming.slice(0, 6) as d (d.id)}
+                        <li>
+                          <span class="md-up-date mono">{new Date(d.due_at * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span>
+                          {#if d.url}
+                            <a class="md-up-name" href={d.url} target="_blank" rel="noreferrer" title={d.name}>{d.name}</a>
+                          {:else}
+                            <span class="md-up-name" title={d.name}>{d.name}</span>
+                          {/if}
+                          {#if d.course_id}<span class="md-up-course" title={mdCourseName(d.course_id)}>{mdCourseName(d.course_id)}</span>{/if}
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
                 </div>
               {/if}
-
-              <div class="set-row">
-                <div class="set-row-l"><div class="set-row-d faint">Note: exam venues and the exam/class timetable are NOT in Moodle — at Stellenbosch they live in SUNStudent (my.sun), which has no public API or calendar feed. Import those manually for now.</div></div>
-              </div>
             </div>
           {/if}
         </section>

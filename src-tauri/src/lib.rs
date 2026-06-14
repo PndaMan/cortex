@@ -280,6 +280,10 @@ pub fn run() {
             moodle::moodle_data,
             moodle::moodle_link_subject,
             moodle::moodle_autolink,
+            commands::set_subject_framework,
+            commands::get_subject_framework,
+            commands::get_subject_framework_text,
+            commands::clear_subject_framework,
             // notes
             notes::create_note,
             notes::list_notes,

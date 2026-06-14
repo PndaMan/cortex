@@ -185,7 +185,15 @@
   <div class="subject-view">
     <!-- Tab bar -->
     <div class="subj-tabs">
-      <div class="st-id">
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div
+        class="st-id st-id--clickable"
+        role="button"
+        tabindex="0"
+        title="Open subject details"
+        onclick={() => app.openSubjectPanel()}
+        onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); app.openSubjectPanel(); } }}
+      >
         <span class="subj-glyph sm" style="color:{app.subjectColor(subj)};font-size:13px;line-height:1">{subj.glyph || "◆"}</span>
         <div>
           <div class="st-name">{subj.name}</div>
@@ -194,7 +202,7 @@
         <button
           class="btn btn--icon btn--sm btn--ghost"
           title="Edit subject"
-          onclick={editSubject}
+          onclick={(e) => { e.stopPropagation(); editSubject(); }}
         >
           <Icon name="pencil" size={12} />
         </button>

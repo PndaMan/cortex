@@ -126,6 +126,11 @@
       <path d="M2.5 13.5h11" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
       <path d="M4.5 13.5V9 M8 13.5V5.5 M11.5 13.5V7.5" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
     </g>
+  {:else if name === "bell"}
+    <g>
+      <path d="M4 7a4 4 0 0 1 8 0c0 3 1 4 1.5 4.5h-11C3 11 4 10 4 7z" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M6.5 13a1.5 1.5 0 0 0 3 0" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
+    </g>
   {:else}
     <!-- fallback: small square -->
     <rect x="5" y="5" width="6" height="6" fill="none" stroke="currentColor" stroke-width={sw} />

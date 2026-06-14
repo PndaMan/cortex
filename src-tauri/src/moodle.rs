@@ -26,7 +26,10 @@ const SERVICE: &str = "moodle_mobile_app";
 fn client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(45))
-        .user_agent("Cortex/1.0")
+        // Present as the official Moodle Mobile app: some institutions' WAFs/Moodle
+        // configs treat web-service requests differently by User-Agent, and the
+        // app demonstrably works against this site.
+        .user_agent("MoodleMobile 4.4.0 (44000)")
         .build()
         .unwrap_or_default()
 }
@@ -43,23 +46,44 @@ fn norm_url(raw: &str) -> String {
 
 /// Call a Web Services function. Moodle returns HTTP 200 even for errors, with an
 /// `exception`/`message` body — so we inspect the body, not the status.
+///
+/// Params are sent as a POST form body (this is what the official Moodle mobile
+/// app does). A GET query string can be truncated/mangled by an institutional
+/// proxy/WAF — which makes Moodle see a malformed `wstoken` and reject it with
+/// "Invalid parameter value detected" — so POST is both safer and more standard.
 fn ws(url: &str, token: &str, func: &str, params: &[(String, String)]) -> Result<Value> {
     let endpoint = format!("{url}/webservice/rest/server.php");
     let mut q: Vec<(String, String)> = vec![
         ("wstoken".into(), token.to_string()),
-        ("moodlewsfunction".into(), func.to_string()),
+        // Moodle's REST endpoint reads the function name from `wsfunction`. Sending
+        // it as `moodlewsfunction` left the function name empty, so Moodle threw
+        // invalid_parameter_exception ("Missing function name") *after* the token
+        // authenticated — the long-standing "Invalid parameter value detected".
+        ("wsfunction".into(), func.to_string()),
         ("moodlewsrestformat".into(), "json".into()),
     ];
     q.extend_from_slice(params);
-    let resp = client().get(&endpoint).query(&q).send()?;
-    let val: Value = resp.json()?;
+    // Read the raw body first so we can surface it verbatim on error — Moodle hides
+    // the offending parameter in `message`/`debuginfo` when server debugging is off,
+    // so the raw response is the only remaining signal for diagnosis.
+    let body = client().post(&endpoint).form(&q).send()?.text()?;
+    let val: Value = serde_json::from_str(&body).map_err(|e| {
+        Error::Other(format!(
+            "Moodle: response was not JSON ({e}): {}",
+            body.chars().take(200).collect::<String>()
+        ))
+    })?;
     if let Some(obj) = val.as_object() {
         if obj.contains_key("exception") {
-            let msg = obj
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("request failed");
-            return Err(Error::Other(format!("Moodle: {msg}")));
+            let msg = obj.get("message").and_then(|m| m.as_str()).unwrap_or("request failed");
+            // Surface errorcode + debuginfo (when present) + the raw response — they
+            // pinpoint *which* parameter/why (e.g. "invalidtoken" vs "invalidparameter").
+            let code = obj.get("errorcode").and_then(|m| m.as_str()).unwrap_or("");
+            let debug = obj.get("debuginfo").and_then(|m| m.as_str()).unwrap_or("");
+            let code_part = if code.is_empty() { String::new() } else { format!(" [{code}]") };
+            let debug_part = if debug.is_empty() { String::new() } else { format!(" — {debug}") };
+            let raw = body.chars().take(400).collect::<String>();
+            return Err(Error::Other(format!("Moodle{code_part}: {msg}{debug_part} :: raw={raw}")));
         }
     }
     Ok(val)
@@ -159,6 +183,7 @@ pub struct MoodleAnnouncement {
     pub subject: String,
     pub message: String,
     pub posted_at: i64,
+    pub url: String,
 }
 #[derive(serde::Serialize)]
 pub struct MoodleData {
@@ -236,6 +261,13 @@ pub fn moodle_login_sso(app: AppHandle, url: String) -> Result<()> {
         .parse()
         .map_err(|e| Error::Other(format!("bad launch url: {e}")))?;
 
+    // A previous attempt (especially a failed one) may have left the login window
+    // open — re-creating a webview with the same label errors ("already exists"),
+    // so close any stale one first.
+    if let Some(existing) = app.get_webview_window("moodle-login") {
+        let _ = existing.close();
+    }
+
     // The cortexmoodle:// callback is caught by the URI-scheme protocol handler
     // registered in lib.rs (it receives the RAW callback URI, so the base64 token
     // isn't corrupted by URL normalization like on_navigation's parsed Url would be).
@@ -288,58 +320,115 @@ pub fn handle_sso_uri(app: &AppHandle, raw_uri: &str) {
     }
 }
 
+/// Base64-decode a launch token, accepting either STANDARD or URL-SAFE alphabets
+/// (some Moodle configs emit URL-safe base64 with `-`/`_`, which STANDARD rejects).
+fn b64_decode_flexible(s: &str) -> std::result::Result<Vec<u8>, base64::DecodeError> {
+    use base64::Engine;
+    let s = s.trim();
+    base64::engine::general_purpose::STANDARD
+        .decode(s)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(s))
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(s))
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(s))
+}
+
 /// Non-secret diagnostics about the callback: lengths + structure only.
 fn sso_diag(raw_uri: &str, token_raw: &str) -> String {
-    use base64::Engine;
     let pd = percent_encoding::percent_decode_str(token_raw)
         .decode_utf8_lossy()
         .to_string();
-    let (dec_len, parts) = match base64::engine::general_purpose::STANDARD.decode(pd.trim()) {
+    let (dec_len, part_lens) = match b64_decode_flexible(&pd) {
         Ok(b) => {
             let s = String::from_utf8_lossy(&b);
-            (b.len(), s.split(":::").count())
+            // Per-segment lengths reveal the layout (e.g. [32,32,64] = md5:::token:::privatetoken),
+            // so we can tell which segment is the wstoken without exposing the secret.
+            let lens: Vec<usize> = s.split(":::").map(|p| p.trim().len()).collect();
+            (b.len(), lens)
         }
-        Err(_) => (0usize, 0usize),
+        Err(_) => (0usize, Vec::new()),
     };
     format!(
-        "[has_token={} raw_len={} b64_len={} decoded_len={} parts={}]",
+        "[has_token={} raw_len={} b64_len={} decoded_len={} parts={} partlens={:?}]",
         raw_uri.contains("token="),
         raw_uri.len(),
         pd.len(),
         dec_len,
-        parts
+        part_lens.len(),
+        part_lens
     )
 }
 
+/// Keep only ASCII alphanumerics. Moodle validates `wstoken` as PARAM_ALPHANUM, so
+/// any stray byte (a separator fragment, whitespace, a control char from a lossy
+/// UTF-8 decode) makes the server reject it with "Invalid parameter value detected"
+/// — exactly the failure we saw. Stripping to alphanumerics fixes a contaminated
+/// segment without changing a clean one.
+fn sanitize_token(s: &str) -> String {
+    s.chars().filter(|c| c.is_ascii_alphanumeric()).collect()
+}
+
 /// Decode the launch callback token, verify it, and persist it. The raw value may
-/// be percent-encoded; after decoding it's base64 of
-/// `<site-or-hash>:::<token>[:::<privatetoken>]` (or, rarely, just the token).
+/// be percent-encoded; after decoding it's base64 of `<md5-sig>:::<token>:::<privatetoken>`
+/// (the canonical Moodle-mobile layout, so `parts[1]` is the token) — but sites
+/// differ, so we try every segment and use whichever one `get_site_info` actually
+/// accepts, rather than assuming the layout.
 fn handle_sso_token(app: &AppHandle, url: &str, token_raw: &str) -> Result<String> {
-    use base64::Engine;
     if token_raw.is_empty() {
         return Err(Error::Other("no token in SSO callback".into()));
     }
-    // Percent-decode first (idempotent for un-encoded input), then base64-decode.
+    // Percent-decode first (idempotent for un-encoded input), then base64-decode
+    // (STANDARD or URL-safe alphabet, depending on the Moodle config).
     let token_b64 = percent_encoding::percent_decode_str(token_raw)
         .decode_utf8_lossy()
         .to_string();
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(token_b64.trim())
+    let decoded = b64_decode_flexible(&token_b64)
         .map_err(|e| Error::Other(format!("token decode failed: {e}")))?;
     let s = String::from_utf8_lossy(&decoded);
     let parts: Vec<&str> = s.split(":::").collect();
-    let token = if parts.len() >= 2 { parts[1] } else { parts[0] };
-    let token = token.trim().to_string();
-    if token.is_empty() {
-        return Err(Error::Other("empty token in SSO callback".into()));
+
+    // Candidate tokens, most-likely first: parts[1] (canonical), then the other
+    // segments, then the whole decoded blob for single-token sites — each
+    // sanitized to alphanumerics and de-duplicated. A wrong candidate just fails
+    // get_site_info and we move on.
+    let mut candidates: Vec<String> = Vec::new();
+    let mut push = |t: String| {
+        if t.len() >= 16 && !candidates.contains(&t) {
+            candidates.push(t);
+        }
+    };
+    for idx in [1usize, 0, 2] {
+        if let Some(p) = parts.get(idx) {
+            push(sanitize_token(p));
+        }
     }
-    let (uid, fullname) = site_info(url, &token)?;
-    let state = app.state::<AppState>();
-    let c = state.db.lock().unwrap();
-    repo::set_setting(&c, K_URL, url)?;
-    repo::set_setting(&c, K_TOKEN, &token)?;
-    repo::set_setting(&c, K_USERID, &uid.to_string())?;
-    Ok(fullname)
+    if parts.len() < 2 {
+        push(sanitize_token(&s));
+    }
+    if candidates.is_empty() {
+        return Err(Error::Other(
+            "no usable token in SSO callback (decoded payload had no token-shaped segment)".into(),
+        ));
+    }
+
+    let mut first_err: Option<Error> = None;
+    for token in &candidates {
+        match site_info(url, token) {
+            Ok((uid, fullname)) => {
+                let state = app.state::<AppState>();
+                let c = state.db.lock().unwrap();
+                repo::set_setting(&c, K_URL, url)?;
+                repo::set_setting(&c, K_TOKEN, token)?;
+                repo::set_setting(&c, K_USERID, &uid.to_string())?;
+                return Ok(fullname);
+            }
+            Err(e) => {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+    }
+    Err(first_err.unwrap_or_else(|| Error::Other("SSO token rejected by Moodle".into())))
 }
 
 #[tauri::command]
@@ -600,14 +689,15 @@ pub async fn moodle_sync(app: AppHandle) -> Result<MoodleSummary> {
                                     d.get("timemodified").and_then(|x| x.as_i64()).unwrap_or(0);
                                 c.execute(
                                     "INSERT OR REPLACE INTO moodle_announcements \
-                                     (id, course_id, subject, message, posted_at, updated_at) \
-                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                                     (id, course_id, subject, message, posted_at, url, updated_at) \
+                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                                     params![
                                         format!("disc:{did}"),
                                         cid.to_string(),
                                         subj,
                                         msg,
                                         posted,
+                                        format!("{url}/mod/forum/discuss.php?d={did}"),
                                         now
                                     ],
                                 )?;
@@ -616,6 +706,61 @@ pub async fn moodle_sync(app: AppHandle) -> Result<MoodleSummary> {
                         }
                     }
                 }
+            }
+        }
+
+        // --- mirror deadlines/exams into the Cortex calendar (events) ---
+        // Each synced deadline becomes a calendar event (id "moodle:<deadline-id>"),
+        // linked to the Cortex subject whose moodle_course_id matches. Upsert keeps
+        // user state (done/reminder) and created_at; assignments → tasks, exams →
+        // events. This is what makes Moodle deadlines show up on the calendar.
+        {
+            let c = state.db.lock().unwrap();
+            // course_id (text) → subject_id for linked subjects.
+            let mut course_subj: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            {
+                let mut st = c.prepare(
+                    "SELECT moodle_course_id, id FROM subjects \
+                     WHERE moodle_course_id IS NOT NULL AND moodle_course_id <> ''",
+                )?;
+                let rows = st.query_map([], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })?;
+                for row in rows.flatten() {
+                    course_subj.insert(row.0, row.1);
+                }
+            }
+            let deadlines: Vec<(String, String, String, i64, String)> = {
+                let mut st = c.prepare(
+                    "SELECT id, course_id, name, due_at, kind FROM moodle_deadlines",
+                )?;
+                let rows = st.query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                        r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                        r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                    ))
+                })?;
+                rows.filter_map(|x| x.ok()).collect()
+            };
+            for (did, course_id, name, due_at, kind) in deadlines {
+                if name.is_empty() || due_at == 0 {
+                    continue;
+                }
+                let ev_id = format!("moodle:{did}");
+                let subject_id = course_subj.get(&course_id).cloned();
+                let ev_kind = if kind == "exam" { "event" } else { "task" };
+                let start_ms = due_at * 1000;
+                c.execute(
+                    "INSERT INTO events (id, subject_id, title, description, start_ms, all_day, kind, done, notified, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, 'From Moodle', ?4, 0, ?5, 0, 0, ?6, ?6) \
+                     ON CONFLICT(id) DO UPDATE SET \
+                       subject_id=excluded.subject_id, title=excluded.title, \
+                       start_ms=excluded.start_ms, kind=excluded.kind, updated_at=excluded.updated_at",
+                    params![ev_id, subject_id, name, start_ms, ev_kind, now],
+                )?;
             }
         }
 
@@ -678,7 +823,7 @@ pub fn moodle_data(state: tauri::State<AppState>) -> Result<MoodleData> {
     };
     let announcements = {
         let mut st = c.prepare(
-            "SELECT id, course_id, subject, message, posted_at FROM moodle_announcements ORDER BY posted_at DESC",
+            "SELECT id, course_id, subject, message, posted_at, url FROM moodle_announcements ORDER BY posted_at DESC",
         )?;
         let rows = st.query_map([], |r| {
             Ok(MoodleAnnouncement {
@@ -687,6 +832,7 @@ pub fn moodle_data(state: tauri::State<AppState>) -> Result<MoodleData> {
                 subject: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
                 message: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
                 posted_at: r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+                url: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
             })
         })?;
         rows.filter_map(|x| x.ok()).collect()
