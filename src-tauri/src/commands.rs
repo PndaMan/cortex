@@ -2702,6 +2702,107 @@ fn whisper_remote_url(state: &AppState) -> Option<String> {
     crate::homelab::resolved_setting(&c, "whisper_url")
 }
 
+// ---- external dependency status -----------------------------------------
+
+#[derive(serde::Serialize)]
+pub struct DepStatus {
+    pub name: String,
+    pub detail: String,
+    pub present: bool,
+}
+#[derive(serde::Serialize)]
+pub struct DependencyReport {
+    pub manager: String,           // detected package manager (pacman/apt/…)
+    pub deps: Vec<DepStatus>,
+    pub install_command: String,   // one command to install everything missing
+    pub note: String,
+}
+
+/// Detect the system package manager so we can suggest the right install command.
+fn detect_pkg_manager() -> &'static str {
+    if std::env::consts::OS == "macos" {
+        return "brew";
+    }
+    if std::env::consts::OS == "windows" {
+        return "winget";
+    }
+    let id = std::fs::read_to_string("/etc/os-release").unwrap_or_default().to_lowercase();
+    if id.contains("arch") || id.contains("manjaro") || id.contains("omarchy") {
+        "pacman"
+    } else if id.contains("debian") || id.contains("ubuntu") || id.contains("pop") || id.contains("mint") {
+        "apt"
+    } else if id.contains("fedora") || id.contains("rhel") || id.contains("centos") {
+        "dnf"
+    } else {
+        "pacman" // sensible default for this user's Arch-based setup
+    }
+}
+
+/// Status of every external tool Cortex shells out to + a copy-pasteable command
+/// to install whatever's missing. We don't run installers ourselves — system
+/// packages need sudo and vary by distro — but this makes setup one paste.
+#[tauri::command]
+pub fn dependency_status() -> DependencyReport {
+    let present = |bins: &[&str]| bins.iter().any(|b| ingest::which(b).is_some());
+    // (label, detail, binaries-that-satisfy-it, package per manager, pip?)
+    struct Dep { name: &'static str, detail: &'static str, bins: &'static [&'static str], pac: &'static str, apt: &'static str, dnf: &'static str, brew: &'static str, pip: bool }
+    let table: &[Dep] = &[
+        Dep { name: "PDF text & page images", detail: "poppler", bins: &["pdftotext", "pdftoppm"], pac: "poppler", apt: "poppler-utils", dnf: "poppler-utils", brew: "poppler", pip: false },
+        Dep { name: "Office documents (docx/pptx)", detail: "LibreOffice", bins: &["libreoffice", "soffice"], pac: "libreoffice-fresh", apt: "libreoffice", dnf: "libreoffice", brew: "libreoffice", pip: false },
+        Dep { name: "Audio conversion", detail: "ffmpeg", bins: &["ffmpeg"], pac: "ffmpeg", apt: "ffmpeg", dnf: "ffmpeg", brew: "ffmpeg", pip: false },
+        Dep { name: "OCR (scanned PDFs/images)", detail: "Tesseract", bins: &["tesseract"], pac: "tesseract tesseract-data-eng", apt: "tesseract-ocr", dnf: "tesseract", brew: "tesseract", pip: false },
+        Dep { name: "Local transcription", detail: "openai-whisper", bins: &["whisper", "whisper-cli", "main"], pac: "", apt: "", dnf: "", brew: "", pip: true },
+        Dep { name: "YouTube ingest", detail: "yt-dlp (auto-downloaded if missing)", bins: &["yt-dlp"], pac: "yt-dlp", apt: "yt-dlp", dnf: "yt-dlp", brew: "yt-dlp", pip: false },
+        Dep { name: "Music playback", detail: "mpv", bins: &["mpv"], pac: "mpv", apt: "mpv", dnf: "mpv", brew: "mpv", pip: false },
+    ];
+    let mgr = detect_pkg_manager();
+    let mut deps = Vec::new();
+    let mut sys_pkgs: Vec<&str> = Vec::new();
+    let mut need_whisper = false;
+    for d in table {
+        let ok = present(d.bins);
+        deps.push(DepStatus { name: d.name.into(), detail: d.detail.into(), present: ok });
+        if ok {
+            continue;
+        }
+        if d.pip {
+            need_whisper = true;
+        } else {
+            let pkg = match mgr { "apt" => d.apt, "dnf" => d.dnf, "brew" => d.brew, "winget" => "", _ => d.pac };
+            if !pkg.is_empty() {
+                sys_pkgs.push(pkg);
+            }
+        }
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if !sys_pkgs.is_empty() {
+        let list = sys_pkgs.join(" ");
+        let cmd = match mgr {
+            "apt" => format!("sudo apt install -y {list}"),
+            "dnf" => format!("sudo dnf install -y {list}"),
+            "brew" => format!("brew install {list}"),
+            "winget" => String::new(),
+            _ => format!("sudo pacman -S --needed {list}"),
+        };
+        if !cmd.is_empty() {
+            parts.push(cmd);
+        }
+    }
+    if need_whisper {
+        parts.push("pipx install openai-whisper".to_string());
+    }
+    DependencyReport {
+        manager: mgr.to_string(),
+        deps,
+        install_command: parts.join(" && "),
+        note: if mgr == "winget" {
+            "Install these via your package manager of choice.".into()
+        } else {
+            "Run this in a terminal. yt-dlp is also auto-downloaded by Cortex when needed.".into()
+        },
+    }
+}
+
 /// Restrict a client-supplied audio extension to known containers so it can't
 /// smuggle path separators or oddities into the recordings filename.
 fn sanitize_ext(ext: Option<&str>) -> &'static str {

@@ -234,6 +234,11 @@ export const setSubjectAliases = (subjectId: string, aliases: string) =>
   invoke<number>("set_subject_aliases", { subjectId, aliases });
 export const retagCalendarEvents = () => invoke<number>("retag_calendar_events");
 
+// ---- external dependency status ----
+export interface DepStatus { name: string; detail: string; present: boolean }
+export interface DependencyReport { manager: string; deps: DepStatus[]; install_command: string; note: string }
+export const dependencyStatus = () => invoke<DependencyReport>("dependency_status");
+
 // ---- per-subject module framework ----
 export interface FrameworkMeta {
   filename: string;

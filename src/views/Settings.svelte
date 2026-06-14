@@ -505,7 +505,27 @@
   let gBusy = $state(false);
   $effect(() => {
     if (tab === "calendar" && gStatus === null) loadGoogle();
+    if (tab === "homelab" && depReport === null) loadDeps();
   });
+
+  // ---- external dependency status ----
+  let depReport = $state<api.DependencyReport | null>(null);
+  let depLoading = $state(false);
+  async function loadDeps() {
+    depLoading = true;
+    try { depReport = await api.dependencyStatus(); }
+    catch { depReport = null; }
+    finally { depLoading = false; }
+  }
+  async function copyDepCmd() {
+    if (!depReport?.install_command) return;
+    try {
+      await navigator.clipboard.writeText(depReport.install_command);
+      app.pushToast({ kind: "success", title: "Copied", body: "Install command copied to clipboard." });
+    } catch {
+      app.pushToast({ kind: "warning", title: "Couldn't copy", body: depReport.install_command });
+    }
+  }
   let gCalendars = $state<api.GoogleCalendar[]>([]);
   let gCalBusy = $state(false);
   async function loadGoogle() {
@@ -1430,6 +1450,41 @@ Notes: {about}</pre>
               <div class="set-row-t">Public base <span class="faint">optional</span></div>
               <input class="input mono" bind:value={hlPublic} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://lab.example.com" />
             </div>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h svc-h">
+            <div>
+              <h3 class="set-group-t">Dependencies</h3>
+              <p class="set-group-d">External tools Cortex shells out to for ingest, OCR, transcription and media. Install whatever's missing with the one command below.</p>
+            </div>
+            <button class="btn btn--sm btn--ghost" onclick={loadDeps} disabled={depLoading}><Icon name="refresh" size={12} /> {depLoading ? "Checking…" : "Re-check"}</button>
+          </div>
+          <div class="set-card">
+            {#if depReport}
+              {#each depReport.deps as d (d.name)}
+                <div class="dep-row">
+                  <span class="dep-ico" class:on={d.present}>{d.present ? "✓" : "✗"}</span>
+                  <span class="dep-name">{d.name}</span>
+                  <span class="dep-detail mono">{d.detail}</span>
+                </div>
+              {/each}
+              {#if depReport.install_command}
+                <div class="set-row stacked" style="margin-top:10px">
+                  <div class="set-row-t">Install missing <span class="faint">· {depReport.manager}</span></div>
+                  <div class="row-inline">
+                    <input class="input mono" readonly value={depReport.install_command} />
+                    <button class="btn" onclick={copyDepCmd}><Icon name="doc" size={12} /> Copy</button>
+                  </div>
+                  <div class="set-row-d">{depReport.note}</div>
+                </div>
+              {:else}
+                <div class="set-row-d" style="color:var(--ok); margin-top:8px">All dependencies present 🎉</div>
+              {/if}
+            {:else}
+              <div class="set-row-d faint">{depLoading ? "Checking installed tools…" : "Couldn't check dependencies."}</div>
+            {/if}
           </div>
         </section>
 

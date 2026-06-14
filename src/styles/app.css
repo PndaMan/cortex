@@ -185,6 +185,13 @@
 .st-id--clickable { cursor: pointer; border-radius: var(--rad-2); transition: background 0.12s; }
 .st-id--clickable:hover { background: var(--surface-2); }
 
+/* Dependency status list (Settings → Integrations) */
+.dep-row { display: flex; align-items: center; gap: 10px; padding: 6px 2px; font-size: var(--t-sm); }
+.dep-ico { flex: none; width: 16px; text-align: center; font-weight: 700; color: var(--err, #e5484d); font-family: var(--font-mono); }
+.dep-ico.on { color: var(--ok); }
+.dep-name { color: var(--fg); }
+.dep-detail { margin-left: auto; color: var(--fg-faint); font-size: var(--t-xs); }
+
 /* Google "Calendars to sync" checklist (Settings → Google Calendar) */
 .gcal-row { display: flex; align-items: center; gap: 10px; padding: 7px 2px; cursor: pointer; font-size: var(--t-sm); color: var(--fg); }
 .gcal-row:hover { color: var(--fg-bright); }
