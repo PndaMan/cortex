@@ -69,6 +69,7 @@
   const PROVIDERS = [
     { id: "gemini",     label: "Gemini",              models: ["gemini-2.5-flash","gemini-2.5-pro","gemini-2.0-flash-001"] },
     { id: "openrouter", label: "OpenRouter",          models: [
+      "stepfun/step-3.7-flash",
       "google/gemini-2.5-flash",
       "anthropic/claude-sonnet-4.5",
       "openai/gpt-5-mini",
@@ -150,13 +151,17 @@
 
   // ---- models state ----
   type TaskAssign = { provider: string; model: string; budget: string };
+  // Defaults: Step 3.7 Flash (via OpenRouter) for text generation — cheaper than
+  // Gemini 2.5 Flash ($0.20/$1.15 vs ~$0.30/$2.50 per Mtok), 256K context, with
+  // strong agentic/structured-output quality. Falls back to any configured key
+  // if OpenRouter isn't set (see llm::from_spec_or_any). Embeddings stay on Gemini.
   let assign = $state<Record<TaskId, TaskAssign>>({
-    chat:       { provider: "claude",  model: "claude-3-5-sonnet-20241022", budget: "8000" },
-    cheatsheet: { provider: "gemini",  model: "gemini-2.5-pro",             budget: "32000" },
-    audio:      { provider: "gemini",  model: "gemini-2.5-flash",           budget: "16000" },
-    quiz:       { provider: "openai",  model: "gpt-4o-mini",                budget: "8000" },
-    flashcard:  { provider: "claude",  model: "claude-3-5-haiku-20241022",  budget: "6000" },
-    embedding:  { provider: "gemini",  model: "text-embedding-004",         budget: "—" },
+    chat:       { provider: "openrouter", model: "stepfun/step-3.7-flash", budget: "8000" },
+    cheatsheet: { provider: "openrouter", model: "stepfun/step-3.7-flash", budget: "32000" },
+    audio:      { provider: "openrouter", model: "stepfun/step-3.7-flash", budget: "16000" },
+    quiz:       { provider: "openrouter", model: "stepfun/step-3.7-flash", budget: "8000" },
+    flashcard:  { provider: "openrouter", model: "stepfun/step-3.7-flash", budget: "6000" },
+    embedding:  { provider: "gemini",     model: "text-embedding-004",     budget: "—" },
   });
 
   function setTask(id: TaskId, patch: Partial<TaskAssign>) {

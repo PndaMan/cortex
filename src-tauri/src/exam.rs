@@ -87,7 +87,7 @@ pub async fn generate_exam(
                     .collect()
             };
             let spec = repo::get_setting(&c, "model_quiz")?
-                .unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
+                .unwrap_or_else(|| "openrouter:stepfun/step-3.7-flash".into());
             guard_offline_llm(&c, &spec)?;
             (context, subj.name, topic_names, spec, read_keys(&c)?)
         };
@@ -293,7 +293,7 @@ fn grade_exam_inner(app: &AppHandle, id: &str, answers: &[ExamAnswer]) -> Result
             let topics: Vec<String> = exam.topic_ids.clone();
             let context = exam_context(&c, &exam.subject_id, &topics)?;
             let spec = repo::get_setting(&c, "model_quiz")?
-                .unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
+                .unwrap_or_else(|| "openrouter:stepfun/step-3.7-flash".into());
             (exam, context, spec, read_keys(&c)?)
         };
 

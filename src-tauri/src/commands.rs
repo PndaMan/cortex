@@ -410,7 +410,7 @@ fn auto_rename_source(state: &State<AppState>, source_id: &str, original_name: &
         let c = state.db.lock().unwrap();
         let spec = match repo::get_setting(&c, "model_chat") {
             Ok(Some(s)) => s,
-            _ => "gemini:gemini-2.5-flash".to_string(),
+            _ => "openrouter:stepfun/step-3.7-flash".to_string(),
         };
         match read_keys(&c) {
             Ok(k) => (spec, k),
@@ -454,7 +454,7 @@ fn ocr_via_vision(state: &State<AppState>, kind: &str, path: Option<&str>) -> Re
     let (spec, keys) = {
         let c = state.db.lock().unwrap();
         let spec = repo::get_setting(&c, "model_chat")?
-            .unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
+            .unwrap_or_else(|| "openrouter:stepfun/step-3.7-flash".into());
         (spec, read_keys(&c)?)
     };
     let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
@@ -1054,7 +1054,7 @@ pub async fn chat_answer(
     let (embed_provider, ollama_url, chat_spec, keys, preamble, searxng) = {
         let c = state.db.lock().unwrap();
         let chat_spec =
-            repo::get_setting(&c, "model_chat")?.unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
+            repo::get_setting(&c, "model_chat")?.unwrap_or_else(|| "openrouter:stepfun/step-3.7-flash".into());
         guard_offline_llm(&c, &chat_spec)?;
         (
             effective_embed_provider(&c),
@@ -1900,7 +1900,7 @@ pub async fn generate_cheatsheet(
             bucket.push((title, text));
         }
         let spec =
-            repo::get_setting(&c, "model_cheatsheet")?.unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
+            repo::get_setting(&c, "model_cheatsheet")?.unwrap_or_else(|| "openrouter:stepfun/step-3.7-flash".into());
         guard_offline_llm(&c, &spec)?;
         (bucket, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c), searxng_base(&c)?)
     };
@@ -2347,7 +2347,7 @@ pub async fn generate_material(
             .map(|t| t.name.clone())
             .unwrap_or_default();
         let spec = repo::get_setting(&c, setting_key)?
-            .unwrap_or_else(|| "gemini:gemini-2.5-flash".into());
+            .unwrap_or_else(|| "openrouter:stepfun/step-3.7-flash".into());
         guard_offline_llm(&c, &spec)?;
         let host_a = cap(repo::get_setting(&c, "voice_a")?.unwrap_or_else(|| "maya".into()));
         let host_b = cap(repo::get_setting(&c, "voice_b")?.unwrap_or_else(|| "theo".into()));
@@ -3304,7 +3304,7 @@ fn spawn_lecture_summary(
             let c = state.db.lock().unwrap();
             let spec = match repo::get_setting(&c, "model_chat") {
                 Ok(Some(s)) => s,
-                _ => "gemini:gemini-2.5-flash".into(),
+                _ => "openrouter:stepfun/step-3.7-flash".into(),
             };
             let keys = match read_keys(&c) {
                 Ok(k) => k,
