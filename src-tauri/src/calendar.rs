@@ -139,6 +139,14 @@ pub fn set_event_done(state: State<AppState>, id: String, done: bool) -> Result<
     repo::get_event(&c, &id)
 }
 
+/// Move an assignment/task between kanban columns ("todo" | "doing" | "done").
+#[tauri::command]
+pub fn set_event_status(state: State<AppState>, id: String, status: String) -> Result<CalEvent> {
+    let c = state.db.lock().unwrap();
+    repo::set_event_status(&c, &id, &status)?;
+    repo::get_event(&c, &id)
+}
+
 /// Return reminders that are due now and mark them notified so the frontend can
 /// raise a notification exactly once. The frontend polls this periodically.
 /// With `system_notify` (window hidden in the tray) they are ALSO raised as OS

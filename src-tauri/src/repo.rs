@@ -1884,6 +1884,11 @@ fn map_event(r: &rusqlite::Row) -> rusqlite::Result<CalEvent> {
         checklist: text_to_ids(r.get(17)?),
         priority: r.get(18)?,
         topic_ids: text_to_tags(r.get(19)?),
+        // status is NULL on rows from before the board existed — derive it from
+        // the binary `done` flag so they appear in the right column.
+        status: r.get::<_, Option<String>>(20)?.unwrap_or_else(|| {
+            if r.get::<_, i64>(10).unwrap_or(0) != 0 { "done".into() } else { "todo".into() }
+        }),
         created_at: r.get(14)?,
         updated_at: r.get(15)?,
     })
@@ -1891,7 +1896,7 @@ fn map_event(r: &rusqlite::Row) -> rusqlite::Result<CalEvent> {
 
 const EVENT_COLS: &str = "id, subject_id, title, description, location, color, start_ms, end_ms, \
     all_day, kind, done, reminder_ms, notified, google_id, created_at, updated_at, tags, checklist, \
-    priority, topic_ids";
+    priority, topic_ids, status";
 
 #[allow(clippy::too_many_arguments)]
 pub fn insert_event(
@@ -2002,9 +2007,25 @@ pub fn set_event_checklist(conn: &Connection, id: &str, topic_ids: &[String]) ->
 }
 
 pub fn set_event_done(conn: &Connection, id: &str, done: bool) -> Result<()> {
+    // Keep the board status consistent with the calendar's done checkbox.
+    let status = if done { "done" } else { "todo" };
     let n = conn.execute(
-        "UPDATE events SET done=?2, updated_at=?3 WHERE id=?1",
-        params![id, done as i64, now_ms()],
+        "UPDATE events SET done=?2, status=?3, updated_at=?4 WHERE id=?1",
+        params![id, done as i64, status, now_ms()],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound(format!("event {id}")));
+    }
+    Ok(())
+}
+
+/// Move an event between kanban columns ("todo" | "doing" | "done"). Keeps the
+/// binary `done` flag in sync so the calendar checkbox and the board agree.
+pub fn set_event_status(conn: &Connection, id: &str, status: &str) -> Result<()> {
+    let done = status == "done";
+    let n = conn.execute(
+        "UPDATE events SET status=?2, done=?3, updated_at=?4 WHERE id=?1",
+        params![id, status, done as i64, now_ms()],
     )?;
     if n == 0 {
         return Err(Error::NotFound(format!("event {id}")));
@@ -3249,8 +3270,35 @@ mod tests {
         mark_notified(&c, &due).unwrap();
         assert!(due_reminders(&c, 1_000).unwrap().is_empty());
         set_event_done(&c, &due, true).unwrap();
-        assert!(get_event(&c, &due).unwrap().done);
+        let ev = get_event(&c, &due).unwrap();
+        assert!(ev.done);
+        // done flag and board status stay in lock-step.
+        assert_eq!(ev.status, "done");
         assert_eq!(list_events(&c, None, Some(0), Some(5_000)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn event_status_kanban_columns_sync_with_done() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let id = insert_event(
+            &c, None, "Essay", None, None, None, 1_000, None, true, "assignment", None, &[], Some("high"), &[],
+        )
+        .unwrap();
+        // New row: NULL status derives to "todo" (done=0).
+        assert_eq!(get_event(&c, &id).unwrap().status, "todo");
+        // Move across columns; "done" flips the done flag, others clear it.
+        set_event_status(&c, &id, "doing").unwrap();
+        let ev = get_event(&c, &id).unwrap();
+        assert_eq!(ev.status, "doing");
+        assert!(!ev.done);
+        set_event_status(&c, &id, "done").unwrap();
+        let ev = get_event(&c, &id).unwrap();
+        assert_eq!(ev.status, "done");
+        assert!(ev.done);
+        // Unchecking via the calendar resets the board to todo.
+        set_event_done(&c, &id, false).unwrap();
+        assert_eq!(get_event(&c, &id).unwrap().status, "todo");
     }
 
     #[test]

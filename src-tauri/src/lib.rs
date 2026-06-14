@@ -314,6 +314,7 @@ pub fn run() {
             calendar::set_event_checklist,
             calendar::delete_event,
             calendar::set_event_done,
+            calendar::set_event_status,
             calendar::check_reminders,
             // review
             review::record_attempt,

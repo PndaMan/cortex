@@ -6,6 +6,7 @@
   import Cheatsheet from "./Cheatsheet.svelte";
   import Materials from "./Materials.svelte";
   import Citations from "./Citations.svelte";
+  import BoardView from "./BoardView.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
   import GeneratingCard from "../components/GeneratingCard.svelte";
   import Picker from "../components/Picker.svelte";
@@ -17,6 +18,7 @@
     { id: "chats", label: "Chats", icon: "chat" },
     { id: "materials", label: "Materials", icon: "grid" },
     { id: "citations", label: "Assignments", icon: "calendar" },
+    { id: "board", label: "Board", icon: "cards" },
   ] as const;
 
   function kindLabel(kind: string): string {
@@ -399,6 +401,9 @@
 
       {:else if app.subjectTab === "citations"}
         <Citations />
+
+      {:else if app.subjectTab === "board"}
+        <BoardView />
       {/if}
     </div>
   </div>

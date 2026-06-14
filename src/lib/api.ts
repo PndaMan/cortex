@@ -590,6 +590,7 @@ export interface CalEvent {
   checklist: string[]; // ticked topic ids (deadline study checklist)
   priority: string | null; // assignment priority: low | med | high (null = normal)
   topic_ids: string[]; // covered topic ids (assignments)
+  status: string; // kanban column: todo | doing | done
   created_at: number;
   updated_at: number;
 }
@@ -663,6 +664,8 @@ export const updateEvent = (e: {
 export const deleteEvent = (id: string) => invoke<void>("delete_event", { id });
 export const setEventDone = (id: string, done: boolean) =>
   invoke<CalEvent>("set_event_done", { id, done });
+export const setEventStatus = (id: string, status: "todo" | "doing" | "done") =>
+  invoke<CalEvent>("set_event_status", { id, status });
 /** Set the deadline study checklist (ticked topic ids). */
 export const setEventChecklist = (id: string, topicIds: string[]) =>
   invoke<CalEvent>("set_event_checklist", { id, topicIds });

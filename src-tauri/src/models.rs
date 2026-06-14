@@ -369,6 +369,9 @@ pub struct CalEvent {
     /// Topic ids this assignment covers (previously squatted in `tags`).
     #[serde(default)]
     pub topic_ids: Vec<String>,
+    /// Kanban board column: "todo" | "doing" | "done". Kept in sync with `done`.
+    #[serde(default)]
+    pub status: String,
     pub created_at: i64,
     pub updated_at: i64,
 }
