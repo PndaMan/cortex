@@ -19,6 +19,9 @@
   let i       = $state(0);
   let flipped = $state(false);
   let done    = $state(false);
+  // Landing screen: pick "Study due" vs "Study all" BEFORE diving into the deck,
+  // so due-only review is reachable without finishing the whole deck first.
+  let started = $state(false);
   let rated   = $state(0);
   let glow    = $state<string | null>(null);
 
@@ -84,8 +87,13 @@
     }, 460);
   }
 
+  // Study the whole deck.
+  function studyAll() {
+    reviewKeys = null;
+    i = 0; done = false; flipped = false; rated = 0; glow = null; missed = []; started = true;
+  }
   function restart() {
-    i = 0; done = false; flipped = false; rated = 0; glow = null; reviewKeys = null; missed = [];
+    i = 0; done = false; flipped = false; rated = 0; glow = null; reviewKeys = null; missed = []; started = true;
   }
 
   async function startReview() {
@@ -98,13 +106,13 @@
         return;
       }
       reviewKeys = wrong.map((w) => w.item_key);
-      i = 0; done = false; flipped = false; rated = 0; glow = null; missed = [];
+      i = 0; done = false; flipped = false; rated = 0; glow = null; missed = []; started = true;
     } catch (e) {
       app.pushToast({ kind: "error", title: "Review load failed", body: String(e) });
     }
   }
 
-  // SM-2: study only the cards that are due now (by their scheduled due date).
+  // Study only the cards due now (by their scheduled due date).
   async function startDue() {
     const sid = app.activeSubjectId;
     if (!sid) { app.pushToast({ kind: "warning", title: "No subject selected" }); return; }
@@ -115,7 +123,7 @@
         return;
       }
       reviewKeys = due.map((d) => d.item_key);
-      i = 0; done = false; flipped = false; rated = 0; glow = null; missed = [];
+      i = 0; done = false; flipped = false; rated = 0; glow = null; missed = []; started = true;
     } catch (e) {
       app.pushToast({ kind: "error", title: "Due load failed", body: String(e) });
     }
@@ -213,6 +221,30 @@
           </ul>
         {/if}
       </div>
+    </div>
+  {:else if !started}
+    <div class="fc-done">
+      <div class="fc-done-glyph">
+        <Icon name="cards" size={22} color="var(--accent)" />
+      </div>
+      <h2 class="read">Flashcards</h2>
+      <p class="mono muted">
+        {deck.length} {deck.length === 1 ? "card" : "cards"}{dueCount > 0 ? ` · ${dueCount} due now` : " · nothing due right now"}
+      </p>
+      <div class="row gap-2" style="justify-content: center; flex-wrap: wrap">
+        {#if dueCount > 0}
+          <button class="btn btn--primary" onclick={startDue}>Study due · {dueCount}</button>
+          <button class="btn" onclick={studyAll}>Study all · {deck.length}</button>
+        {:else}
+          <button class="btn btn--primary" onclick={studyAll}>Study all · {deck.length}</button>
+        {/if}
+        <button class="btn" onclick={startReview}>Review missed</button>
+      </div>
+      {#if onExit}
+        <button class="btn btn--ghost btn--sm" style="margin-top:12px" onclick={onExit}>
+          <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={12} /></span> Back to materials
+        </button>
+      {/if}
     </div>
   {:else}
     <div class="fc-bar-row">
