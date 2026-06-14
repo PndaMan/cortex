@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from "./lib/store.svelte";
   import Sidebar from "./components/Sidebar.svelte";
+  import Titlebar from "./components/Titlebar.svelte";
   import StatusBar from "./components/StatusBar.svelte";
   import CommandPalette from "./components/CommandPalette.svelte";
   import GlobalSearch from "./components/GlobalSearch.svelte";
@@ -59,6 +60,11 @@
     else if (app.view === "analytics") void loadAnalytics();
     else if (app.view === "exam") void loadExam();
   });
+
+  // Custom title bar is only for macOS and Windows — on Linux (especially
+  // tiling WMs like Hyprland/Omarchy) the window manager frames windows itself,
+  // so a custom bar is intrusive. Linux keeps the frameless look it had before.
+  const showTitlebar = /Mac|Win/i.test(navigator.userAgent);
 
   // Initialize app state on mount (loads subjects, seeds demo if empty, restores theme)
   $effect(() => {
@@ -302,7 +308,11 @@
     class:nav-open={navOpen}
     style:--sb-w={app.sidebarCollapsed ? "0px" : app.sidebarWidth + "px"}
     style:--chat-w={app.chatWidth + "px"}
+    style:--tb-h={showTitlebar ? "30px" : "0px"}
   >
+    {#if showTitlebar}
+      <div class="app-titlebar"><Titlebar /></div>
+    {/if}
     {#if drawer}
       <!-- Sub-1080: hamburger toggles the slide-in sidebar drawer (overlay). -->
       <button class="nav-toggle" onclick={() => (navOpen = !navOpen)} aria-label="Toggle menu">
@@ -406,7 +416,7 @@
 
   /* Floating button to reopen the sidebar when it's minimized. */
   .sb-expand {
-    position: fixed; top: 10px; left: 10px; z-index: 40;
+    position: fixed; top: calc(var(--tb-h, 30px) + 10px); left: 10px; z-index: 40;
     width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
     border-radius: 8px; border: 1px solid var(--border); background: var(--surface);
     color: var(--fg-muted); cursor: pointer; transition: color var(--dur), border-color var(--dur);

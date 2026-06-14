@@ -4,16 +4,18 @@
 .app-shell {
   display: grid;
   grid-template-columns: var(--sb-w, 248px) 1fr;
-  grid-template-rows: 1fr 26px;
+  grid-template-rows: var(--tb-h, 30px) 1fr 26px;
   height: 100vh; width: 100vw; overflow: hidden;
 }
 .app-shell-wrap { display: contents; }
-.app-main { grid-column: 2; grid-row: 1; display: flex; min-width: 0; overflow: hidden; position: relative; }
-.app-shell > .statusbar { grid-column: 1 / -1; grid-row: 2; }
+/* Custom OS-adaptive title bar spans the full width above the sidebar+main. */
+.app-titlebar { grid-column: 1 / -1; grid-row: 1; height: var(--tb-h, 30px); }
+.app-main { grid-column: 2; grid-row: 2; display: flex; min-width: 0; overflow: hidden; position: relative; }
+.app-shell > .statusbar { grid-column: 1 / -1; grid-row: 3; }
 
 /* ============ SIDEBAR (Arc-style) ============ */
 .sidebar {
-  grid-row: 1; grid-column: 1;
+  grid-row: 2; grid-column: 1;
   display: flex; flex-direction: column;
   background: var(--bg-sunken);
   border-right: 1px solid var(--border);
@@ -507,7 +509,7 @@ a.md-up-name:hover { color: var(--accent); text-decoration: underline; }
 
 /* nav hamburger (tight only) */
 .nav-toggle, .nav-backdrop, .chat-backdrop { display: none; }
-.nav-toggle { position: fixed; top: 9px; left: 9px; z-index: 72; width: 34px; height: 34px; border-radius: var(--rad-2); background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--fg-bright); cursor: pointer; align-items: center; justify-content: center; }
+.nav-toggle { position: fixed; top: calc(var(--tb-h, 30px) + 9px); left: 9px; z-index: 72; width: 34px; height: 34px; border-radius: var(--rad-2); background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--fg-bright); cursor: pointer; align-items: center; justify-content: center; }
 .nav-toggle:hover { background: var(--surface-3); }
 
 /* COMPACT: chat dock overlays instead of squishing content */
@@ -528,7 +530,7 @@ a.md-up-name:hover { color: var(--accent); text-decoration: underline; }
 .app-shell.drawer { grid-template-columns: 0 1fr; }
 .app-shell.drawer .app-main { grid-column: 1 / -1; }
 .app-shell.drawer .sidebar {
-  position: fixed; left: 0; top: 0; bottom: 0; width: 256px; z-index: 74;
+  position: fixed; left: 0; top: var(--tb-h, 30px); bottom: 0; width: 256px; z-index: 74;
   transform: translateX(-101%); transition: transform var(--dur-slow) var(--ease);
   box-shadow: 14px 0 40px rgba(0,0,0,0.5);
 }
