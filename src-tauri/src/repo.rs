@@ -2099,6 +2099,18 @@ fn fsrs_interval(s: f64) -> i64 {
     (days.round() as i64).clamp(1, 36_500)
 }
 
+/// Cram-friendly per-grade ceiling (days). The user studies short-term, so cap
+/// the schedule tight: Easy ≈ a week, scaling down — Good 4d, Hard 2d, Again 1d.
+/// FSRS still drives growth UP TO these caps (so early reviews can be shorter).
+fn cram_cap(g: usize) -> i64 {
+    match g {
+        1 => 1, // Again
+        2 => 2, // Hard
+        3 => 4, // Good
+        _ => 7, // Easy
+    }
+}
+
 /// Preview the next interval (in days) each grade would schedule for a card,
 /// WITHOUT persisting — mirrors `srs_grade`'s math so the UI can show "Again /
 /// Hard / Good / Easy → 1d / 3d / 9d / 21d" like Anki. Returns [again, hard,
@@ -2134,7 +2146,7 @@ pub fn srs_preview(
             let r = fsrs_retrievability(elapsed_d, s0);
             fsrs_next_stability(d0, s0, r, g)
         };
-        out[g - 1] = if g == 1 { 1 } else { fsrs_interval(s) };
+        out[g - 1] = if g == 1 { 1 } else { fsrs_interval(s).min(cram_cap(g)) };
     }
     Ok(out)
 }
@@ -2195,7 +2207,7 @@ pub fn srs_grade(
         lapses += 1;
     } else {
         reps += 1;
-        interval_d = fsrs_interval(s);
+        interval_d = fsrs_interval(s).min(cram_cap(g)); // cram-friendly cap (Easy≈7d)
     }
     // Keep the SM-2 ease as a legacy display value so existing UI stays stable.
     let qf = q as f64;
