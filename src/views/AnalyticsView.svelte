@@ -38,6 +38,9 @@
   const maxMin = $derived(Math.max(1, ...mpd.map((d) => d.minutes)));
   const rpd = $derived(data?.reviews_per_day ?? []);
   const maxRev = $derived(Math.max(1, ...rpd.map((d) => d.reviews)));
+  // Consistency: how many days in the window you studied at all.
+  const daysStudied = $derived(mpd.filter((d) => d.minutes > 0).length);
+  const consistency = $derived(mpd.length ? daysStudied / mpd.length : 0);
   // Label every Nth bar so a 90-day axis doesn't turn into a smear.
   const labelEvery = $derived(mpd.length > 45 ? 14 : mpd.length > 14 ? 7 : 1);
   function dayNum(iso: string): string {
@@ -80,7 +83,23 @@
   function radarPoints(vals: number[], cx: number, cy: number, r: number): string {
     return vals.map((v, i) => polar(cx, cy, r * Math.max(0.02, v), i / vals.length).join(",")).join(" ");
   }
-  const radarAccuracy = $derived(radarTopics.map((t) => (t.reviews > 0 ? t.accuracy : 0)));
+  // Radar metric — default "engagement" (content + study), since review accuracy
+  // alone is near-zero before you've reviewed much.
+  let radarMetric = $state<"engagement" | "accuracy" | "cards">("engagement");
+  const engScore = (t: api.TopicStat) => t.sources + t.materials * 1.5 + t.cards + t.reviews * 0.5;
+  const radarValues = $derived.by(() => {
+    const ts = radarTopics;
+    if (radarMetric === "accuracy") return ts.map((t) => (t.reviews > 0 ? t.accuracy : 0));
+    if (radarMetric === "cards") {
+      const mx = Math.max(1, ...ts.map((t) => t.cards));
+      return ts.map((t) => t.cards / mx);
+    }
+    const mx = Math.max(1, ...ts.map(engScore));
+    return ts.map((t) => engScore(t) / mx);
+  });
+  const radarMetricLabel = $derived(
+    radarMetric === "accuracy" ? "review accuracy" : radarMetric === "cards" ? "flashcards" : "engagement (sources · materials · cards)"
+  );
   const accentColor = $derived(topicSubject ? app.subjectColor(app.subjects.find((s) => s.id === topicSubject) ?? null) : "var(--accent)");
 
   // Subject lookups come from the already-loaded subject list, not extra queries.
@@ -199,20 +218,13 @@
   function showTip(e: MouseEvent, c: Cell) {
     if (!c) return;
     const cell = e.currentTarget as HTMLElement;
-    const wrap = cell.closest(".hm-card") as HTMLElement | null;
-    if (!wrap) return;
     const cr = cell.getBoundingClientRect();
-    const wr = wrap.getBoundingClientRect();
-    const topInCard = cr.top - wr.top;
-    // Flip below the cell when there isn't room above (top rows) so the tooltip
-    // never clips off the top edge.
-    const below = topInCard < 34;
-    // Clamp x within the card so edge cells don't push the tooltip off-screen.
-    const rawX = cr.left - wr.left + cr.width / 2;
-    const x = Math.max(48, Math.min(wr.width - 48, rawX)) + wrap.scrollLeft;
+    // Viewport coords + position:fixed → the card's overflow can't clip it.
+    // Flip below near the top edge; clamp x so it never runs off either side.
+    const below = cr.top < 48;
     tip = {
-      x,
-      y: below ? cr.bottom - wr.top + 6 : topInCard - 6,
+      x: Math.max(64, Math.min(window.innerWidth - 64, cr.left + cr.width / 2)),
+      y: below ? cr.bottom + 6 : cr.top - 6,
       below,
       text: tipLabel(c),
     };
@@ -313,26 +325,24 @@
             <svg class="an-clock" viewBox="0 0 120 120">
               <circle cx="60" cy="60" r="52" class="an-donut-bg" />
               {#each pomo.by_hour as min, h (h)}
-                {@const p1 = polar(60, 60, 18, h / 24)}
-                {@const p2 = polar(60, 60, 18 + (min / maxHour) * 36, h / 24)}
-                <line x1={p1[0]} y1={p1[1]} x2={p2[0]} y2={p2[1]} class="an-spoke" class:zero={min === 0} style:stroke={accentColor}><title>{fmtMins(min)} · {h}:00</title></line>
+                {@const p1 = polar(60, 60, 16, h / 24)}
+                {@const p2 = polar(60, 60, 16 + (min > 0 ? Math.max(0.32, min / maxHour) : 0.07) * 38, h / 24)}
+                <line x1={p1[0]} y1={p1[1]} x2={p2[0]} y2={p2[1]} class="an-spoke" class:zero={min === 0} style:stroke={min > 0 ? accentColor : "var(--border)"}><title>{min > 0 ? fmtMins(min) : "no focus"} · {h}:00</title></line>
               {/each}
               <text x="60" y="64" class="an-clock-c mono">24h</text>
             </svg>
           </section>
         {/if}
 
-        {#if data.fsrs.cards > 0}
-          <section class="an-card an-radial">
-            <div class="an-card-h"><h3 class="an-card-t mono">Memory strength</h3></div>
-            <svg class="an-donut" viewBox="0 0 120 120">
-              <circle cx="60" cy="60" r="48" class="an-donut-bg" />
-              <circle cx="60" cy="60" r="48" class="an-donut-fg" style:stroke="var(--info, #5a7fd6)" stroke-dasharray={ringDash(Math.min(1, data.fsrs.avg_stability / 14), 48)} transform="rotate(-90 60 60)" />
-              <text x="60" y="58" class="an-donut-v">{data.fsrs.cards}</text>
-              <text x="60" y="76" class="an-donut-k">{data.fsrs.avg_stability.toFixed(1)}d stability</text>
-            </svg>
-          </section>
-        {/if}
+        <section class="an-card an-radial">
+          <div class="an-card-h"><h3 class="an-card-t mono">Consistency · {range}d</h3></div>
+          <svg class="an-donut" viewBox="0 0 120 120">
+            <circle cx="60" cy="60" r="48" class="an-donut-bg" />
+            <circle cx="60" cy="60" r="48" class="an-donut-fg" style:stroke="var(--accent)" stroke-dasharray={ringDash(consistency, 48)} transform="rotate(-90 60 60)" />
+            <text x="60" y="58" class="an-donut-v">{pct(consistency)}</text>
+            <text x="60" y="76" class="an-donut-k">{daysStudied}/{mpd.length} days</text>
+          </svg>
+        </section>
       </div>
 
       <!-- ── trends: focus minutes + reviews per day ── -->
@@ -384,6 +394,11 @@
               {/each}
             </div>
           </div>
+          <div class="an-metricbar">
+            {#each [{ id: "engagement", label: "Engagement" }, { id: "accuracy", label: "Accuracy" }, { id: "cards", label: "Cards" }] as m}
+              <button type="button" class={"an-metric" + (radarMetric === m.id ? " on" : "")} onclick={() => (radarMetric = m.id as typeof radarMetric)}>{m.label}</button>
+            {/each}
+          </div>
           {#if radarTopics.length >= 3}
             <div class="an-radar-wrap">
               <svg class="an-radar" viewBox="0 0 240 240">
@@ -394,13 +409,13 @@
                   <line x1="120" y1="120" x2={p[0]} y2={p[1]} class="an-radar-axis" />
                   <text x={lp[0]} y={lp[1]} class="an-radar-lbl" text-anchor="middle">{t.topic_name.length > 11 ? t.topic_name.slice(0, 10) + "…" : t.topic_name}</text>
                 {/each}
-                <polygon points={radarPoints(radarAccuracy, 120, 120, 90)} class="an-radar-poly" style:fill={accentColor} style:stroke={accentColor} />
+                <polygon points={radarPoints(radarValues, 120, 120, 90)} class="an-radar-poly" style:fill={accentColor} style:stroke={accentColor} />
                 {#each radarTopics as t, i (t.topic_id)}
-                  {@const pt = polar(120, 120, 90 * Math.max(0.02, t.reviews > 0 ? t.accuracy : 0), i / radarTopics.length)}
-                  <circle cx={pt[0]} cy={pt[1]} r="3.5" class="an-radar-dot" style:fill={accentColor}><title>{t.topic_name}: {t.reviews > 0 ? pct(t.accuracy) : "no reviews"} · {t.cards} cards · {t.lapses} lapses</title></circle>
+                  {@const pt = polar(120, 120, 90 * Math.max(0.02, radarValues[i]), i / radarTopics.length)}
+                  <circle cx={pt[0]} cy={pt[1]} r="3.5" class="an-radar-dot" style:fill={accentColor}><title>{t.topic_name}: {t.sources} sources · {t.materials} materials · {t.cards} cards · {t.reviews > 0 ? pct(t.accuracy) + " acc" : "no reviews"}</title></circle>
                 {/each}
               </svg>
-              <div class="an-radar-note mono">distance from centre = review accuracy per topic · hover a point for detail</div>
+              <div class="an-radar-note mono">distance from centre = {radarMetricLabel} · hover a point for detail</div>
             </div>
           {:else}
             <p class="an-empty-d">Not enough topic activity yet — review cards across this subject's topics to grow the mastery radar.</p>
@@ -788,8 +803,9 @@
 
   /* tooltip: positioned div anchored to the card (rides horizontal scroll) */
   .hm-tip {
-    position: absolute;
+    position: fixed;
     transform: translate(-50%, -100%);
+    z-index: 40;
   }
   .hm-tip.below {
     transform: translate(-50%, 0);
@@ -1046,9 +1062,16 @@
   .an-pill:hover { color: var(--fg-bright); border-color: var(--border-strong); }
   .an-pill.on { color: var(--accent-fg); background: var(--pill, var(--accent)); border-color: transparent; }
 
+  /* ── radar metric switcher ── */
+  .an-metricbar { display: flex; gap: 6px; margin: 4px 0 10px; }
+  .an-metric { background: var(--surface-2); border: 1px solid var(--border); color: var(--fg-faint); border-radius: var(--rad-2); padding: 3px 12px; font-size: var(--t-xs); cursor: pointer; transition: all 0.12s; }
+  .an-metric:hover { color: var(--fg-bright); }
+  .an-metric.on { color: var(--accent); border-color: var(--accent-dim, var(--accent)); background: color-mix(in oklab, var(--accent) 12%, transparent); }
+
   /* ── topic radar ── */
-  .an-radar-wrap { display: flex; flex-direction: column; align-items: center; }
-  .an-radar { width: min(300px, 92%); height: auto; }
+  .an-radar-wrap { display: flex; flex-direction: column; align-items: center; padding: 4px 40px 0; }
+  /* overflow visible so axis labels near the rim aren't clipped by the viewBox. */
+  .an-radar { width: min(280px, 100%); height: auto; overflow: visible; }
   .an-radar-ring { fill: none; stroke: var(--border); stroke-width: 1; }
   .an-radar-axis { stroke: var(--border); stroke-width: 1; }
   .an-radar-lbl { fill: var(--fg-faint); font-size: 8px; font-family: var(--font-mono); }

@@ -2741,6 +2741,7 @@ pub fn topic_stats(conn: &Connection, subject_id: &str, since_ms: i64) -> Result
                 topic_id: r.get::<_, String>(0)?,
                 topic_name: r.get::<_, String>(1)?,
                 reviews: 0, correct: 0, accuracy: 0.0, lapses: 0, cards: 0, avg_stability: 0.0,
+                sources: 0, materials: 0,
             })
         })?;
         rows.filter_map(|x| x.ok()).collect()
@@ -2783,6 +2784,22 @@ pub fn topic_stats(conn: &Connection, subject_id: &str, since_ms: i64) -> Result
                 topics[i].cards = row.1;
                 topics[i].lapses = row.2;
                 topics[i].avg_stability = if row.4 > 0 { row.3 / row.4 as f64 } else { 0.0 };
+            }
+        }
+    }
+    // sources + materials per topic (content invested — proxy for time on topic)
+    let counts: [(&str, fn(&mut crate::models::TopicStat, i64)); 2] = [
+        ("SELECT topic_id, COUNT(*) FROM sources WHERE subject_id=?1 AND topic_id IS NOT NULL GROUP BY topic_id",
+            |t, n| t.sources = n),
+        ("SELECT m.topic_id, COUNT(*) FROM materials m JOIN topics t ON t.id=m.topic_id WHERE t.subject_id=?1 AND m.topic_id IS NOT NULL GROUP BY m.topic_id",
+            |t, n| t.materials = n),
+    ];
+    for (sql, set) in counts {
+        let mut st = conn.prepare(sql)?;
+        let rows = st.query_map(params![subject_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows.flatten() {
+            if let Some(&i) = idx.get(&row.0) {
+                set(&mut topics[i], row.1);
             }
         }
     }

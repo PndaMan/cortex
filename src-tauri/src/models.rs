@@ -545,6 +545,8 @@ pub struct TopicStat {
     pub lapses: i64,
     pub cards: i64,
     pub avg_stability: f64,
+    pub sources: i64,   // sources filed under this topic
+    pub materials: i64, // generated materials (cheatsheets/quizzes/etc.)
 }
 
 /// Pomodoro/focus-timer stats over the window (from `pomodoro_sessions`).

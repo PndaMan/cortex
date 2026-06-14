@@ -836,6 +836,7 @@ export const analyticsSummary = (days?: number) =>
 export interface TopicStat {
   topic_id: string; topic_name: string; reviews: number; correct: number;
   accuracy: number; lapses: number; cards: number; avg_stability: number;
+  sources: number; materials: number;
 }
 export const topicStats = (subjectId: string, days?: number) =>
   invoke<TopicStat[]>("topic_stats", { subjectId, days });
