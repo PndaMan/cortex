@@ -78,7 +78,10 @@
   .dlg-back {
     position: fixed;
     inset: 0;
-    z-index: 200;
+    /* Topmost overlay: a confirm must sit above every surface that can trigger
+       it — EditModal (200), framework viewer (210), notification detail (240),
+       and the fullscreen notes editor (900) — regardless of DOM order. */
+    z-index: 1000;
     display: flex;
     align-items: center;
     justify-content: center;
