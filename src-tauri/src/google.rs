@@ -411,6 +411,7 @@ pub struct GoogleCalendar {
     pub summary: String,
     pub primary: bool,
     pub selected: bool,
+    pub color: String, // backgroundColor hex (for the swatch)
 }
 
 /// List the connected account's calendars so the user can choose which ones to
@@ -467,14 +468,31 @@ pub async fn google_list_calendars(app: AppHandle) -> Result<Vec<GoogleCalendar>
                     continue;
                 }
                 let primary = cal.get("primary").and_then(|v| v.as_bool()).unwrap_or(false);
-                let summary = cal
+                let raw = cal
                     .get("summaryOverride")
                     .and_then(|v| v.as_str())
                     .or_else(|| cal.get("summary").and_then(|v| v.as_str()))
-                    .unwrap_or("(unnamed)")
+                    .unwrap_or("");
+                // Strip control/replacement chars (some calendars carry a stray
+                // glyph that renders as a box) and fall back to a friendly label.
+                let cleaned: String = raw
+                    .chars()
+                    .filter(|c| !c.is_control() && *c != '\u{fffd}')
+                    .collect::<String>()
+                    .trim()
+                    .to_string();
+                let summary = if cleaned.is_empty() || cleaned.chars().all(|c| c.is_ascii_digit()) {
+                    "Unnamed calendar".to_string()
+                } else {
+                    cleaned
+                };
+                let color = cal
+                    .get("backgroundColor")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
                     .to_string();
                 let sel = selected.contains(&id) || (default_on && (primary || id == cal_id));
-                out.push(GoogleCalendar { id, summary, primary, selected: sel });
+                out.push(GoogleCalendar { id, summary, primary, selected: sel, color });
             }
         }
         Ok(out)

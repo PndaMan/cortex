@@ -1820,9 +1820,12 @@ Notes: {about}</pre>
                 </div>
               {:else}
                 {#each gCalendars as cal (cal.id)}
-                  <label class="gcal-row">
+                  <label class="gcal-row" class:on={cal.selected}>
                     <input type="checkbox" checked={cal.selected} onchange={() => toggleGoogleCal(cal.id)} />
-                    <span class="gcal-name">{cal.summary}{cal.primary ? " (primary)" : ""}</span>
+                    <span class="gcal-swatch" style:background={cal.color || "var(--border-strong)"}></span>
+                    <span class="gcal-name">{cal.summary}</span>
+                    {#if cal.primary}<span class="gcal-tag mono">primary</span>{/if}
+                    {#if cal.selected}<span class="gcal-on mono">syncing</span>{/if}
                   </label>
                 {/each}
               {/if}
