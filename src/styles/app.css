@@ -178,6 +178,8 @@
 .subj-tabs::-webkit-scrollbar { height: 0; width: 0; display: none; }
 .subj-tab { flex: none; }
 .st-id { display: flex; align-items: center; gap: 10px; padding-right: 14px; margin-right: 6px; border-right: 1px solid var(--border); flex: none; min-width: 0; max-width: 46vw; }
+.st-id--clickable { cursor: pointer; border-radius: var(--rad-2); transition: background 0.12s; }
+.st-id--clickable:hover { background: var(--surface-2); }
 .st-id > div { min-width: 0; }
 .st-name { font-size: var(--t-md); color: var(--fg-bright); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .st-code { font-size: var(--t-2xs); color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

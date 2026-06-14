@@ -278,6 +278,17 @@ class AppStore {
   chatScope = $state<{ topicName?: string; sourceName?: string } | null>(null);
   // When set, AddSource preselects this topic (used by the per-topic + button).
   addSourceTopicId = $state<string | null>(null);
+  // When set, the Settings view opens on this tab once (e.g. Overview deep-links
+  // to "experimental" for Moodle setup). Settings consumes + clears it on mount.
+  settingsTab = $state<string | null>(null);
+  openSettings(tab?: string) {
+    this.settingsTab = tab ?? null;
+    this.setView("settings");
+  }
+  // Subject detail panel (modal) — opened by clicking the subject header.
+  subjectPanelOpen = $state(false);
+  openSubjectPanel() { this.subjectPanelOpen = true; }
+  closeSubjectPanel() { this.subjectPanelOpen = false; }
 
   // chrome / modal state
   mode = $state<Mode>("NOR");

@@ -964,6 +964,64 @@ pub fn seed_demo(state: State<AppState>) -> Result<Vec<Subject>> {
 
 // ---- AI: chat (RAG) ---------------------------------------------------
 
+/// Heuristic: does this question explicitly ask about marks / assessment weighting?
+/// This gates the per-subject module-framework + Moodle-grade injection into chat —
+/// the framework is NEVER part of normal retrieval, only pulled in on questions like
+/// "what is my A2 weighted?" so everyday chat stays clean and cheap.
+fn query_wants_marks(q: &str) -> bool {
+    let l = q.to_lowercase();
+    const KW: &[&str] = &[
+        "weight", "mark", "grade", "%", "percentage", "counts for", "count toward",
+        "out of", "pass", "fail", "average", "gpa", "assessment", "predicate",
+        "promotion", "subminimum", "final mark", "module mark", "needed to",
+    ];
+    KW.iter().any(|k| l.contains(k))
+}
+
+/// Format the subject's linked-Moodle grade items as "- item: grade (pct)" lines.
+/// Empty when the subject isn't linked to a Moodle course or has no synced grades.
+fn moodle_grades_for_subject(c: &Connection, subject_id: &str) -> String {
+    let course_id: Option<String> = c
+        .query_row(
+            "SELECT moodle_course_id FROM subjects WHERE id=?1",
+            rusqlite::params![subject_id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten();
+    let Some(course_id) = course_id.filter(|s| !s.is_empty()) else {
+        return String::new();
+    };
+    let Ok(mut stmt) = c.prepare(
+        "SELECT item_name, grade, percentage FROM moodle_grades WHERE course_id=?1 ORDER BY id",
+    ) else {
+        return String::new();
+    };
+    let rows = stmt.query_map(rusqlite::params![course_id], |r| {
+        Ok((
+            r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+            r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+            r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+        ))
+    });
+    let mut out = String::new();
+    if let Ok(rows) = rows {
+        for (name, grade, pct) in rows.flatten() {
+            if name.is_empty() {
+                continue;
+            }
+            let g = if grade.is_empty() { "—".into() } else { grade };
+            let p = if pct.is_empty() {
+                String::new()
+            } else {
+                format!(" ({pct})")
+            };
+            out.push_str(&format!("- {name}: {g}{p}\n"));
+        }
+    }
+    out
+}
+
 /// Scoped retrieval-augmented chat. Embeds the query, retrieves top-k chunks
 /// (optionally narrowed to a single source), and asks the configured LLM to
 /// answer from that context with inline ⟦source · loc⟧ citations.
@@ -1083,6 +1141,34 @@ pub async fn chat_answer(
         }
     }
 
+    // Module-framework reference: ONLY when the question is explicitly about marks /
+    // weighting. Pull the subject's framework text + their synced Moodle grades so a
+    // question like "what is my A2 weighted?" can be answered with real numbers.
+    let mut framework_block = String::new();
+    if query_wants_marks(&query) {
+        let c = state.db.lock().unwrap();
+        let fw: Option<String> = c
+            .query_row(
+                "SELECT text FROM subject_frameworks WHERE subject_id=?1",
+                rusqlite::params![subject_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .flatten();
+        if let Some(fw) = fw.filter(|t| !t.trim().is_empty()) {
+            // Cap to keep tokens bounded — frameworks are short outlines anyway.
+            framework_block.push_str(&format!(
+                "\n\nMODULE FRAMEWORK (official assessment structure & weighting):\n{}",
+                truncate(&fw, 12000)
+            ));
+        }
+        let grades = moodle_grades_for_subject(&c, &subject_id);
+        if !grades.is_empty() {
+            framework_block
+                .push_str(&format!("\n\nYOUR RECORDED MARKS (synced from Moodle):\n{grades}"));
+        }
+    }
+
     let base_system = "You are Cortex, a study tutor. Be CONCISE — answer in short, focused chunks \
         (usually 2–5 sentences or a few short bullets), never an essay. Lead with the key idea, then \
         actively promote learning by ending the answer with ONE short guiding question. \
@@ -1120,11 +1206,22 @@ pub async fn chat_answer(
              e.g. \"see the diagram below\" rather than describing pixels.",
         );
     }
+    if !framework_block.is_empty() {
+        // Override the strict sources-only rule for this assessment question.
+        system.push_str(
+            " ASSESSMENT QUESTION: the user is asking about marks/weighting. Besides the sources you \
+             have a MODULE FRAMEWORK block (official assessment structure & weights) and possibly a \
+             YOUR RECORDED MARKS block (their actual Moodle grades). You MAY use these and do the \
+             arithmetic to answer directly — show the calculation briefly. If a weight or mark you'd \
+             need is missing from those blocks, say exactly what's missing instead of guessing, and \
+             do not invent numbers.",
+        );
+    }
     let system = system.as_str();
     let user = if context.is_empty() {
-        format!("(No indexed sources are in scope yet.){web_block}\n\nQUESTION: {query}")
+        format!("(No indexed sources are in scope yet.){framework_block}{web_block}\n\nQUESTION: {query}")
     } else {
-        format!("SOURCE CONTEXT:\n{context}{web_block}\n\nQUESTION: {query}")
+        format!("SOURCE CONTEXT:\n{context}{framework_block}{web_block}\n\nQUESTION: {query}")
     };
 
     let text = model.complete(system, &user)?;
@@ -1148,6 +1245,164 @@ pub async fn chat_answer(
     })
     .await
     .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+}
+
+// ---- per-subject module framework -------------------------------------
+
+/// Metadata about a subject's stored module framework. `file_path` is the
+/// persisted viewable original (or a rendered PDF); `view_kind` is pdf | image |
+/// text. The full extracted text is fetched separately (chat / text fallback).
+#[derive(serde::Serialize)]
+pub struct FrameworkMeta {
+    pub filename: String,
+    pub chars: i64,
+    pub updated_at: i64,
+    pub file_path: Option<String>,
+    pub view_kind: String,
+}
+
+fn read_framework(c: &Connection, subject_id: &str) -> Option<FrameworkMeta> {
+    c.query_row(
+        "SELECT filename, LENGTH(text), updated_at, file_path, view_kind \
+         FROM subject_frameworks WHERE subject_id=?1",
+        rusqlite::params![subject_id],
+        |r| {
+            Ok(FrameworkMeta {
+                filename: r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                chars: r.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                updated_at: r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                file_path: r.get::<_, Option<String>>(3)?,
+                view_kind: r.get::<_, Option<String>>(4)?.unwrap_or_else(|| "text".into()),
+            })
+        },
+    )
+    .ok()
+}
+
+/// Store a subject's module framework from a local file. Persists the ORIGINAL so
+/// it can be viewed in-app as a PDF (docx/pptx are rendered to PDF, like sources),
+/// AND extracts its text for chat. The text is only surfaced to chat when the user
+/// explicitly asks about marks/weighting.
+#[tauri::command]
+pub async fn set_subject_framework(
+    app: AppHandle,
+    subject_id: String,
+    path: String,
+) -> Result<FrameworkMeta> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<FrameworkMeta> {
+        let filename = Path::new(&path)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("framework")
+            .to_string();
+        let input = AddSourceInput {
+            subject_id: subject_id.clone(),
+            topic_id: None,
+            name: Some(filename.clone()),
+            kind: None,
+            text: None,
+            path: Some(path.clone()),
+            url: None,
+            tags: Vec::new(),
+        };
+        let kind = ingest::detect_kind(&input);
+        let (text, _warn) = ingest::parse(&kind, &input)?;
+        let text = text.trim().to_string();
+
+        // Persist a viewable original, mirroring the source pipeline: pdf/image
+        // are copied verbatim; docx/pptx are rendered to PDF via LibreOffice;
+        // txt/md have no document view (fall back to the extracted text).
+        let dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| Error::Other(e.to_string()))?
+            .join("frameworks");
+        std::fs::create_dir_all(&dir)?;
+        let (file_path, view_kind): (Option<String>, &str) = match kind.as_str() {
+            "pdf" | "image" => {
+                let ext = Path::new(&path)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("bin")
+                    .to_lowercase();
+                let dest = dir.join(format!("{subject_id}.{ext}"));
+                std::fs::copy(&path, &dest)?;
+                let vk = if kind == "pdf" { "pdf" } else { "image" };
+                (dest.to_str().map(|s| s.to_string()), vk)
+            }
+            "docx" | "pptx" => {
+                let dest = dir.join(format!("{subject_id}.pdf"));
+                ingest::libreoffice_to_pdf(&path, &dest)?;
+                (dest.to_str().map(|s| s.to_string()), "pdf")
+            }
+            _ => (None, "text"),
+        };
+
+        // For text-only kinds the extracted text IS the document, so it must be
+        // non-empty; for pdf/image the file is the document (OCR-less text is ok).
+        if view_kind == "text" && text.is_empty() {
+            return Err(Error::Other(
+                "Couldn't read that file — use a PDF, Word, PowerPoint, image or text file.".into(),
+            ));
+        }
+        let now = crate::db::now_ms();
+        let chars = text.chars().count() as i64;
+        let state = app.state::<AppState>();
+        let c = state.db.lock().unwrap();
+        c.execute(
+            "INSERT OR REPLACE INTO subject_frameworks \
+             (subject_id, filename, text, file_path, view_kind, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![subject_id, filename, text, file_path, view_kind, now],
+        )?;
+        Ok(FrameworkMeta { filename, chars, updated_at: now, file_path, view_kind: view_kind.into() })
+    })
+    .await
+    .map_err(|e| Error::Other(format!("set framework task failed: {e}")))?
+}
+
+/// Framework metadata for a subject (None if none uploaded).
+#[tauri::command]
+pub fn get_subject_framework(
+    state: State<AppState>,
+    subject_id: String,
+) -> Result<Option<FrameworkMeta>> {
+    let c = state.db.lock().unwrap();
+    Ok(read_framework(&c, &subject_id))
+}
+
+/// The full extracted text of a subject's framework, for the in-app reader
+/// (None if none uploaded). Separate from `get_subject_framework` so the Overview
+/// load stays light — the text is only fetched when the user opens it.
+#[tauri::command]
+pub fn get_subject_framework_text(
+    state: State<AppState>,
+    subject_id: String,
+) -> Result<Option<String>> {
+    let c = state.db.lock().unwrap();
+    Ok(c.query_row(
+        "SELECT text FROM subject_frameworks WHERE subject_id=?1",
+        rusqlite::params![subject_id],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten())
+}
+
+#[tauri::command]
+pub fn clear_subject_framework(state: State<AppState>, subject_id: String) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    // Remove the persisted original file too (best-effort; a leftover is harmless).
+    if let Some(meta) = read_framework(&c, &subject_id) {
+        if let Some(p) = meta.file_path {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+    c.execute(
+        "DELETE FROM subject_frameworks WHERE subject_id=?1",
+        rusqlite::params![subject_id],
+    )?;
+    Ok(())
 }
 
 // ---- chat history (one rolling thread per subject) --------------------

@@ -44,6 +44,7 @@ export interface Subject {
   topics: Topic[];
   created_at: number;
   updated_at: number;
+  moodle_course_id?: string | null;
 }
 
 export interface IngestResult {
@@ -226,6 +227,23 @@ export const moodleData = () => invoke<MoodleData>("moodle_data");
 export const moodleLinkSubject = (subjectId: string, courseId: string | null) =>
   invoke<void>("moodle_link_subject", { subjectId, courseId });
 export const moodleAutolink = () => invoke<number>("moodle_autolink");
+
+// ---- per-subject module framework ----
+export interface FrameworkMeta {
+  filename: string;
+  chars: number;
+  updated_at: number;
+  file_path: string | null;
+  view_kind: string; // pdf | image | text
+}
+export const setSubjectFramework = (subjectId: string, path: string) =>
+  invoke<FrameworkMeta>("set_subject_framework", { subjectId, path });
+export const getSubjectFramework = (subjectId: string) =>
+  invoke<FrameworkMeta | null>("get_subject_framework", { subjectId });
+export const getSubjectFrameworkText = (subjectId: string) =>
+  invoke<string | null>("get_subject_framework_text", { subjectId });
+export const clearSubjectFramework = (subjectId: string) =>
+  invoke<void>("clear_subject_framework", { subjectId });
 export const listChunks = (sourceId: string) =>
   invoke<ChunkInfo[]>("list_chunks", { sourceId });
 export const addSource = (input: AddSourceInput) =>

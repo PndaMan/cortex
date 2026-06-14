@@ -75,11 +75,12 @@ fn map_subject(r: &rusqlite::Row) -> rusqlite::Result<Subject> {
         topics: Vec::new(),
         created_at: r.get(8)?,
         updated_at: r.get(9)?,
+        moodle_course_id: r.get(10)?,
     })
 }
 
 const SUBJECT_COLS: &str =
-    "id, name, code, glyph, color, status, streak, position, created_at, updated_at";
+    "id, name, code, glyph, color, status, streak, position, created_at, updated_at, moodle_course_id";
 
 /// Full Subjects → Topics → Sources tree (what the sidebar + dashboard render).
 /// Batched: a fixed 5 queries regardless of subject/topic/source counts

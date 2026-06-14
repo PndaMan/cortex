@@ -16,6 +16,7 @@
   import ContextMenu from "./components/ContextMenu.svelte";
   import Dialog from "./components/Dialog.svelte";
   import EditModal from "./components/EditModal.svelte";
+  import SubjectPanel from "./components/SubjectPanel.svelte";
   import PomodoroPanel from "./components/PomodoroPanel.svelte";
   import LiveActivity from "./components/LiveActivity.svelte";
   import { keybinds } from "./lib/keybinds.svelte";
@@ -367,6 +368,7 @@
     <SourceMetaModal />
     <Dialog />
     <EditModal />
+    <SubjectPanel />
     <PomodoroPanel />
     <LiveActivity />
     <ContextMenu />

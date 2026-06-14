@@ -51,6 +51,13 @@
   ] as const;
 
   let tab = $state<string>("profile");
+  // Honour a deep-link from elsewhere (e.g. the subject Overview → Moodle setup).
+  $effect(() => {
+    if (app.settingsTab) {
+      tab = app.settingsTab;
+      app.settingsTab = null;
+    }
+  });
 
   // This view owns the global keys while open
   $effect(() => {
@@ -1744,10 +1751,6 @@ Notes: {about}</pre>
                   {/each}
                 </div>
               {/if}
-
-              <div class="set-row">
-                <div class="set-row-l"><div class="set-row-d faint">Note: exam venues and the exam/class timetable are NOT in Moodle — at Stellenbosch they live in SUNStudent (my.sun), which has no public API or calendar feed. Import those manually for now.</div></div>
-              </div>
             </div>
           {/if}
         </section>
