@@ -55,7 +55,11 @@ fn ws(url: &str, token: &str, func: &str, params: &[(String, String)]) -> Result
     let endpoint = format!("{url}/webservice/rest/server.php");
     let mut q: Vec<(String, String)> = vec![
         ("wstoken".into(), token.to_string()),
-        ("moodlewsfunction".into(), func.to_string()),
+        // Moodle's REST endpoint reads the function name from `wsfunction`. Sending
+        // it as `moodlewsfunction` left the function name empty, so Moodle threw
+        // invalid_parameter_exception ("Missing function name") *after* the token
+        // authenticated — the long-standing "Invalid parameter value detected".
+        ("wsfunction".into(), func.to_string()),
         ("moodlewsrestformat".into(), "json".into()),
     ];
     q.extend_from_slice(params);
