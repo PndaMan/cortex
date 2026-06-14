@@ -9,11 +9,18 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
 
+  // Selectable window for the per-day charts + tables (the heatmap is always a year).
+  let range = $state(30);
+  const RANGES = [
+    { d: 7, label: "7d" },
+    { d: 30, label: "30d" },
+    { d: 90, label: "90d" },
+  ];
   async function load() {
     loading = true;
     error = null;
     try {
-      data = await api.analyticsSummary(30);
+      data = await api.analyticsSummary(range);
     } catch (e) {
       error = String(e);
     } finally {
@@ -21,8 +28,60 @@
     }
   }
   $effect(() => {
+    void range; // reload when the window changes
+    void app.activeSubjectId;
     load();
   });
+
+  // ── per-day time-series (study minutes + reviews/accuracy) ──
+  const mpd = $derived(data?.minutes_per_day ?? []);
+  const maxMin = $derived(Math.max(1, ...mpd.map((d) => d.minutes)));
+  const rpd = $derived(data?.reviews_per_day ?? []);
+  const maxRev = $derived(Math.max(1, ...rpd.map((d) => d.reviews)));
+  // Label every Nth bar so a 90-day axis doesn't turn into a smear.
+  const labelEvery = $derived(mpd.length > 45 ? 14 : mpd.length > 14 ? 7 : 1);
+  function dayNum(iso: string): string {
+    const [, m, d] = iso.split("-").map(Number);
+    return `${d}/${m}`;
+  }
+  // ── pomodoro / focus sessions ──
+  const pomo = $derived(data?.pomodoro ?? null);
+  const maxHour = $derived(Math.max(1, ...(pomo?.by_hour ?? [0])));
+
+  // ── subject pill-switcher → per-topic stats (radar) ──
+  let topicSubject = $state<string>("");
+  $effect(() => { if (!topicSubject && app.activeSubjectId) topicSubject = app.activeSubjectId; });
+  let topics = $state<api.TopicStat[]>([]);
+  $effect(() => {
+    const sid = topicSubject;
+    void range;
+    if (!sid) { topics = []; return; }
+    let cancelled = false;
+    api.topicStats(sid, range).then((t) => { if (!cancelled) topics = t; }).catch(() => { if (!cancelled) topics = []; });
+    return () => { cancelled = true; };
+  });
+  // Top topics (by activity) for the radar — keep it readable.
+  const radarTopics = $derived(
+    [...topics].sort((a, b) => (b.reviews + b.cards) - (a.reviews + a.cards)).slice(0, 8)
+  );
+
+  // ── tiny SVG helpers (donuts, radial clock, radar) ──
+  const TAU = Math.PI * 2;
+  function polar(cx: number, cy: number, r: number, frac: number): [number, number] {
+    const a = frac * TAU - Math.PI / 2; // 0 = top, clockwise
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  }
+  // accuracy/retention donut ring (fraction 0..1) → stroke-dasharray on r=normRadius
+  function ringDash(frac: number, r: number): string {
+    const c = TAU * r;
+    return `${Math.max(0, Math.min(1, frac)) * c} ${c}`;
+  }
+  // radar polygon points string for a set of values (0..1) evenly spaced
+  function radarPoints(vals: number[], cx: number, cy: number, r: number): string {
+    return vals.map((v, i) => polar(cx, cy, r * Math.max(0.02, v), i / vals.length).join(",")).join(" ");
+  }
+  const radarAccuracy = $derived(radarTopics.map((t) => (t.reviews > 0 ? t.accuracy : 0)));
+  const accentColor = $derived(topicSubject ? app.subjectColor(app.subjects.find((s) => s.id === topicSubject) ?? null) : "var(--accent)");
 
   // Subject lookups come from the already-loaded subject list, not extra queries.
   function subjectName(id: string): string {
@@ -128,7 +187,7 @@
   const heatmapEmpty = $derived(yearDays.length > 0 && yearMinutesTotal === 0);
 
   // Tooltip — a positioned div (not a title attr), shown on cell hover.
-  let tip = $state<{ x: number; y: number; text: string } | null>(null);
+  let tip = $state<{ x: number; y: number; below: boolean; text: string } | null>(null);
   // "2.4h · Tue 14 May" — hours with one decimal when ≥60m, else "45m".
   function tipLabel(c: NonNullable<Cell>): string {
     const [y, m, d] = c.date.split("-").map(Number);
@@ -144,10 +203,17 @@
     if (!wrap) return;
     const cr = cell.getBoundingClientRect();
     const wr = wrap.getBoundingClientRect();
-    // Position relative to the card so the tooltip rides horizontal scroll.
+    const topInCard = cr.top - wr.top;
+    // Flip below the cell when there isn't room above (top rows) so the tooltip
+    // never clips off the top edge.
+    const below = topInCard < 34;
+    // Clamp x within the card so edge cells don't push the tooltip off-screen.
+    const rawX = cr.left - wr.left + cr.width / 2;
+    const x = Math.max(48, Math.min(wr.width - 48, rawX)) + wrap.scrollLeft;
     tip = {
-      x: cr.left - wr.left + cr.width / 2 + wrap.scrollLeft,
-      y: cr.top - wr.top - 6,
+      x,
+      y: below ? cr.bottom - wr.top + 6 : topInCard - 6,
+      below,
       text: tipLabel(c),
     };
   }
@@ -219,6 +285,129 @@
         </div>
       </div>
 
+      <!-- ── window selector ── -->
+      <div class="an-rangebar">
+        <span class="an-range-lbl mono">Window</span>
+        <div class="seg an-range">
+          {#each RANGES as r}
+            <button type="button" class={"seg-opt" + (range === r.d ? " on" : "")} onclick={() => (range = r.d)}>{r.label}</button>
+          {/each}
+        </div>
+      </div>
+
+      <!-- ── radial summary row (donuts + focus clock) ── -->
+      <div class="an-radials">
+        <section class="an-card an-radial">
+          <div class="an-card-h"><h3 class="an-card-t mono">Accuracy · 7d</h3></div>
+          <svg class="an-donut" viewBox="0 0 120 120">
+            <circle cx="60" cy="60" r="48" class="an-donut-bg" />
+            <circle cx="60" cy="60" r="48" class="an-donut-fg" style:stroke="var(--ok)" stroke-dasharray={ringDash(accuracyWeek, 48)} transform="rotate(-90 60 60)" />
+            <text x="60" y="58" class="an-donut-v">{reviewsWeek > 0 ? pct(accuracyWeek) : "—"}</text>
+            <text x="60" y="76" class="an-donut-k">{reviewsWeek} reviews</text>
+          </svg>
+        </section>
+
+        {#if pomo}
+          <section class="an-card an-radial">
+            <div class="an-card-h"><h3 class="an-card-t mono">When you focus</h3></div>
+            <svg class="an-clock" viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="52" class="an-donut-bg" />
+              {#each pomo.by_hour as min, h (h)}
+                {@const p1 = polar(60, 60, 18, h / 24)}
+                {@const p2 = polar(60, 60, 18 + (min / maxHour) * 36, h / 24)}
+                <line x1={p1[0]} y1={p1[1]} x2={p2[0]} y2={p2[1]} class="an-spoke" class:zero={min === 0} style:stroke={accentColor}><title>{fmtMins(min)} · {h}:00</title></line>
+              {/each}
+              <text x="60" y="64" class="an-clock-c mono">24h</text>
+            </svg>
+          </section>
+        {/if}
+
+        {#if data.fsrs.cards > 0}
+          <section class="an-card an-radial">
+            <div class="an-card-h"><h3 class="an-card-t mono">Memory strength</h3></div>
+            <svg class="an-donut" viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="48" class="an-donut-bg" />
+              <circle cx="60" cy="60" r="48" class="an-donut-fg" style:stroke="var(--info, #5a7fd6)" stroke-dasharray={ringDash(Math.min(1, data.fsrs.avg_stability / 14), 48)} transform="rotate(-90 60 60)" />
+              <text x="60" y="58" class="an-donut-v">{data.fsrs.cards}</text>
+              <text x="60" y="76" class="an-donut-k">{data.fsrs.avg_stability.toFixed(1)}d stability</text>
+            </svg>
+          </section>
+        {/if}
+      </div>
+
+      <!-- ── trends: focus minutes + reviews per day ── -->
+      <section class="an-card">
+        <div class="an-card-h"><h3 class="an-card-t mono">Focus minutes · last {range}d</h3></div>
+        <div class="an-ts">
+          {#each mpd as d, i (d.day)}
+            <div class="an-ts-col">
+              <div class="an-ts-track"><div class="an-ts-fill" style:height={pct(d.minutes / maxMin)} class:zero={d.minutes === 0}><title>{fmtMins(d.minutes)} · {d.day}</title></div></div>
+              {#if i % labelEvery === 0}<span class="an-ts-x mono">{dayNum(d.day)}</span>{/if}
+            </div>
+          {/each}
+        </div>
+      </section>
+
+      <section class="an-card">
+        <div class="an-card-h"><h3 class="an-card-t mono">Reviews · last {range}d</h3></div>
+        <div class="an-ts">
+          {#each rpd as d, i (d.day)}
+            <div class="an-ts-col">
+              <div class="an-ts-track"><div class="an-ts-fill rev" style:height={pct(d.reviews / maxRev)} class:zero={d.reviews === 0}><title>{d.reviews} reviews · {d.reviews > 0 ? pct(d.accuracy) : "—"} acc · {d.day}</title></div></div>
+              {#if i % labelEvery === 0}<span class="an-ts-x mono">{dayNum(d.day)}</span>{/if}
+            </div>
+          {/each}
+        </div>
+      </section>
+
+      <!-- ── pomodoro / focus sessions ── -->
+      {#if pomo && pomo.focus_sessions > 0}
+        <section class="an-card">
+          <div class="an-card-h"><h3 class="an-card-t mono">Focus sessions</h3><span class="an-card-sub mono">{fmtMins(pomo.focus_minutes)} focused</span></div>
+          <div class="an-pomo">
+            <div class="an-pomo-stat"><div class="an-pomo-v">{pomo.focus_sessions}</div><div class="an-pomo-k mono">sessions</div></div>
+            <div class="an-pomo-stat"><div class="an-pomo-v">{Math.round(pomo.avg_session_min)}<span class="an-stat-u">m</span></div><div class="an-pomo-k mono">avg length</div></div>
+            <div class="an-pomo-stat"><div class="an-pomo-v">{pomo.longest_session_min}<span class="an-stat-u">m</span></div><div class="an-pomo-k mono">longest</div></div>
+            <div class="an-pomo-stat"><div class="an-pomo-v">{fmtMins(pomo.break_minutes)}</div><div class="an-pomo-k mono">on breaks</div></div>
+          </div>
+        </section>
+      {/if}
+
+      <!-- ── topic mastery radar (subject pill switcher) ── -->
+      {#if app.subjects.length}
+        <section class="an-card">
+          <div class="an-card-h">
+            <h3 class="an-card-t mono">Topic mastery</h3>
+            <div class="an-pills">
+              {#each app.subjects as s (s.id)}
+                <button type="button" class={"an-pill" + (topicSubject === s.id ? " on" : "")} onclick={() => (topicSubject = s.id)} style:--pill={app.subjectColor(s)}>{s.name}</button>
+              {/each}
+            </div>
+          </div>
+          {#if radarTopics.length >= 3}
+            <div class="an-radar-wrap">
+              <svg class="an-radar" viewBox="0 0 240 240">
+                {#each [0.25, 0.5, 0.75, 1] as g}<circle cx="120" cy="120" r={90 * g} class="an-radar-ring" />{/each}
+                {#each radarTopics as t, i (t.topic_id)}
+                  {@const p = polar(120, 120, 90, i / radarTopics.length)}
+                  {@const lp = polar(120, 120, 106, i / radarTopics.length)}
+                  <line x1="120" y1="120" x2={p[0]} y2={p[1]} class="an-radar-axis" />
+                  <text x={lp[0]} y={lp[1]} class="an-radar-lbl" text-anchor="middle">{t.topic_name.length > 11 ? t.topic_name.slice(0, 10) + "…" : t.topic_name}</text>
+                {/each}
+                <polygon points={radarPoints(radarAccuracy, 120, 120, 90)} class="an-radar-poly" style:fill={accentColor} style:stroke={accentColor} />
+                {#each radarTopics as t, i (t.topic_id)}
+                  {@const pt = polar(120, 120, 90 * Math.max(0.02, t.reviews > 0 ? t.accuracy : 0), i / radarTopics.length)}
+                  <circle cx={pt[0]} cy={pt[1]} r="3.5" class="an-radar-dot" style:fill={accentColor}><title>{t.topic_name}: {t.reviews > 0 ? pct(t.accuracy) : "no reviews"} · {t.cards} cards · {t.lapses} lapses</title></circle>
+                {/each}
+              </svg>
+              <div class="an-radar-note mono">distance from centre = review accuracy per topic · hover a point for detail</div>
+            </div>
+          {:else}
+            <p class="an-empty-d">Not enough topic activity yet — review cards across this subject's topics to grow the mastery radar.</p>
+          {/if}
+        </section>
+      {/if}
+
       <!-- ── focus-hours contributions heatmap (last year) ── -->
       <section class="an-card hm-card">
         <div class="an-card-h">
@@ -268,7 +457,7 @@
           </div>
 
           {#if tip}
-            <div class="hm-tip mono" style:left="{tip.x}px" style:top="{tip.y}px">{tip.text}</div>
+            <div class="hm-tip mono" class:below={tip.below} style:left="{tip.x}px" style:top="{tip.y}px">{tip.text}</div>
           {/if}
         </div>
 
@@ -601,6 +790,11 @@
   .hm-tip {
     position: absolute;
     transform: translate(-50%, -100%);
+  }
+  .hm-tip.below {
+    transform: translate(-50%, 0);
+  }
+  .hm-tip {
     background: var(--surface-2);
     border: 1px solid var(--border-strong);
     border-radius: var(--rad-2);
@@ -812,4 +1006,54 @@
     padding: 2px 8px;
     white-space: nowrap;
   }
+
+  /* ── window selector ── */
+  .an-rangebar { display: flex; align-items: center; gap: 10px; }
+  .an-range-lbl { font-size: var(--t-2xs); color: var(--fg-faint); text-transform: uppercase; letter-spacing: 0.1em; }
+
+  /* ── radial summary row ── */
+  .an-radials { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .an-radial { display: flex; flex-direction: column; align-items: center; }
+  .an-donut, .an-clock { width: 130px; height: 130px; margin-top: 4px; }
+  .an-donut-bg { fill: none; stroke: var(--surface-3, var(--surface-2)); stroke-width: 9; }
+  .an-donut-fg { fill: none; stroke-width: 9; stroke-linecap: round; transition: stroke-dasharray 0.6s var(--ease, ease); }
+  .an-donut-v { fill: var(--fg-bright); font-size: 22px; font-weight: 700; text-anchor: middle; }
+  .an-donut-k { fill: var(--fg-faint); font-size: 8.5px; text-anchor: middle; font-family: var(--font-mono); }
+  .an-spoke { stroke-width: 2.4; stroke-linecap: round; transition: opacity 0.15s, stroke-width 0.15s; }
+  .an-spoke.zero { stroke: var(--border) !important; stroke-width: 1.4; }
+  .an-spoke:hover { stroke-width: 4; }
+  .an-clock-c { fill: var(--fg-faint); font-size: 9px; text-anchor: middle; }
+
+  /* ── per-day time-series bars ── */
+  .an-ts { display: flex; align-items: flex-end; gap: 2px; height: 96px; margin-top: 6px; }
+  .an-ts-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .an-ts-track { width: 100%; height: 80px; display: flex; align-items: flex-end; }
+  .an-ts-fill { width: 100%; background: var(--accent); border-radius: 2px 2px 0 0; min-height: 2px; transition: height 0.5s var(--ease, ease), filter 0.12s; }
+  .an-ts-fill.rev { background: var(--info, #5a7fd6); }
+  .an-ts-fill.zero { background: var(--border); min-height: 2px; }
+  .an-ts-col:hover .an-ts-fill { filter: brightness(1.35); }
+  .an-ts-x { font-size: 8.5px; color: var(--fg-faint); white-space: nowrap; }
+
+  /* ── pomodoro stats ── */
+  .an-pomo { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 10px; }
+  .an-pomo-stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--rad-3); padding: 12px; text-align: center; }
+  .an-pomo-v { font-size: 22px; font-weight: 700; color: var(--fg-bright); }
+  .an-pomo-k { font-size: var(--t-2xs); color: var(--fg-faint); margin-top: 2px; }
+
+  /* ── subject pill switcher ── */
+  .an-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .an-pill { background: var(--surface-2); border: 1px solid var(--border); color: var(--fg-faint); border-radius: var(--rad-pill); padding: 3px 11px; font-size: var(--t-xs); cursor: pointer; transition: all 0.12s; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .an-pill:hover { color: var(--fg-bright); border-color: var(--border-strong); }
+  .an-pill.on { color: var(--accent-fg); background: var(--pill, var(--accent)); border-color: transparent; }
+
+  /* ── topic radar ── */
+  .an-radar-wrap { display: flex; flex-direction: column; align-items: center; }
+  .an-radar { width: min(300px, 92%); height: auto; }
+  .an-radar-ring { fill: none; stroke: var(--border); stroke-width: 1; }
+  .an-radar-axis { stroke: var(--border); stroke-width: 1; }
+  .an-radar-lbl { fill: var(--fg-faint); font-size: 8px; font-family: var(--font-mono); }
+  .an-radar-poly { fill-opacity: 0.18; stroke-width: 2; stroke-linejoin: round; transition: all 0.5s var(--ease, ease); }
+  .an-radar-dot { stroke: var(--surface); stroke-width: 1.5; transition: r 0.12s; }
+  .an-radar-dot:hover { r: 5; }
+  .an-radar-note { font-size: var(--t-2xs); color: var(--fg-faint); margin-top: 8px; text-align: center; }
 </style>

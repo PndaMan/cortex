@@ -2709,6 +2709,7 @@ pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummar
     };
 
     let weak_topics = weak_topics(conn, since_ms)?;
+    let pomodoro = pomodoro_stats(conn, since_ms)?;
 
     Ok(AnalyticsSummary {
         minutes_per_day,
@@ -2722,6 +2723,117 @@ pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummar
         minutes_week,
         reviews_week,
         accuracy_week,
+        pomodoro,
+    })
+}
+
+/// Per-topic stats for one subject (all its topics, oldest first). Attributes
+/// review attempts + FSRS cards via each material's topic — same attribution as
+/// `weak_topics`, but scoped to one subject and including topics with no activity.
+pub fn topic_stats(conn: &Connection, subject_id: &str, since_ms: i64) -> Result<Vec<crate::models::TopicStat>> {
+    use crate::models::TopicStat;
+    let mut topics: Vec<TopicStat> = {
+        let mut st = conn.prepare(
+            "SELECT id, name FROM topics WHERE subject_id=?1 ORDER BY position, created_at",
+        )?;
+        let rows = st.query_map(params![subject_id], |r| {
+            Ok(TopicStat {
+                topic_id: r.get::<_, String>(0)?,
+                topic_name: r.get::<_, String>(1)?,
+                reviews: 0, correct: 0, accuracy: 0.0, lapses: 0, cards: 0, avg_stability: 0.0,
+            })
+        })?;
+        rows.filter_map(|x| x.ok()).collect()
+    };
+    let idx: std::collections::HashMap<String, usize> =
+        topics.iter().enumerate().map(|(i, t)| (t.topic_id.clone(), i)).collect();
+
+    // reviews + correct per topic (windowed)
+    {
+        let mut st = conn.prepare(
+            "SELECT m.topic_id, COUNT(*) , COALESCE(SUM(a.correct),0) \
+             FROM attempts a JOIN materials m ON m.id=a.material_id \
+             JOIN topics t ON t.id=m.topic_id \
+             WHERE t.subject_id=?1 AND a.created_at>=?2 AND m.topic_id IS NOT NULL GROUP BY m.topic_id",
+        )?;
+        let rows = st.query_map(params![subject_id, since_ms], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+        })?;
+        for row in rows.flatten() {
+            if let Some(&i) = idx.get(&row.0) {
+                topics[i].reviews = row.1;
+                topics[i].correct = row.2;
+                topics[i].accuracy = if row.1 > 0 { row.2 as f64 / row.1 as f64 } else { 0.0 };
+            }
+        }
+    }
+    // cards + lapses + stability per topic (all scheduled, not windowed)
+    {
+        let mut st = conn.prepare(
+            "SELECT m.topic_id, COUNT(c.id), COALESCE(SUM(c.lapses),0), COALESCE(SUM(c.stability),0.0), COUNT(c.stability) \
+             FROM srs_cards c JOIN materials m ON m.id=c.material_id \
+             JOIN topics t ON t.id=m.topic_id \
+             WHERE t.subject_id=?1 AND m.topic_id IS NOT NULL GROUP BY m.topic_id",
+        )?;
+        let rows = st.query_map(params![subject_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, f64>(3)?, r.get::<_, i64>(4)?))
+        })?;
+        for row in rows.flatten() {
+            if let Some(&i) = idx.get(&row.0) {
+                topics[i].cards = row.1;
+                topics[i].lapses = row.2;
+                topics[i].avg_stability = if row.4 > 0 { row.3 / row.4 as f64 } else { 0.0 };
+            }
+        }
+    }
+    Ok(topics)
+}
+
+/// Pomodoro/focus stats over the window: number of focus sessions, focus/break
+/// minutes, average + longest session, and an hour-of-day focus histogram.
+fn pomodoro_stats(conn: &Connection, since_ms: i64) -> Result<crate::models::PomodoroStats> {
+    let rows: Vec<(String, i64, i64)> = {
+        let mut st = conn.prepare(
+            "SELECT kind, started_ms, ended_ms FROM pomodoro_sessions \
+             WHERE started_ms >= ?1 AND kind IN ('work', 'break')",
+        )?;
+        let r = st.query_map(params![since_ms], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+        })?;
+        r.filter_map(|x| x.ok()).collect()
+    };
+    let mut focus_sessions = 0i64;
+    let mut focus_ms = 0i64;
+    let mut break_ms = 0i64;
+    let mut longest_ms = 0i64;
+    let mut by_hour = vec![0i64; 24];
+    for (kind, start, end) in rows {
+        let dur = (end - start).max(0);
+        if kind == "work" {
+            focus_sessions += 1;
+            focus_ms += dur;
+            longest_ms = longest_ms.max(dur);
+            // Bucket the session's minutes into its start hour (local time).
+            let secs = start / 1000;
+            let hour = ((secs / 3600) % 24).rem_euclid(24) as usize;
+            by_hour[hour] += dur / 60_000;
+        } else {
+            break_ms += dur;
+        }
+    }
+    let focus_minutes = focus_ms / 60_000;
+    let avg = if focus_sessions > 0 {
+        (focus_ms as f64 / 60_000.0) / focus_sessions as f64
+    } else {
+        0.0
+    };
+    Ok(crate::models::PomodoroStats {
+        focus_sessions,
+        focus_minutes,
+        break_minutes: break_ms / 60_000,
+        avg_session_min: avg,
+        longest_session_min: longest_ms / 60_000,
+        by_hour,
     })
 }
 

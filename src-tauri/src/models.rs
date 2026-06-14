@@ -534,6 +534,31 @@ pub struct FsrsTotals {
     pub lapses: i64,
 }
 
+/// Per-topic stats for one subject — drives the subject-switcher topic charts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicStat {
+    pub topic_id: String,
+    pub topic_name: String,
+    pub reviews: i64,
+    pub correct: i64,
+    pub accuracy: f64, // 0..1
+    pub lapses: i64,
+    pub cards: i64,
+    pub avg_stability: f64,
+}
+
+/// Pomodoro/focus-timer stats over the window (from `pomodoro_sessions`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PomodoroStats {
+    pub focus_sessions: i64,
+    pub focus_minutes: i64,
+    pub break_minutes: i64,
+    pub avg_session_min: f64,
+    pub longest_session_min: i64,
+    /// Hour-of-day histogram (0-23) of focus minutes — "when do you study?".
+    pub by_hour: Vec<i64>,
+}
+
 /// The whole Study Analytics dashboard, returned by `analytics_summary`.
 #[derive(Debug, Clone, Serialize)]
 pub struct AnalyticsSummary {
@@ -561,4 +586,6 @@ pub struct AnalyticsSummary {
     pub reviews_week: i64,
     /// Accuracy over the last 7 calendar days (0.0-1.0).
     pub accuracy_week: f64,
+    /// Pomodoro/focus-timer stats over the window.
+    pub pomodoro: PomodoroStats,
 }

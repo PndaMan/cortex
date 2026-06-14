@@ -30,3 +30,15 @@ pub fn analytics_summary(state: State<AppState>, days: Option<i64>) -> Result<An
     let c = state.db.lock().unwrap();
     repo::analytics_summary(&c, days.unwrap_or(30))
 }
+
+/// Per-topic stats for one subject (for the subject-switcher topic charts).
+#[tauri::command]
+pub fn topic_stats(
+    state: State<AppState>,
+    subject_id: String,
+    days: Option<i64>,
+) -> Result<Vec<crate::models::TopicStat>> {
+    let c = state.db.lock().unwrap();
+    let since = crate::db::now_ms() - days.unwrap_or(30) * 86_400_000;
+    repo::topic_stats(&c, &subject_id, since)
+}

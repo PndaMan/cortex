@@ -800,6 +800,14 @@ export interface WeakTopic {
   avg_stability: number;
   reason: string;
 }
+export interface PomodoroStats {
+  focus_sessions: number;
+  focus_minutes: number;
+  break_minutes: number;
+  avg_session_min: number;
+  longest_session_min: number;
+  by_hour: number[];
+}
 export interface AnalyticsSummary {
   minutes_per_day: DayMinutes[];
   /** A full rolling year (366 days) of daily study minutes for the heatmap. */
@@ -810,6 +818,7 @@ export interface AnalyticsSummary {
   weak_topics: WeakTopic[];
   fsrs: FsrsTotals;
   streak: number;
+  pomodoro: PomodoroStats;
   minutes_week: number;
   reviews_week: number;
   accuracy_week: number;
@@ -824,6 +833,12 @@ export const logPomodoroSession = (
 /** The whole Study Analytics dashboard in one call (default 30-day window). */
 export const analyticsSummary = (days?: number) =>
   invoke<AnalyticsSummary>("analytics_summary", { days });
+export interface TopicStat {
+  topic_id: string; topic_name: string; reviews: number; correct: number;
+  accuracy: number; lapses: number; cards: number; avg_stability: number;
+}
+export const topicStats = (subjectId: string, days?: number) =>
+  invoke<TopicStat[]>("topic_stats", { subjectId, days });
 
 // ---- events ----
 export const onIngestProgress = (

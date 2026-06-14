@@ -322,6 +322,7 @@ pub fn run() {
             review::srs_stats,
             // study analytics
             analytics::log_pomodoro_session,
+            analytics::topic_stats,
             analytics::analytics_summary,
             // exam mode
             exam::generate_exam,
