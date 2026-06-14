@@ -818,6 +818,8 @@ export const onIngestProgress = (
 /** Fired by the tray menu's "Play / pause music" item. */
 export const onTrayMusicToggle = (cb: () => void): Promise<UnlistenFn> =>
   listen("tray-music-toggle", () => cb());
+export const onTrayGoDashboard = (cb: () => void): Promise<UnlistenFn> =>
+  listen("tray-go-dashboard", () => cb());
 /** Fired when a background job creates a note (e.g. auto lecture summary). */
 export const onNoteCreated = (cb: () => void): Promise<UnlistenFn> =>
   listen("note:created", () => cb());

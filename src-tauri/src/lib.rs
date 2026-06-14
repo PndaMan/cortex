@@ -82,14 +82,18 @@ pub fn run() {
             // Tray icon: lets the app keep working (ingest, generation, music)
             // after the window is closed. Left-click or "Open" reopens it.
             {
-                use tauri::menu::{Menu, MenuItem};
+                use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
                 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
                 let open = MenuItem::with_id(app, "open", "Open Cortex", true, None::<&str>)?;
+                let dashboard =
+                    MenuItem::with_id(app, "dashboard", "Go to Dashboard", true, None::<&str>)?;
                 let music =
                     MenuItem::with_id(app, "music", "Play / pause music", true, None::<&str>)?;
+                let sep1 = PredefinedMenuItem::separator(app)?;
+                let restart = MenuItem::with_id(app, "restart", "Restart Cortex", true, None::<&str>)?;
                 let quit = MenuItem::with_id(app, "quit", "Quit Cortex", true, None::<&str>)?;
-                let menu = Menu::with_items(app, &[&open, &music, &quit])?;
+                let menu = Menu::with_items(app, &[&open, &dashboard, &music, &sep1, &restart, &quit])?;
                 let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?;
                 TrayIconBuilder::with_id("cortex-tray")
                     .icon(icon)
@@ -98,10 +102,16 @@ pub fn run() {
                     .show_menu_on_left_click(false)
                     .on_menu_event(|app, event| match event.id.as_ref() {
                         "open" => show_main_window(app),
+                        "dashboard" => {
+                            use tauri::Emitter;
+                            show_main_window(app);
+                            let _ = app.emit("tray-go-dashboard", ());
+                        }
                         "music" => {
                             use tauri::Emitter;
                             let _ = app.emit("tray-music-toggle", ());
                         }
+                        "restart" => app.restart(),
                         "quit" => app.exit(0),
                         _ => {}
                     })

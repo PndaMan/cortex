@@ -607,6 +607,7 @@ class AppStore {
     };
     // Tray menu "Play / pause music" (works while the window is hidden).
     void api.onTrayMusicToggle(() => this.toggleMusic());
+    void api.onTrayGoDashboard(() => this.setView("dashboard"));
     // Background auto-summary finished → tell the user where to find it.
     void api.onNoteCreated(() => {
       this.pushToast({
