@@ -276,14 +276,25 @@
     whisperState = await testEndpoint(whisperUrl);
   }
 
-  // ---- global homelab access (Tailscale / public bases shared by all services) ----
+  // ---- unified homelab access ----
+  // One base URL fronts every service (search / whisper / ollama / sync) behind
+  // a reverse proxy; Cortex appends each service's path. Tailscale/public bases
+  // are the auto local→Tailscale→public fallbacks.
+  let hlBase      = $state("");
   let hlTailscale = $state("");
   let hlPublic    = $state("");
+  let hlState     = $state<"idle" | "testing" | "ok" | "fail">("idle");
   function saveHomelabBases() {
     api.setSettings({
+      homelab_base: hlBase.trim(),
       homelab_tailscale_base: hlTailscale.trim(),
       homelab_public_base: hlPublic.trim(),
     }).catch(() => {});
+  }
+  async function testHomelab() {
+    if (!hlBase.trim()) return;
+    hlState = "testing";
+    hlState = await testEndpoint(hlBase);
   }
 
   // ---- live homelab sync (smart per-record merge + binary file sync) ----
@@ -803,6 +814,7 @@
       if (s.searxng_url)                   searxng  = s.searxng_url;
       if (s.whisper_url)                   whisperUrl = s.whisper_url;
       // Live sync
+      if (s.homelab_base)           hlBase = s.homelab_base;
       if (s.homelab_tailscale_base) hlTailscale = s.homelab_tailscale_base;
       if (s.homelab_public_base)    hlPublic = s.homelab_public_base;
       if (s.sync_url)   syncUrl  = s.sync_url;
@@ -1453,18 +1465,34 @@ Notes: {about}</pre>
         </header>
 
         <section class="set-group">
-          <div class="set-group-h">
-            <h3 class="set-group-t">Homelab access</h3>
-            <p class="set-group-d">Reach your homelab from anywhere. Each service below is configured with its <strong>local</strong> URL; if it's unreachable, Cortex retries the same service over <strong>Tailscale</strong>, then your <strong>public</strong> address — swapping just the host, keeping the port/path. Leave blank to stay local-only. (Live sync has its own explicit endpoints below.)</p>
+          <div class="set-group-h svc-h">
+            <div>
+              <h3 class="set-group-t">Homelab URL</h3>
+              <p class="set-group-d">One address for everything. Run the <span class="mono">homelab/</span> docker compose and point Cortex here — search, transcription, local models and sync are all reached off this single URL (Cortex adds <span class="mono">/searxng</span>, <span class="mono">/whisper</span>, <span class="mono">/ollama</span>, <span class="mono">/sync</span> for you). Add a Tailscale and/or public address and Cortex auto-picks the first reachable: <strong>local → Tailscale → public</strong>.</p>
+            </div>
+            {#if hlBase.trim()}
+              {@const p = connPill(hlState === "idle" ? null : hlState, true)}
+              <span class="status-pill status-pill--{p.cls}"><span class="dot"></span>{p.label}</span>
+            {/if}
           </div>
           <div class="set-card">
             <div class="set-row stacked">
-              <div class="set-row-t">Tailscale base <span class="faint">optional</span></div>
-              <input class="input mono" bind:value={hlTailscale} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="http://homelab.tailnet-xxxx.ts.net" />
-              <div class="set-row-d">Scheme + host (no port) — e.g. your homelab's Tailscale MagicDNS name. Cortex keeps each service's own port.</div>
+              <div class="set-row-t">Local URL</div>
+              <div class="row-inline">
+                <input class="input mono" bind:value={hlBase} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="http://192.168.1.10:8080" />
+                <button class="btn" onclick={testHomelab} disabled={hlState === 'testing' || !hlBase.trim()}>
+                  <Icon name="refresh" size={12} /> Test
+                </button>
+              </div>
+              <div class="set-row-d">Your homelab's LAN address (the Caddy proxy port, default <span class="mono">8080</span>). Leave the per-service overrides below blank to use this.</div>
             </div>
             <div class="set-row stacked">
-              <div class="set-row-t">Public base <span class="faint">optional</span></div>
+              <div class="set-row-t">Tailscale URL <span class="faint">optional</span></div>
+              <input class="input mono" bind:value={hlTailscale} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://homelab.tailnet-xxxx.ts.net" />
+              <div class="set-row-d">Used when the local URL isn't reachable. Cortex swaps just the host (and port if you give one), keeping the service paths.</div>
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">Public URL <span class="faint">optional</span></div>
               <input class="input mono" bind:value={hlPublic} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://lab.example.com" />
             </div>
           </div>
@@ -1502,6 +1530,13 @@ Notes: {about}</pre>
             {:else}
               <div class="set-row-d faint">{depLoading ? "Checking installed tools…" : "Couldn't check dependencies."}</div>
             {/if}
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">Per-service overrides <span class="faint">optional</span></h3>
+            <p class="set-group-d">Only needed if you run a service somewhere other than the Homelab URL above (or aren't using the bundled proxy). A value here takes precedence over the unified URL for that one service.</p>
           </div>
         </section>
 

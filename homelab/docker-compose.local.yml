@@ -1,17 +1,9 @@
-# Local-only override: binds every service to 127.0.0.1 so nothing is exposed
-# on the LAN. Use for trying the stack on a workstation before moving it to a
-# homelab host:
+# Local-only override: binds the proxy to 127.0.0.1 so nothing is exposed on the
+# LAN. Use for trying the stack on a workstation before moving it to a homelab
+# host:
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+# Cortex's Homelab URL is then http://127.0.0.1:8080.
 services:
-  searxng:
+  proxy:
     ports: !override
       - "127.0.0.1:8080:8080"
-  whisper:
-    ports: !override
-      - "127.0.0.1:9009:8000"
-  sync:
-    ports: !override
-      - "127.0.0.1:9010:80"
-  ollama:
-    ports: !override
-      - "127.0.0.1:11434:11434"

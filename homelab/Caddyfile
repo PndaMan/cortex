@@ -1,0 +1,26 @@
+# Cortex homelab — single entry point.
+# One URL fronts every optional service; Cortex derives each service URL by
+# appending a path prefix (see src-tauri/src/homelab.rs). `handle_path` strips
+# the prefix before proxying, so the upstreams see their normal paths.
+#
+# Point Cortex (Settings → Integrations → Homelab URL) at this one address,
+# e.g. http://<host>:8080  (or your Tailscale / public HTTPS URL).
+
+:8080 {
+	handle_path /searxng/* {
+		reverse_proxy searxng:8080
+	}
+	handle_path /whisper/* {
+		reverse_proxy whisper:8000
+	}
+	handle_path /ollama/* {
+		reverse_proxy ollama:11434
+	}
+	handle_path /sync/* {
+		reverse_proxy sync:80
+	}
+	# A bare hit on the base URL is a friendly liveness check.
+	handle / {
+		respond "Cortex homelab is up. Services: /searxng /whisper /ollama /sync" 200
+	}
+}

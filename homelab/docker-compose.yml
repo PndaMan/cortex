@@ -1,35 +1,47 @@
-# Cortex homelab backend
-# ----------------------
-# One command brings up the optional services Cortex can offload to:
-#   • SearXNG  — web search for cheatsheet diagrams / chat enrichment (port 8080)
-#   • Whisper  — OpenAI-compatible lecture transcription                (port 9009)
-#   • Ollama   — local LLM + embeddings (OPTIONAL, profile "ollama")    (port 11434)
+# Cortex homelab backend — one URL, one command.
+# ----------------------------------------------
+# A single Caddy reverse proxy fronts every optional service, so Cortex needs
+# just ONE address. Services are reached by path prefix off that address:
+#   <url>/searxng  → web search          <url>/whisper → lecture transcription
+#   <url>/ollama   → local LLM/embeddings <url>/sync    → WebDAV live-sync
+# Only Caddy publishes a host port (8080); everything else is internal.
 #
-#   docker compose up -d                 # SearXNG + Whisper
+#   docker compose up -d                    # search + whisper + sync + proxy
 #   docker compose --profile ollama up -d   # also start Ollama
 #
-# Then point Cortex at this host in Settings → Integrations:
-#   SearXNG  → http://<host>:8080
-#   Whisper  → http://<host>:9009
-#   Ollama   → http://<host>:11434
+# Then in Cortex → Settings → Integrations, set the single Homelab URL:
+#   http://<host>:8080      (LAN)         and, optionally, your
+#   https://<name>.ts.net   (Tailscale)   and/or public HTTPS base.
+# Cortex auto-picks the first reachable one (local → Tailscale → public).
 #
-# Expose it however you like: a reverse proxy (Caddy/Traefik/nginx) with TLS, or
-# a VPN (Tailscale / Netbird / WireGuard) so only your devices can reach it.
-# See README.md for examples.
+# Expose <host>:8080 over a VPN (Tailscale/Netbird) or a TLS reverse proxy.
 
 services:
-  searxng:
-    image: searxng/searxng:latest
-    container_name: cortex-searxng
+  proxy:
+    image: caddy:2-alpine
+    container_name: cortex-proxy
     restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - searxng
+      - whisper
+      - sync
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: cortex-searxng
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
       - ./searxng:/etc/searxng:rw
     environment:
-      # Public base URL SearXNG advertises. Set to your reverse-proxy URL when
-      # exposing it; the LAN/VPN IP is fine for local use.
-      - SEARXNG_BASE_URL=http://localhost:8080/
+      # Served under the proxy's /searxng prefix.
+      - SEARXNG_BASE_URL=http://localhost:8080/searxng/
     cap_drop:
       - ALL
     cap_add:
@@ -38,28 +50,25 @@ services:
       - SETUID
 
   whisper:
-    # Speaches (formerly faster-whisper-server): an OpenAI-compatible ASR server
-    # exposing POST /v1/audio/transcriptions — exactly what Cortex calls.
-    # Use the -cuda image instead of -cpu if the host has an NVIDIA GPU.
+    # Speaches: OpenAI-compatible ASR exposing POST /v1/audio/transcriptions.
+    # Use latest-cuda instead of latest-cpu if the host has an NVIDIA GPU.
     image: ghcr.io/speaches-ai/speaches:latest-cpu
     container_name: cortex-whisper
     restart: unless-stopped
-    ports:
-      - "9009:8000"
+    expose:
+      - "8000"
     volumes:
       - whisper-models:/home/ubuntu/.cache/huggingface
     environment:
-      # Preload a model so the first transcription isn't a cold download.
       - WHISPER__MODEL=Systran/faster-whisper-base.en
 
   sync:
-    # WebDAV target for Cortex live sync (last-write-wins DB snapshot). Cortex
-    # PUTs/GETs cortex.db + cortex.stamp here. Set credentials before exposing.
+    # WebDAV target for Cortex live sync (last-write-wins DB snapshot).
     image: bytemark/webdav:latest
     container_name: cortex-sync
     restart: unless-stopped
-    ports:
-      - "9010:80"
+    expose:
+      - "80"
     environment:
       - AUTH_TYPE=Basic
       - USERNAME=cortex
@@ -72,8 +81,8 @@ services:
     container_name: cortex-ollama
     restart: unless-stopped
     profiles: ["ollama"]   # only starts with `--profile ollama`
-    ports:
-      - "11434:11434"
+    expose:
+      - "11434"
     volumes:
       - ollama-models:/root/.ollama
     # Uncomment for an NVIDIA GPU (needs the NVIDIA container toolkit):
@@ -89,3 +98,4 @@ volumes:
   whisper-models:
   ollama-models:
   sync-data:
+  caddy-data:
