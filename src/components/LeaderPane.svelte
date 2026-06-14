@@ -23,6 +23,7 @@
     p: () => { app.pomodoroOpen = true; },
     b: () => app.toggleSidebar(),
     g: () => app.setView("dashboard"),
+    ",": () => app.openSettings(),
   };
 
   const actions = LEADER_ACTIONS;

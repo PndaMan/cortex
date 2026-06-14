@@ -252,6 +252,7 @@
       if (gPrefix) {
         gPrefix = false;
         if (e.key === k.dashboard) { app.setView("dashboard"); return; }
+        if (e.key === "s") { app.openSettings(); return; } // g s → Settings
       }
       if (e.key === "g") { gPrefix = true; setTimeout(() => (gPrefix = false), 600); return; }
 

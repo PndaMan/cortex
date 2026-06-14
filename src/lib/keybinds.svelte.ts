@@ -91,6 +91,7 @@ export const LEADER_ACTIONS: LeaderAction[] = [
   { key: "m", label: "Music",       detail: "study sound panel" },
   { key: "p", label: "Pomodoro",    detail: "focus timer + bonsai" },
   { key: "b", label: "Sidebar",     detail: "minimize / show navbar" },
+  { key: ",", label: "Settings",    detail: "open preferences" },
   { key: "g", label: "Dashboard",   detail: "go to dashboard" },
 ];
 
