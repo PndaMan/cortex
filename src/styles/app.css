@@ -180,6 +180,18 @@
 .st-id { display: flex; align-items: center; gap: 10px; padding-right: 14px; margin-right: 6px; border-right: 1px solid var(--border); flex: none; min-width: 0; max-width: 46vw; }
 .st-id--clickable { cursor: pointer; border-radius: var(--rad-2); transition: background 0.12s; }
 .st-id--clickable:hover { background: var(--surface-2); }
+
+/* Moodle "Synced data" preview (Settings → Experimental) */
+.md-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; }
+.md-stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--rad-pill); padding: 3px 11px; font-size: var(--t-xs); color: var(--fg-faint); }
+.md-stat b { color: var(--fg-bright); font-weight: 600; }
+.md-up-h { font-size: var(--t-2xs); color: var(--fg-faint); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 10px; }
+.md-up { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.md-up li { display: flex; align-items: baseline; gap: 10px; font-size: var(--t-xs); }
+.md-up-date { color: var(--accent); white-space: nowrap; min-width: 54px; }
+.md-up-name { color: var(--fg); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
+a.md-up-name:hover { color: var(--accent); text-decoration: underline; }
+.md-up-course { color: var(--fg-faint); white-space: nowrap; font-size: var(--t-2xs); max-width: 38%; overflow: hidden; text-overflow: ellipsis; }
 .st-id > div { min-width: 0; }
 .st-name { font-size: var(--t-md); color: var(--fg-bright); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .st-code { font-size: var(--t-2xs); color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

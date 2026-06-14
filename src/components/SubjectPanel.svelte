@@ -113,6 +113,10 @@
   let fwText = $state<string | null>(null);
   const fwSrc = $derived(framework?.file_path ? convertFileSrc(framework.file_path) : "");
 
+  // Announcement reader overlay.
+  let annCurrent = $state<api.MoodleAnnouncement | null>(null);
+  function openAnnouncement(a: api.MoodleAnnouncement) { annCurrent = a; }
+
   async function loadFramework() {
     const id = subj?.id;
     if (!id) { framework = null; return; }
@@ -176,7 +180,7 @@
 
   // Load Moodle + framework whenever the panel opens (or the subject changes).
   $effect(() => {
-    if (!app.subjectPanelOpen) { fwViewing = false; return; }
+    if (!app.subjectPanelOpen) { fwViewing = false; annCurrent = null; return; }
     void subj?.id;
     loadMoodle();
     loadFramework();
@@ -187,7 +191,8 @@
     e.stopPropagation();
     if (e.key === "Escape") {
       e.preventDefault();
-      if (fwViewing) fwViewing = false;
+      if (annCurrent) annCurrent = null;
+      else if (fwViewing) fwViewing = false;
       else app.closeSubjectPanel();
     }
   }
@@ -217,6 +222,18 @@
       .replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
       .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'")
       .replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
+  }
+  // Readable plain text from Moodle's HTML message: keep paragraph/line breaks,
+  // drop tags (safer than rendering arbitrary HTML), decode common entities.
+  function htmlToText(html: string): string {
+    return html
+      .replace(/<\s*br\s*\/?>/gi, "\n")
+      .replace(/<\/\s*(p|div|li|h[1-6]|tr)\s*>/gi, "\n")
+      .replace(/<\s*li[^>]*>/gi, "• ")
+      .replace(/<[^>]*>/g, "")
+      .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+      .replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
   }
 </script>
 
@@ -295,8 +312,15 @@
                   <ul class="sp-list">
                     {#each courseDeadlines.slice(0, 8) as d (d.id)}
                       <li>
-                        <span class="sp-li-name" title={d.name}>{#if d.url}<a class="sp-linkbtn" href={d.url} target="_blank" rel="noreferrer">{d.name}</a>{:else}{d.name}{/if}</span>
-                        <span class="sp-li-val mono" class:sp-exam={d.kind === "exam"}>{fmtSecs(d.due_at)}</span>
+                        {#if d.url}
+                          <a class="sp-row-link" href={d.url} target="_blank" rel="noreferrer" title={d.name}>
+                            <span class="sp-li-name">{d.name}</span>
+                            <span class="sp-li-val mono" class:sp-exam={d.kind === "exam"}>{fmtSecs(d.due_at)}</span>
+                          </a>
+                        {:else}
+                          <span class="sp-li-name" title={d.name}>{d.name}</span>
+                          <span class="sp-li-val mono" class:sp-exam={d.kind === "exam"}>{fmtSecs(d.due_at)}</span>
+                        {/if}
                       </li>
                     {/each}
                   </ul>
@@ -306,8 +330,13 @@
                 <div class="sp-sub-h mono"><Icon name="chat" size={12} /> Announcements <span class="sp-faint">· {courseAnnouncements.length}</span></div>
                 {#if courseAnnouncements.length === 0}<p class="sp-faint sm">No announcements.</p>{:else}
                   <ul class="sp-list">
-                    {#each courseAnnouncements.slice(0, 6) as a (a.id)}
-                      <li class="sp-ann"><span class="sp-ann-subj" title={stripHtml(a.message)}>{a.subject}</span><span class="sp-faint sm mono">{fmtSecs(a.posted_at)}</span></li>
+                    {#each courseAnnouncements.slice(0, 8) as a (a.id)}
+                      <li>
+                        <button class="sp-ann-btn" onclick={() => openAnnouncement(a)} title={stripHtml(a.message)}>
+                          <span class="sp-ann-subj">{a.subject}</span>
+                          <span class="sp-faint sm mono">{fmtSecs(a.posted_at)}</span>
+                        </button>
+                      </li>
                     {/each}
                   </ul>
                 {/if}
@@ -369,7 +398,7 @@
 
     <!-- Framework document viewer (PDF / image / text) -->
     {#if fwViewing && framework}
-      <div class="fw-back" role="presentation" onmousedown={() => (fwViewing = false)}>
+      <div class="fw-back" role="presentation" onmousedown={(e) => { e.stopPropagation(); fwViewing = false; }}>
         <div class="fw-view" role="dialog" aria-modal="true" tabindex="-1" onmousedown={(e) => e.stopPropagation()}>
           <div class="fw-view-h">
             <Icon name="doc" size={13} />
@@ -386,6 +415,28 @@
           {:else}
             <pre class="fw-text">{fwText ?? "Loading…"}</pre>
           {/if}
+        </div>
+      </div>
+    {/if}
+
+    <!-- Announcement reader -->
+    {#if annCurrent}
+      {@const a = annCurrent}
+      <div class="fw-back" role="presentation" onmousedown={(e) => { e.stopPropagation(); annCurrent = null; }}>
+        <div class="ann-view" role="dialog" aria-modal="true" tabindex="-1" onmousedown={(e) => e.stopPropagation()}>
+          <div class="fw-view-h">
+            <Icon name="chat" size={13} />
+            <span class="ann-subj">{a.subject}</span>
+            <div class="grow"></div>
+            {#if a.url}
+              <a class="btn btn--sm btn--ghost" href={a.url} target="_blank" rel="noreferrer"><Icon name="external" size={12} /> Open in Moodle</a>
+            {/if}
+            <button class="btn btn--icon btn--sm btn--ghost" title="Close" onclick={() => (annCurrent = null)}>
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+          <div class="ann-meta mono">{fmtSecs(a.posted_at)}</div>
+          <div class="ann-body read">{htmlToText(a.message)}</div>
         </div>
       </div>
     {/if}
@@ -437,10 +488,27 @@
   .sp-li-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sp-li-val { color: var(--fg-bright); white-space: nowrap; }
   .sp-exam { color: #e0708a; }
-  .sp-ann { justify-content: space-between; }
   .sp-ann-subj { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sp-linkbtn { background: none; border: none; color: inherit; cursor: pointer; padding: 0; font: inherit; text-align: left; }
-  .sp-linkbtn:hover { color: var(--accent); text-decoration: underline; }
+  .sp-ann-btn {
+    display: flex; align-items: baseline; gap: 8px; width: 100%;
+    background: none; border: none; padding: 3px 4px; margin: 0 -4px; border-radius: var(--rad-2, 6px);
+    font: inherit; font-size: 12px; color: inherit; text-align: left; cursor: pointer;
+  }
+  .sp-ann-btn:hover { background: var(--surface); color: var(--fg-bright); }
+  .sp-ann-btn:hover .sp-ann-subj { color: var(--accent); }
+
+  .ann-view {
+    width: min(680px, calc(100vw - 48px)); max-height: calc(100vh - 80px);
+    display: flex; flex-direction: column;
+    background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--r-lg, 12px); box-shadow: 0 18px 50px rgba(0,0,0,0.55); overflow: hidden;
+  }
+  .ann-subj { color: var(--fg-bright); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ann-meta { padding: 8px 18px 0; color: var(--fg-faint); font-size: 11px; }
+  .ann-body { padding: 10px 18px 20px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; line-height: 1.6; color: var(--fg); }
+  .sp-row-link { display: flex; align-items: baseline; gap: 8px; width: 100%; color: inherit; text-decoration: none; padding: 2px 4px; margin: 0 -4px; border-radius: var(--rad-2, 6px); }
+  .sp-row-link:hover { background: var(--surface); }
+  .sp-row-link:hover .sp-li-name { color: var(--accent); }
 
   .sp-topics { display: flex; flex-direction: column; gap: 8px; }
 

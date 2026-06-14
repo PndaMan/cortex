@@ -14,6 +14,7 @@ export type Action =
   | "recorder"
   | "cycleTheme"
   | "music"
+  | "notifications"
   | "insert"
   | "dashboard" // pressed after the `g` prefix
   | "help"
@@ -28,6 +29,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   recorder: "Record lecture",
   cycleTheme: "Cycle theme",
   music: "Music panel",
+  notifications: "Notifications",
   insert: "Insert / focus compose",
   dashboard: "Go to dashboard (after g)",
   help: "Help overlay",
@@ -36,7 +38,7 @@ export const ACTION_LABELS: Record<Action, string> = {
 
 export const ACTION_ORDER: Action[] = [
   "cmdk", "leader", "toggleChat", "toggleSidebar", "newSubject", "recorder",
-  "cycleTheme", "music", "insert", "dashboard", "help", "dismissToast",
+  "cycleTheme", "music", "notifications", "insert", "dashboard", "help", "dismissToast",
 ];
 
 export const HELIX_BINDS: Record<Action, string> = {
@@ -48,6 +50,7 @@ export const HELIX_BINDS: Record<Action, string> = {
   recorder: "r",
   cycleTheme: "t",
   music: "m",
+  notifications: "u",
   insert: "i",
   dashboard: "d",
   help: "?",

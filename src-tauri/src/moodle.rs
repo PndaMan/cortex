@@ -183,6 +183,7 @@ pub struct MoodleAnnouncement {
     pub subject: String,
     pub message: String,
     pub posted_at: i64,
+    pub url: String,
 }
 #[derive(serde::Serialize)]
 pub struct MoodleData {
@@ -688,14 +689,15 @@ pub async fn moodle_sync(app: AppHandle) -> Result<MoodleSummary> {
                                     d.get("timemodified").and_then(|x| x.as_i64()).unwrap_or(0);
                                 c.execute(
                                     "INSERT OR REPLACE INTO moodle_announcements \
-                                     (id, course_id, subject, message, posted_at, updated_at) \
-                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                                     (id, course_id, subject, message, posted_at, url, updated_at) \
+                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                                     params![
                                         format!("disc:{did}"),
                                         cid.to_string(),
                                         subj,
                                         msg,
                                         posted,
+                                        format!("{url}/mod/forum/discuss.php?d={did}"),
                                         now
                                     ],
                                 )?;
@@ -766,7 +768,7 @@ pub fn moodle_data(state: tauri::State<AppState>) -> Result<MoodleData> {
     };
     let announcements = {
         let mut st = c.prepare(
-            "SELECT id, course_id, subject, message, posted_at FROM moodle_announcements ORDER BY posted_at DESC",
+            "SELECT id, course_id, subject, message, posted_at, url FROM moodle_announcements ORDER BY posted_at DESC",
         )?;
         let rows = st.query_map([], |r| {
             Ok(MoodleAnnouncement {
@@ -775,6 +777,7 @@ pub fn moodle_data(state: tauri::State<AppState>) -> Result<MoodleData> {
                 subject: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
                 message: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
                 posted_at: r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+                url: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
             })
         })?;
         rows.filter_map(|x| x.ok()).collect()

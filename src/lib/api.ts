@@ -204,7 +204,7 @@ export interface MoodleSummary { courses: number; grades: number; deadlines: num
 export interface MoodleCourse { id: string; shortname: string; fullname: string }
 export interface MoodleGrade { course_id: string; item_name: string; grade: string; percentage: string; feedback: string }
 export interface MoodleDeadline { id: string; course_id: string; name: string; due_at: number; kind: string; status: string; url: string }
-export interface MoodleAnnouncement { id: string; course_id: string; subject: string; message: string; posted_at: number }
+export interface MoodleAnnouncement { id: string; course_id: string; subject: string; message: string; posted_at: number; url: string }
 export interface MoodleData { courses: MoodleCourse[]; grades: MoodleGrade[]; deadlines: MoodleDeadline[]; announcements: MoodleAnnouncement[] }
 /** Connect with username+password (non-SSO). Returns the user's full name. */
 export const moodleConnect = (url: string, username: string, password: string) =>
