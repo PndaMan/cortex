@@ -26,7 +26,10 @@ const SERVICE: &str = "moodle_mobile_app";
 fn client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(45))
-        .user_agent("Cortex/1.0")
+        // Present as the official Moodle Mobile app: some institutions' WAFs/Moodle
+        // configs treat web-service requests differently by User-Agent, and the
+        // app demonstrably works against this site.
+        .user_agent("MoodleMobile 4.4.0 (44000)")
         .build()
         .unwrap_or_default()
 }
@@ -56,21 +59,27 @@ fn ws(url: &str, token: &str, func: &str, params: &[(String, String)]) -> Result
         ("moodlewsrestformat".into(), "json".into()),
     ];
     q.extend_from_slice(params);
-    let resp = client().post(&endpoint).form(&q).send()?;
-    let val: Value = resp.json()?;
+    // Read the raw body first so we can surface it verbatim on error — Moodle hides
+    // the offending parameter in `message`/`debuginfo` when server debugging is off,
+    // so the raw response is the only remaining signal for diagnosis.
+    let body = client().post(&endpoint).form(&q).send()?.text()?;
+    let val: Value = serde_json::from_str(&body).map_err(|e| {
+        Error::Other(format!(
+            "Moodle: response was not JSON ({e}): {}",
+            body.chars().take(200).collect::<String>()
+        ))
+    })?;
     if let Some(obj) = val.as_object() {
         if obj.contains_key("exception") {
-            let msg = obj
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("request failed");
-            // Surface the Moodle errorcode + debuginfo — they pinpoint *which*
-            // parameter/why (e.g. "invalidtoken" vs "invalidparameter" + the field).
+            let msg = obj.get("message").and_then(|m| m.as_str()).unwrap_or("request failed");
+            // Surface errorcode + debuginfo (when present) + the raw response — they
+            // pinpoint *which* parameter/why (e.g. "invalidtoken" vs "invalidparameter").
             let code = obj.get("errorcode").and_then(|m| m.as_str()).unwrap_or("");
             let debug = obj.get("debuginfo").and_then(|m| m.as_str()).unwrap_or("");
             let code_part = if code.is_empty() { String::new() } else { format!(" [{code}]") };
             let debug_part = if debug.is_empty() { String::new() } else { format!(" — {debug}") };
-            return Err(Error::Other(format!("Moodle{code_part}: {msg}{debug_part}")));
+            let raw = body.chars().take(400).collect::<String>();
+            return Err(Error::Other(format!("Moodle{code_part}: {msg}{debug_part} :: raw={raw}")));
         }
     }
     Ok(val)
