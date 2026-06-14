@@ -421,6 +421,24 @@ class AppStore {
   leaderOpen = $state(false);
   chatOpen = $state(false); // closed by default; user opens with `c`. Persists across views.
   sidebarCollapsed = $state(false);
+  // Resizable panel widths (px), persisted per-device to localStorage so they
+  // survive resizes AND restarts. Defaults match the previous fixed CSS values.
+  sidebarWidth = $state(248);
+  chatWidth = $state(396);
+  loadPanelSizes() {
+    try {
+      const sb = parseInt(localStorage.getItem("cortex_sidebar_w") ?? "", 10);
+      if (Number.isFinite(sb)) this.sidebarWidth = Math.max(180, Math.min(420, sb));
+      const ch = parseInt(localStorage.getItem("cortex_chat_w") ?? "", 10);
+      if (Number.isFinite(ch)) this.chatWidth = Math.max(300, Math.min(720, ch));
+    } catch { /* ignore */ }
+  }
+  saveSidebarWidth() {
+    try { localStorage.setItem("cortex_sidebar_w", String(Math.round(this.sidebarWidth))); } catch { /* quota */ }
+  }
+  saveChatWidth() {
+    try { localStorage.setItem("cortex_chat_w", String(Math.round(this.chatWidth))); } catch { /* quota */ }
+  }
   findOpen = $state(false);
   // Bumped whenever a calendar event/deadline changes anywhere, so the Calendar
   // and the Citations tab stay in sync both ways (each watches this nonce).
@@ -594,6 +612,7 @@ class AppStore {
 
   async init() {
     this.loading = true;
+    this.loadPanelSizes(); // restore panel widths before the shell first renders
     // Safety net: never let the window stay hidden if init stalls or throws
     // before the normal reveal below.
     setTimeout(() => void this.revealWindow(), 3000);

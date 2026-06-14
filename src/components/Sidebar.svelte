@@ -2,6 +2,7 @@
   import { app } from "../lib/store.svelte";
   import { topicGlyph } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
+  import ResizeHandle from "./ResizeHandle.svelte";
   import { stations } from "../lib/mock";
   import { moveItem, reorderable } from "../lib/dnd";
   import logo from "../assets/cortex-logo.png";
@@ -399,6 +400,16 @@
       <Icon name={app.music.playing ? "pause" : "play"} size={14} />
     </button>
   </div>
+
+  <ResizeHandle
+    side="right"
+    sign={1}
+    min={180}
+    max={420}
+    get={() => app.sidebarWidth}
+    set={(v) => (app.sidebarWidth = v)}
+    commit={() => app.saveSidebarWidth()}
+  />
 </div>
 
 <style>

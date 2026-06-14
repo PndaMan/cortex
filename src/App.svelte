@@ -10,6 +10,7 @@
   import SourceMetaModal from "./components/SourceMetaModal.svelte";
   import LeaderPane from "./components/LeaderPane.svelte";
   import ChatPanel from "./components/ChatPanel.svelte";
+  import ResizeHandle from "./components/ResizeHandle.svelte";
   import Icon from "./components/Icon.svelte";
   import FindBar from "./components/FindBar.svelte";
   import HelpOverlay from "./components/HelpOverlay.svelte";
@@ -299,7 +300,8 @@
     class:drawer
     class:compact
     class:nav-open={navOpen}
-    style:--sb-w={app.sidebarCollapsed ? "0px" : "248px"}
+    style:--sb-w={app.sidebarCollapsed ? "0px" : app.sidebarWidth + "px"}
+    style:--chat-w={app.chatWidth + "px"}
   >
     {#if drawer}
       <!-- Sub-1080: hamburger toggles the slide-in sidebar drawer (overlay). -->
@@ -347,6 +349,17 @@
 
       {#if showChatDock}
         <div class="chatdock">
+          {#if !compact}
+            <ResizeHandle
+              side="left"
+              sign={-1}
+              min={300}
+              max={720}
+              get={() => app.chatWidth}
+              set={(v) => (app.chatWidth = v)}
+              commit={() => app.saveChatWidth()}
+            />
+          {/if}
           <ChatPanel
             onClose={() => (app.chatOpen = false)}
             onFullscreen={() => { app.setView("subject"); app.subjectTab = "chats"; }}
