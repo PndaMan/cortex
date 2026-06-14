@@ -58,3 +58,6 @@ MEMORY/
 Plans/
 *-handoff.zip
 cortex-logo-transparent (1).png
+
+# Bundled sidecar binaries — fetched by scripts/fetch-sidecars.mjs at build time
+src-tauri/binaries/

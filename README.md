@@ -130,6 +130,12 @@ Build a production bundle:
 bun run tauri build
 ```
 
+> **Most tools ship inside the release builds.** `yt-dlp` (YouTube + music),
+> `age`, and `rclone` (encrypted backups) are bundled as sidecars by
+> [`scripts/fetch-sidecars.mjs`](scripts/fetch-sidecars.mjs) — no manual install.
+> The table below applies mainly to running from source or to the few heavier,
+> still-optional tools.
+
 ### Optional integrations (enable the features you want)
 | Feature | Needs | Notes |
 |---|---|---|
@@ -138,8 +144,8 @@ bun run tauri build
 | Local models | [Ollama](https://ollama.com) (local or homelab) | keyless chat + embeddings |
 | Slide previews | LibreOffice (`soffice`) | renders PPTX/DOCX to PDF |
 | PDF text | `pdftotext` (poppler) | faster & cleaner than OCR |
-| Background music | [`mpv`](https://mpv.io/) | streams study stations |
-| Encrypted backups | [`age`](https://github.com/FiloSottile/age) + [`rclone`](https://rclone.org/) | configure in Settings → Backups |
+| YouTube + music | [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) (**bundled**) + [`mpv`](https://mpv.io/) for playback | yt-dlp ships with the app; mpv still system-installed |
+| Encrypted backups | [`age`](https://github.com/FiloSottile/age) + [`rclone`](https://rclone.org/) (**both bundled**) | configure in Settings → Backups |
 
 > **One-command homelab backend.** Don't want to set these up by hand? The
 > [`homelab/`](homelab/) folder has a `docker compose` stack that runs SearXNG,

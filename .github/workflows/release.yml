@@ -18,16 +18,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Apple silicon + Intel in one universal .dmg/.app
+          # Per-arch macOS builds (so bundled sidecars match a concrete triple).
           - platform: macos-latest
-            args: "--target universal-apple-darwin"
-            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+            args: "--target aarch64-apple-darwin"
+            rust-targets: "aarch64-apple-darwin"
+            sidecar-target: "aarch64-apple-darwin"
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin"
+            rust-targets: "x86_64-apple-darwin"
+            sidecar-target: "x86_64-apple-darwin"
           - platform: ubuntu-22.04
             args: ""
             rust-targets: ""
+            sidecar-target: ""
           - platform: windows-latest
             args: ""
             rust-targets: ""
+            sidecar-target: ""
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -65,6 +72,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Tells scripts/fetch-sidecars.mjs (run via beforeBuildCommand) which
+          # triple to fetch binaries for; empty → the runner's host triple.
+          SIDECAR_TARGET: ${{ matrix.sidecar-target }}
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', github.run_number) }}
           releaseName: "Cortex ${{ github.ref_type == 'tag' && github.ref_name || github.run_number }}"

@@ -410,7 +410,7 @@ fn libreoffice_bin() -> String {
 /// back to auto-generated captions.
 fn youtube_to_text(url: &str) -> Result<(String, Option<String>)> {
     use std::process::Command;
-    let bin = which("yt-dlp").ok_or_else(|| {
+    let bin = tool("yt-dlp").ok_or_else(|| {
         Error::Other(
             "yt-dlp not found — install it (e.g. `pipx install yt-dlp`) to ingest YouTube links"
                 .into(),
@@ -649,6 +649,30 @@ pub fn which(cmd: &str) -> Option<String> {
         .into_iter()
         .find(|p| p.is_file())
         .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Resolve a binary bundled as a Tauri sidecar — shipped next to the app
+/// executable (`bundle.externalBin`). Returns `None` in `tauri dev` or if the
+/// sidecar isn't present, so callers fall back to PATH / runtime download.
+pub fn bundled(name: &str) -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let fname = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    };
+    let p = dir.join(fname);
+    if p.is_file() {
+        Some(p.to_string_lossy().into_owned())
+    } else {
+        None
+    }
+}
+
+/// A tool's path: the bundled sidecar if present, else found on PATH.
+pub fn tool(name: &str) -> Option<String> {
+    bundled(name).or_else(|| which(name))
 }
 
 /// Split text into bounded, overlapping chunks on word boundaries.

@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "sidecars": "bun scripts/fetch-sidecars.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

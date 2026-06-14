@@ -84,6 +84,10 @@ fn find_on_path(bin: &str) -> Option<PathBuf> {
 /// install (downloaded copy, then PATH); otherwise downloads the standalone
 /// Linux binary into `<data>/bin/yt-dlp`. Idempotent.
 fn ensure_ytdlp(dir: &Path) -> Result<PathBuf> {
+    // Bundled sidecar (shipped with the app) takes priority — no download.
+    if let Some(p) = crate::ingest::bundled("yt-dlp") {
+        return Ok(PathBuf::from(p));
+    }
     let downloaded = dir.join("bin").join("yt-dlp");
     if downloaded.is_file() {
         return Ok(downloaded);
@@ -208,7 +212,7 @@ pub fn media_tools_status(app: AppHandle) -> Result<MediaTools> {
     Ok(MediaTools {
         mpv: find_on_path("mpv").is_some(),
         ffmpeg: find_on_path("ffmpeg").is_some(),
-        ytdlp: downloaded.is_file() || find_on_path("yt-dlp").is_some(),
+        ytdlp: crate::ingest::bundled("yt-dlp").is_some() || downloaded.is_file() || find_on_path("yt-dlp").is_some(),
         ytdlp_path: downloaded.display().to_string(),
     })
 }

@@ -34,11 +34,13 @@ pub struct BackupStatus {
 
 /// True if `bin --version` (or `--help` for rclone) spawns successfully.
 fn tool_exists(bin: &str) -> bool {
-    Command::new(bin)
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success() || !o.stdout.is_empty())
-        .unwrap_or(false)
+    crate::ingest::tool(bin).is_some()
+}
+
+/// Resolve a tool's invocation path: bundled sidecar, then PATH, else the bare
+/// name (so the error message still mentions the tool).
+fn bin(name: &str) -> String {
+    crate::ingest::tool(name).unwrap_or_else(|| name.to_string())
 }
 
 #[tauri::command]
@@ -106,7 +108,7 @@ pub async fn backup_now(app: AppHandle) -> Result<String> {
 
         // Encrypt: age -r <recipient> -o <enc> <db>
         run(
-            Command::new("age")
+            Command::new(bin("age"))
                 .arg("-r")
                 .arg(recipient)
                 .arg("-o")
@@ -118,7 +120,7 @@ pub async fn backup_now(app: AppHandle) -> Result<String> {
         // Upload: rclone copyto <enc> <remote>/cortex-<stamp>.db.age
         let dest = format!("{remote}/cortex-{stamp}.db.age");
         run(
-            Command::new("rclone").arg("copyto").arg(&tmp_enc).arg(&dest),
+            Command::new(bin("rclone")).arg("copyto").arg(&tmp_enc).arg(&dest),
             "rclone",
         )?;
 
