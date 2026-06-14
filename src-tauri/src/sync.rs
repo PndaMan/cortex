@@ -28,7 +28,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 const K_ENABLED: &str = "sync_enabled";
-const K_URL: &str = "sync_url";
+const K_URL: &str = "sync_url"; // local / LAN endpoint
+const K_URL_TS: &str = "sync_url_tailscale";
+const K_URL_PUB: &str = "sync_url_public";
+const K_MODE: &str = "sync_mode"; // auto | local | tailscale | public
 const K_USER: &str = "sync_user";
 const K_PASS: &str = "sync_pass";
 const K_LAST_AT: &str = "sync_last_at"; // epoch-ms of the version we currently hold
@@ -49,25 +52,63 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// Read sync config from settings; None when sync is disabled or no URL is set.
+/// A configured endpoint URL (trimmed), or None if unset/empty.
+fn endpoint(c: &Connection, key: &str) -> Option<String> {
+    let u = repo::get_setting(c, key).ok().flatten()?;
+    let u = u.trim().trim_end_matches('/').to_string();
+    if u.is_empty() { None } else { Some(u) }
+}
+
+/// Quick reachability probe for an endpoint (short timeout). Reachable when the
+/// stamp file returns any HTTP response that isn't a transport error — including
+/// 404 (no stamp yet) and 401/403 (auth, but the host is up).
+fn reachable(cfg: &SyncCfg) -> bool {
+    let quick = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+        .unwrap_or_default();
+    auth(quick.get(file_url(cfg, REMOTE_STAMP)), cfg).send().is_ok()
+}
+
+/// Read sync config: None when disabled, no URL set, or (in auto mode) no endpoint
+/// is currently reachable. The endpoints are tried in order — local → Tailscale →
+/// public — and the first reachable one is used, so the same device works on LAN,
+/// over Tailscale, or from anywhere without reconfiguring.
 pub fn read_cfg(c: &Connection) -> Option<SyncCfg> {
     if repo::get_setting(c, K_ENABLED).ok().flatten().as_deref() != Some("true") {
         return None;
     }
-    let url = repo::get_setting(c, K_URL)
-        .ok()
-        .flatten()?
-        .trim()
-        .trim_end_matches('/')
-        .to_string();
-    if url.is_empty() {
+    let user = repo::get_setting(c, K_USER).ok().flatten().unwrap_or_default();
+    let pass = repo::get_setting(c, K_PASS).ok().flatten().unwrap_or_default();
+    let mode = repo::get_setting(c, K_MODE).ok().flatten().unwrap_or_else(|| "auto".into());
+
+    let local = endpoint(c, K_URL);
+    let ts = endpoint(c, K_URL_TS);
+    let public = endpoint(c, K_URL_PUB);
+    let candidates: Vec<String> = match mode.as_str() {
+        "local" => vec![local],
+        "tailscale" => vec![ts],
+        "public" => vec![public],
+        _ => vec![local, ts, public], // auto: ordered fallback
+    }
+    .into_iter()
+    .flatten()
+    .collect();
+    if candidates.is_empty() {
         return None;
     }
-    Some(SyncCfg {
-        url,
-        user: repo::get_setting(c, K_USER).ok().flatten().unwrap_or_default(),
-        pass: repo::get_setting(c, K_PASS).ok().flatten().unwrap_or_default(),
-    })
+    // A single configured endpoint: use it directly (no probe — let the real
+    // request surface any error). Multiple: probe and pick the first reachable.
+    if candidates.len() == 1 {
+        return Some(SyncCfg { url: candidates.into_iter().next().unwrap(), user, pass });
+    }
+    for url in &candidates {
+        let cfg = SyncCfg { url: url.clone(), user: user.clone(), pass: pass.clone() };
+        if reachable(&cfg) {
+            return Some(cfg);
+        }
+    }
+    None // configured but nothing reachable right now — skip silently (background)
 }
 
 fn client() -> reqwest::blocking::Client {

@@ -272,15 +272,26 @@
   }
 
   // ---- live homelab sync (smart per-record merge + binary file sync) ----
-  let syncUrl   = $state("");
+  // Three endpoint tiers tried in order (auto): local LAN → Tailscale → public.
+  let syncUrl   = $state(""); // local / LAN
+  let syncUrlTs = $state(""); // tailscale
+  let syncUrlPub = $state(""); // public
+  let syncMode  = $state<"auto" | "local" | "tailscale" | "public">("auto");
   let syncUser  = $state("");
   let syncPass  = $state("");
   let syncOn    = $state(false);
   let syncTestState = $state<null | "testing" | "ok" | "fail">(null);
+  // Per-endpoint reachability for the Test-all button.
+  let syncReach = $state<Record<string, boolean>>({});
+
+  const anySyncUrl = $derived(!!(syncUrl.trim() || syncUrlTs.trim() || syncUrlPub.trim()));
 
   function saveSync() {
     api.setSettings({
       sync_url: syncUrl.trim(),
+      sync_url_tailscale: syncUrlTs.trim(),
+      sync_url_public: syncUrlPub.trim(),
+      sync_mode: syncMode,
       sync_user: syncUser.trim(),
       sync_pass: syncPass,
       sync_enabled: syncOn ? "true" : "false",
@@ -288,14 +299,26 @@
   }
   function toggleSync() {
     syncOn = !syncOn;
-    if (syncOn && !syncUrl.trim()) { syncOn = false; return; }
+    if (syncOn && !anySyncUrl) { syncOn = false; return; }
+    saveSync();
+  }
+  function setSyncMode(m: "auto" | "local" | "tailscale" | "public") {
+    syncMode = m;
     saveSync();
   }
   async function testSync() {
-    if (!syncUrl.trim()) return;
+    if (!anySyncUrl) return;
     syncTestState = "testing";
+    const reach: Record<string, boolean> = {};
+    const tiers: [string, string][] = [["local", syncUrl], ["tailscale", syncUrlTs], ["public", syncUrlPub]];
+    for (const [tier, url] of tiers) {
+      if (!url.trim()) continue;
+      try { reach[tier] = await api.syncTest(url.trim(), syncUser.trim(), syncPass); }
+      catch { reach[tier] = false; }
+    }
+    syncReach = reach;
     try {
-      syncTestState = (await api.syncTest(syncUrl.trim(), syncUser.trim(), syncPass)) ? "ok" : "fail";
+      syncTestState = Object.values(reach).some(Boolean) ? "ok" : "fail";
     } catch {
       syncTestState = "fail";
     }
@@ -734,6 +757,9 @@
       if (s.whisper_url)                   whisperUrl = s.whisper_url;
       // Live sync
       if (s.sync_url)   syncUrl  = s.sync_url;
+      if (s.sync_url_tailscale) syncUrlTs = s.sync_url_tailscale;
+      if (s.sync_url_public)    syncUrlPub = s.sync_url_public;
+      if (s.sync_mode === "auto" || s.sync_mode === "local" || s.sync_mode === "tailscale" || s.sync_mode === "public") syncMode = s.sync_mode;
       if (s.sync_user)  syncUser = s.sync_user;
       if (s.sync_pass)  syncPass = s.sync_pass;
       syncOn = s.sync_enabled === "true";
@@ -1431,21 +1457,47 @@ Notes: {about}</pre>
                 <div class="set-row-d">Merges the remote vault in on launch (in the background — never blocks startup), then pushes your changes (debounced).</div>
               </div>
               <div class="set-row-r">
-                <button type="button" class={"st-toggle" + (syncOn ? " on" : "")} onclick={toggleSync} disabled={!syncUrl.trim()} role="switch" aria-checked={syncOn} aria-label="live sync"><span class="st-knob"></span></button>
+                <button type="button" class={"st-toggle" + (syncOn ? " on" : "")} onclick={toggleSync} disabled={!anySyncUrl} role="switch" aria-checked={syncOn} aria-label="live sync"><span class="st-knob"></span></button>
               </div>
             </div>
+
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">Endpoint</div>
+                <div class="set-row-d">Auto tries Local → Tailscale → Public and uses the first reachable — so the same device syncs on LAN, over Tailscale, or from anywhere.</div>
+              </div>
+              <div class="set-row-r">
+                <div class="seg">
+                  {#each [{ id: "auto", label: "Auto" }, { id: "local", label: "Local" }, { id: "tailscale", label: "Tailscale" }, { id: "public", label: "Public" }] as opt}
+                    <button type="button" class={"seg-opt" + (syncMode === opt.id ? " on" : "")} onclick={() => setSyncMode(opt.id as typeof syncMode)}>{opt.label}</button>
+                  {/each}
+                </div>
+              </div>
+            </div>
+
             <div class="set-row stacked">
-              <div class="set-row-t">WebDAV URL</div>
+              <div class="set-row-t">Local / LAN URL</div>
+              <input class="input mono" bind:value={syncUrl} onchange={saveSync} onblur={saveSync} placeholder="http://192.168.1.50:9010" />
+              {#if syncReach.local !== undefined}<div class="set-row-d" style="color:{syncReach.local ? 'var(--ok)' : 'var(--err,#e5484d)'}">{syncReach.local ? "✓ reachable" : "✗ unreachable"}</div>{/if}
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">Tailscale URL <span class="faint">optional</span></div>
+              <input class="input mono" bind:value={syncUrlTs} onchange={saveSync} onblur={saveSync} placeholder="http://homelab.tailnet-xxxx.ts.net:9010" />
+              {#if syncReach.tailscale !== undefined}<div class="set-row-d" style="color:{syncReach.tailscale ? 'var(--ok)' : 'var(--err,#e5484d)'}">{syncReach.tailscale ? "✓ reachable" : "✗ unreachable"}</div>{/if}
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">Public URL <span class="faint">optional</span></div>
               <div class="row-inline">
-                <input class="input mono" bind:value={syncUrl} onchange={saveSync} onblur={saveSync} placeholder="http://192.168.1.50:9010" />
-                <button class="btn" onclick={testSync} disabled={syncTestState === "testing" || !syncUrl.trim()}>
-                  <Icon name="refresh" size={12} /> Test
+                <input class="input mono" bind:value={syncUrlPub} onchange={saveSync} onblur={saveSync} placeholder="https://cortex.example.com" />
+                <button class="btn" onclick={testSync} disabled={syncTestState === "testing" || !anySyncUrl}>
+                  <Icon name="refresh" size={12} /> Test all
                 </button>
               </div>
+              {#if syncReach.public !== undefined}<div class="set-row-d" style="color:{syncReach.public ? 'var(--ok)' : 'var(--err,#e5484d)'}">{syncReach.public ? "✓ reachable" : "✗ unreachable"}</div>{/if}
               {#if syncTestState === "fail"}
-                <div class="set-row-d" style="color:var(--err,#e5484d)">Unreachable or auth failed — check the URL and credentials.</div>
+                <div class="set-row-d" style="color:var(--err,#e5484d)">No endpoint reachable — check the URLs and credentials.</div>
               {:else if syncTestState === "ok"}
-                <div class="set-row-d" style="color:var(--ok)">Reachable.</div>
+                <div class="set-row-d" style="color:var(--ok)">At least one endpoint reachable.</div>
               {/if}
             </div>
             <div class="set-row stacked">
