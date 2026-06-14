@@ -132,11 +132,23 @@
   // ── bulk source selection ───────────────────────────────────────
   let sel = $state<Record<string, boolean>>({});
   const selIds = $derived(Object.keys(sel).filter((k) => sel[k]));
+  // Selection mode: once anything is selected, clicking a tile (not just its
+  // checkbox) toggles selection instead of opening the source.
+  const selecting = $derived(selIds.length > 0);
   function toggleSel(id: string, e: Event) {
     e.stopPropagation();
     sel = { ...sel, [id]: !sel[id] };
   }
+  // Tile click while in selection mode → toggle; otherwise open.
+  function tileClick(src: Source) {
+    if (selecting) sel = { ...sel, [src.id]: !sel[src.id] };
+    else app.openSource(src);
+  }
   function clearSel() { sel = {}; }
+  const allSelected = $derived(srcList.length > 0 && selIds.length === srcList.length);
+  function selectAll() {
+    sel = allSelected ? {} : Object.fromEntries(srcList.map((s) => [s.id, true]));
+  }
   const moveTargets = $derived([
     ...(subj?.topics ?? []).map((t) => ({ id: t.id, label: "→ " + t.name })),
     { id: "__none__", label: "→ no topic" },
@@ -229,6 +241,11 @@
             <div class="sources-toolbar">
               <span class="label">{srcList.length} {srcList.length === 1 ? "source" : "sources"} · {groups.length} {groups.length === 1 ? "group" : "groups"}</span>
               <div class="grow"></div>
+              {#if srcList.length > 0}
+                <button class="btn btn--sm btn--ghost" onclick={selectAll} title="Select all sources">
+                  <Icon name="check" size={12} /> {allSelected ? "Deselect all" : "Select all"}
+                </button>
+              {/if}
               <button class="btn btn--sm btn--ghost" onclick={addTopic}>
                 <Icon name="plus" size={12} /> Add topic
               </button>
@@ -296,9 +313,9 @@
                       class:is-sel={!!sel[src.id]}
                       role="button"
                       tabindex="0"
-                      onclick={() => app.openSource(src)}
-                      onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); app.openSource(src); } }}
-                      title="Open source"
+                      onclick={() => tileClick(src)}
+                      onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); tileClick(src); } }}
+                      title={selecting ? "Toggle selection" : "Open source"}
                     >
                       <div class="stl-top">
                         <button
