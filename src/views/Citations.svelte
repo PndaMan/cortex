@@ -5,6 +5,10 @@
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
   import DatePicker from "../components/DatePicker.svelte";
+  import BoardView from "./BoardView.svelte";
+
+  // Assignments display: kanban board (default) or the detailed list.
+  let aView = $state<"board" | "list">("board");
 
   const subjectId = $derived(app.activeSubject?.id ?? null);
 
@@ -246,6 +250,10 @@
             {assignments.length} {assignments.length === 1 ? "assignment" : "assignments"}{#if overdueCount} · {overdueCount} overdue{/if}
           </span>
         {/if}
+        <div class="cit-view-seg mono" role="group" aria-label="Assignments view">
+          <button class={aView === "board" ? "on" : ""} onclick={() => (aView = "board")}>Board</button>
+          <button class={aView === "list" ? "on" : ""} onclick={() => (aView = "list")}>List</button>
+        </div>
       </div>
 
       <div class="cit-assign-form">
@@ -291,7 +299,9 @@
         {/if}
       </div>
 
-      {#if assignments.length === 0}
+      {#if aView === "board"}
+        <div class="cit-board-wrap"><BoardView /></div>
+      {:else if assignments.length === 0}
         <p class="mono faint cit-empty">No upcoming assignments.</p>
       {:else}
         <ul class="cit-deadlines">
@@ -469,6 +479,12 @@
 
   /* assignments */
   .cit-summary { font-size: var(--t-xs); margin-left: 2px; }
+  .cit-view-seg { margin-left: auto; display: inline-flex; border: 1px solid var(--border); border-radius: var(--rad-2); overflow: hidden; flex: none; }
+  .cit-view-seg button { padding: 5px 11px; font-size: var(--t-xs); background: transparent; border: none; color: var(--fg-muted); cursor: pointer; border-right: 1px solid var(--border); }
+  .cit-view-seg button:last-child { border-right: none; }
+  .cit-view-seg button.on { background: var(--accent); color: var(--bg); }
+  /* The embedded board needs an explicit height (BoardView fills its parent). */
+  .cit-board-wrap { height: 60vh; min-height: 420px; margin-top: 4px; }
   .cit-assign-form { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: var(--rad-3); background: var(--surface); padding: 11px 12px; }
   .cit-assign-row1, .cit-assign-row2 { display: flex; gap: 8px; align-items: center; }
   .cit-assign-row1 .input { flex: 1; }
