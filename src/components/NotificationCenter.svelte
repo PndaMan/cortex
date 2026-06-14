@@ -31,12 +31,7 @@
 
   function activate(n: NotifItem) {
     app.markNotificationRead(n.id);
-    if (!n.url && n.subjectId) {
-      app.openSubject(n.subjectId);
-      app.openSubjectPanel();
-      app.notifOpen = false;
-    }
-    // With a url, the surrounding <a> opens Moodle in the browser.
+    app.openDetail(n); // themed in-app reader (with an "Open in Moodle" link)
   }
 
   function onKey(e: KeyboardEvent) {
@@ -98,14 +93,7 @@
 {/if}
 
 {#snippet item(n: NotifItem)}
-  <a
-    class="nc-item"
-    class:unread={!isRead(n)}
-    href={n.url || undefined}
-    target={n.url ? "_blank" : undefined}
-    rel="noreferrer"
-    onclick={() => activate(n)}
-  >
+  <button class="nc-item" class:unread={!isRead(n)} onclick={() => activate(n)}>
     <span class="nc-dot" class:on={!isRead(n)} aria-hidden="true"></span>
     <span class="nc-ic"><Icon name={iconFor(n.kind)} size={13} /></span>
     <span class="nc-main">
@@ -113,7 +101,7 @@
       <span class="nc-item-sub">{n.course}{n.course && n.kind !== "announcement" ? " · " : ""}{n.kind === "exam" ? "exam" : ""}</span>
     </span>
     <span class="nc-when mono" class:soon={n.kind !== "announcement" && n.ts - Date.now() < 3 * 86400000 && n.ts > Date.now()}>{when(n.ts)}</span>
-  </a>
+  </button>
 {/snippet}
 
 <style>
@@ -154,10 +142,10 @@
     color: var(--fg-faint); padding: 14px 16px 6px;
   }
   .nc-item {
-    display: flex; align-items: flex-start; gap: 9px;
-    padding: 9px 16px; text-decoration: none; color: inherit;
-    border-left: 2px solid transparent; cursor: pointer;
-    transition: background 0.1s;
+    display: flex; align-items: flex-start; gap: 9px; width: 100%;
+    padding: 9px 16px; text-decoration: none; color: inherit; text-align: left;
+    background: none; border: none; border-left: 2px solid transparent; cursor: pointer;
+    font: inherit; transition: background 0.1s;
   }
   .nc-item:hover { background: var(--surface-2); }
   .nc-item.unread { border-left-color: var(--accent); background: color-mix(in oklab, var(--accent) 6%, transparent); }

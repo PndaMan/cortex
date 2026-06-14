@@ -32,6 +32,8 @@ export interface NotifItem {
   message: string; // announcement body (HTML); empty for deadlines
   subjectId: string | null; // linked Cortex subject, if any
 }
+// A NotifItem opened in the shared themed detail reader (NotificationDetail).
+export type DetailView = NotifItem;
 export type Toast = {
   id: string;
   kind: "info" | "success" | "warning" | "error";
@@ -307,6 +309,11 @@ class AppStore {
   // state, persisted to localStorage (not the synced DB).
   notifOpen = $state(false);
   toggleNotifications() { this.notifOpen = !this.notifOpen; }
+  // Shared themed detail reader for an announcement/deadline (opened from the
+  // notification centre AND the subject panel, so they look identical).
+  detail = $state<DetailView | null>(null);
+  openDetail(d: DetailView) { this.detail = d; }
+  closeDetail() { this.detail = null; }
   moodleData = $state<api.MoodleData>({ courses: [], grades: [], deadlines: [], announcements: [] });
   notifReadIds = $state<Record<string, true>>({});
 
@@ -382,6 +389,7 @@ class AppStore {
     try {
       await api.moodleSync();
       await this.loadMoodleData();
+      this.notifyEventsChanged(); // sync mirrors deadlines into the calendar
     } catch (e) {
       this.pushToast({ kind: "error", title: "Moodle sync failed", body: String(e) });
     } finally {
@@ -400,6 +408,7 @@ class AppStore {
       await this.loadMoodleData();      // cached data first (instant badge)
       await api.moodleSync();           // refresh from Moodle
       await this.loadMoodleData();      // reload with fresh data
+      this.notifyEventsChanged();       // deadlines now mirrored into the calendar
     } catch { /* offline / not configured — silent */ }
   }
 

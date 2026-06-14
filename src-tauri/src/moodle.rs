@@ -709,6 +709,61 @@ pub async fn moodle_sync(app: AppHandle) -> Result<MoodleSummary> {
             }
         }
 
+        // --- mirror deadlines/exams into the Cortex calendar (events) ---
+        // Each synced deadline becomes a calendar event (id "moodle:<deadline-id>"),
+        // linked to the Cortex subject whose moodle_course_id matches. Upsert keeps
+        // user state (done/reminder) and created_at; assignments → tasks, exams →
+        // events. This is what makes Moodle deadlines show up on the calendar.
+        {
+            let c = state.db.lock().unwrap();
+            // course_id (text) → subject_id for linked subjects.
+            let mut course_subj: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            {
+                let mut st = c.prepare(
+                    "SELECT moodle_course_id, id FROM subjects \
+                     WHERE moodle_course_id IS NOT NULL AND moodle_course_id <> ''",
+                )?;
+                let rows = st.query_map([], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })?;
+                for row in rows.flatten() {
+                    course_subj.insert(row.0, row.1);
+                }
+            }
+            let deadlines: Vec<(String, String, String, i64, String)> = {
+                let mut st = c.prepare(
+                    "SELECT id, course_id, name, due_at, kind FROM moodle_deadlines",
+                )?;
+                let rows = st.query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                        r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                        r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                    ))
+                })?;
+                rows.filter_map(|x| x.ok()).collect()
+            };
+            for (did, course_id, name, due_at, kind) in deadlines {
+                if name.is_empty() || due_at == 0 {
+                    continue;
+                }
+                let ev_id = format!("moodle:{did}");
+                let subject_id = course_subj.get(&course_id).cloned();
+                let ev_kind = if kind == "exam" { "event" } else { "task" };
+                let start_ms = due_at * 1000;
+                c.execute(
+                    "INSERT INTO events (id, subject_id, title, description, start_ms, all_day, kind, done, notified, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, 'From Moodle', ?4, 0, ?5, 0, 0, ?6, ?6) \
+                     ON CONFLICT(id) DO UPDATE SET \
+                       subject_id=excluded.subject_id, title=excluded.title, \
+                       start_ms=excluded.start_ms, kind=excluded.kind, updated_at=excluded.updated_at",
+                    params![ev_id, subject_id, name, start_ms, ev_kind, now],
+                )?;
+            }
+        }
+
         {
             let c = state.db.lock().unwrap();
             repo::set_setting(&c, K_LAST_SYNC, &now.to_string())?;
