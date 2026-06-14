@@ -510,6 +510,8 @@ export const googleStatus = () => invoke<GoogleStatus>("google_status");
 export const googleConnect = () => invoke<GoogleStatus>("google_connect");
 export const googleDisconnect = () => invoke<GoogleStatus>("google_disconnect");
 export const googleSync = () => invoke<SyncResult>("google_sync");
+export interface GoogleCalendar { id: string; summary: string; primary: boolean; selected: boolean }
+export const googleListCalendars = () => invoke<GoogleCalendar[]>("google_list_calendars");
 
 // ---- in-app reader browsing (inside Web search) ----
 export interface PageLink { href: string; text: string }

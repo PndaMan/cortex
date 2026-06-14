@@ -181,6 +181,12 @@
 .st-id--clickable { cursor: pointer; border-radius: var(--rad-2); transition: background 0.12s; }
 .st-id--clickable:hover { background: var(--surface-2); }
 
+/* Google "Calendars to sync" checklist (Settings → Google Calendar) */
+.gcal-row { display: flex; align-items: center; gap: 10px; padding: 7px 2px; cursor: pointer; font-size: var(--t-sm); color: var(--fg); }
+.gcal-row:hover { color: var(--fg-bright); }
+.gcal-row input { accent-color: var(--accent); cursor: pointer; }
+.gcal-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* Moodle "Synced data" preview (Settings → Experimental) */
 .md-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; }
 .md-stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--rad-pill); padding: 3px 11px; font-size: var(--t-xs); color: var(--fg-faint); }

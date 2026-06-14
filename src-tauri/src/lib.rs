@@ -321,6 +321,7 @@ pub fn run() {
             google::google_connect,
             google::google_disconnect,
             google::google_sync,
+            google::google_list_calendars,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Cortex")

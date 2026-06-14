@@ -473,14 +473,29 @@
   $effect(() => {
     if (tab === "calendar" && gStatus === null) loadGoogle();
   });
+  let gCalendars = $state<api.GoogleCalendar[]>([]);
+  let gCalBusy = $state(false);
   async function loadGoogle() {
     try {
       gClientId = (await api.getSetting("google_client_id")) ?? "";
       gClientSecret = (await api.getSetting("google_client_secret")) ?? "";
       gStatus = await api.googleStatus();
+      if (gStatus.connected) void loadGoogleCalendars();
     } catch {
       gStatus = { connected: false, email: null, configured: false };
     }
+  }
+  async function loadGoogleCalendars() {
+    if (!gStatus?.connected) return;
+    gCalBusy = true;
+    try { gCalendars = await api.googleListCalendars(); }
+    catch (e) { app.pushToast({ kind: "error", title: "Couldn't list calendars", body: String(e) }); }
+    finally { gCalBusy = false; }
+  }
+  function toggleGoogleCal(id: string) {
+    gCalendars = gCalendars.map((c) => (c.id === id ? { ...c, selected: !c.selected } : c));
+    const csv = gCalendars.filter((c) => c.selected).map((c) => c.id).join(",");
+    api.setSettings({ google_pull_calendars: csv }).catch(() => {});
   }
   function saveGoogleCreds() {
     api.setSettings({
@@ -494,6 +509,7 @@
       saveGoogleCreds();
       gStatus = await api.googleConnect();
       app.pushToast({ kind: "success", title: "Google Calendar connected", body: gStatus.email ?? undefined });
+      void loadGoogleCalendars();
     } catch (e) {
       app.pushToast({ kind: "error", title: "Connect failed", body: String(e) });
     } finally {
@@ -1648,6 +1664,32 @@ Notes: {about}</pre>
             </div>
           </div>
         </section>
+
+        {#if gStatus?.connected}
+          <section class="set-group">
+            <div class="set-group-h">
+              <h3 class="set-group-t">Calendars to sync</h3>
+              <p class="set-group-d">Pick which Google calendars to pull events from — tick your <strong>university / timetable</strong> calendar here so its classes, deadlines and exams land on the Cortex calendar.</p>
+            </div>
+            <div class="set-card">
+              {#if gCalBusy && gCalendars.length === 0}
+                <div class="set-row"><div class="set-row-d faint">Loading calendars…</div></div>
+              {:else if gCalendars.length === 0}
+                <div class="set-row">
+                  <div class="set-row-l"><div class="set-row-d faint">No calendars found.</div></div>
+                  <div class="set-row-r"><button class="btn btn--sm" onclick={loadGoogleCalendars}>Reload</button></div>
+                </div>
+              {:else}
+                {#each gCalendars as cal (cal.id)}
+                  <label class="gcal-row">
+                    <input type="checkbox" checked={cal.selected} onchange={() => toggleGoogleCal(cal.id)} />
+                    <span class="gcal-name">{cal.summary}{cal.primary ? " (primary)" : ""}</span>
+                  </label>
+                {/each}
+              {/if}
+            </div>
+          </section>
+        {/if}
 
         <section class="set-group">
           <div class="set-group-h">

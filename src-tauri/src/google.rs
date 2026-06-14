@@ -404,6 +404,85 @@ pub async fn google_status(app: AppHandle) -> Result<GoogleStatus> {
     .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
+/// One calendar in the user's Google calendar list, for the sync-selection UI.
+#[derive(serde::Serialize)]
+pub struct GoogleCalendar {
+    pub id: String,
+    pub summary: String,
+    pub primary: bool,
+    pub selected: bool,
+}
+
+/// List the connected account's calendars so the user can choose which ones to
+/// pull (e.g. a separate university timetable calendar). `selected` reflects the
+/// saved `google_pull_calendars` set (defaulting to the primary/push calendar).
+#[tauri::command]
+pub async fn google_list_calendars(app: AppHandle) -> Result<Vec<GoogleCalendar>> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<GoogleCalendar>> {
+        let state = app.state::<AppState>();
+        let (client_id, client_secret, cal_id, selected_csv) = {
+            let c = state.db.lock().unwrap();
+            let (id, secret) = client_creds(&c)?.ok_or_else(|| {
+                Error::Other("Google Calendar is not configured — add credentials in Settings.".into())
+            })?;
+            (
+                id,
+                secret,
+                calendar_id(&c)?,
+                setting(&c, "google_pull_calendars")?.unwrap_or_default(),
+            )
+        };
+        let access = {
+            let c = state.db.lock().unwrap();
+            valid_access_token(&c, &client_id, &client_secret)?
+        };
+        let selected: std::collections::HashSet<String> = selected_csv
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        // No explicit selection yet → the push/primary calendar is implicitly on.
+        let default_on = selected.is_empty();
+
+        let client = http_client(30);
+        let resp = client
+            .get("https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250")
+            .bearer_auth(&access)
+            .send()?;
+        let status = resp.status();
+        let json: serde_json::Value = resp.json().unwrap_or(serde_json::Value::Null);
+        if !status.is_success() {
+            let msg = json
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("calendar list failed");
+            return Err(Error::Other(format!("Could not list Google calendars: {msg}")));
+        }
+        let mut out = Vec::new();
+        if let Some(items) = json.get("items").and_then(|v| v.as_array()) {
+            for cal in items {
+                let id = cal.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if id.is_empty() {
+                    continue;
+                }
+                let primary = cal.get("primary").and_then(|v| v.as_bool()).unwrap_or(false);
+                let summary = cal
+                    .get("summaryOverride")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| cal.get("summary").and_then(|v| v.as_str()))
+                    .unwrap_or("(unnamed)")
+                    .to_string();
+                let sel = selected.contains(&id) || (default_on && (primary || id == cal_id));
+                out.push(GoogleCalendar { id, summary, primary, selected: sel });
+            }
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+}
+
 /// Run the installed-app OAuth loopback flow: open the consent page in the
 /// browser, capture the redirect on a one-shot localhost listener, exchange the
 /// code for tokens, and store them. Returns the resulting status.
@@ -536,67 +615,76 @@ pub async fn google_sync(app: AppHandle) -> Result<SyncResult> {
         let client = http_client(30);
 
         // ---- PULL ----------------------------------------------------
-        // Events updated/occurring from 30 days ago onward, expanded to single
-        // instances so recurring events map to concrete start/end times.
-        let time_min = format_rfc3339_utc(now_ms() - 30 * 86_400 * 1_000);
-        let url = format!(
-            "https://www.googleapis.com/calendar/v3/calendars/{}/events?singleEvents=true&maxResults=250&orderBy=startTime&timeMin={}",
-            pct(&cal_id),
-            pct(&time_min),
-        );
-        let resp = client.get(&url).bearer_auth(&access).send()?;
-        let status = resp.status();
-        let json: serde_json::Value = resp.json().unwrap_or(serde_json::Value::Null);
-        if !status.is_success() {
-            let msg = json
-                .get("error")
-                .and_then(|e| e.get("message"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("calendar list failed");
-            return Err(Error::Other(format!("Google Calendar pull failed: {msg}")));
-        }
-
-        let mut pulled = 0i64;
-        if let Some(items) = json.get("items").and_then(|v| v.as_array()) {
+        // Pull from every calendar the user selected (so a separate "university"
+        // calendar syncs too), defaulting to just the push calendar. Events from
+        // 30 days ago onward, expanded to single instances.
+        let pull_ids: Vec<String> = {
             let c = state.db.lock().unwrap();
-            for ev in items {
-                // Skip cancelled events.
-                if ev.get("status").and_then(|v| v.as_str()) == Some("cancelled") {
-                    continue;
+            let csv = setting(&c, "google_pull_calendars")?.unwrap_or_default();
+            let ids: Vec<String> = csv
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if ids.is_empty() { vec![cal_id.clone()] } else { ids }
+        };
+        let time_min = format_rfc3339_utc(now_ms() - 30 * 86_400 * 1_000);
+        let mut pulled = 0i64;
+        for pull_id in &pull_ids {
+            let url = format!(
+                "https://www.googleapis.com/calendar/v3/calendars/{}/events?singleEvents=true&maxResults=250&orderBy=startTime&timeMin={}",
+                pct(pull_id),
+                pct(&time_min),
+            );
+            let resp = client.get(&url).bearer_auth(&access).send()?;
+            let status = resp.status();
+            let json: serde_json::Value = resp.json().unwrap_or(serde_json::Value::Null);
+            if !status.is_success() {
+                // One calendar failing (e.g. lost access) shouldn't abort the whole
+                // sync — skip it and keep going.
+                continue;
+            }
+            if let Some(items) = json.get("items").and_then(|v| v.as_array()) {
+                let c = state.db.lock().unwrap();
+                for ev in items {
+                    // Skip cancelled events.
+                    if ev.get("status").and_then(|v| v.as_str()) == Some("cancelled") {
+                        continue;
+                    }
+                    let Some(gid) = ev.get("id").and_then(|v| v.as_str()) else {
+                        continue;
+                    };
+                    let title = ev
+                        .get("summary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(untitled)")
+                        .to_string();
+                    let description = ev.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let location = ev.get("location").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+                    // start/end: either { dateTime } (timed) or { date } (all-day).
+                    let (start_ms, all_day) = match parse_endpoint(ev.get("start")) {
+                        Some(v) => v,
+                        None => continue, // no usable start — skip rather than guess
+                    };
+                    let end_ms = parse_endpoint(ev.get("end")).map(|(ms, _)| ms);
+
+                    repo::upsert_event_by_google_id(
+                        &c,
+                        gid,
+                        None, // subject_id — pulled events aren't auto-filed to a subject
+                        &title,
+                        description.as_deref(),
+                        location.as_deref(),
+                        None, // color
+                        start_ms,
+                        end_ms,
+                        all_day,
+                        "event",
+                        None, // reminder_ms
+                    )?;
+                    pulled += 1;
                 }
-                let Some(gid) = ev.get("id").and_then(|v| v.as_str()) else {
-                    continue;
-                };
-                let title = ev
-                    .get("summary")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("(untitled)")
-                    .to_string();
-                let description = ev.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let location = ev.get("location").and_then(|v| v.as_str()).map(|s| s.to_string());
-
-                // start/end: either { dateTime } (timed) or { date } (all-day).
-                let (start_ms, all_day) = match parse_endpoint(ev.get("start")) {
-                    Some(v) => v,
-                    None => continue, // no usable start — skip rather than guess
-                };
-                let end_ms = parse_endpoint(ev.get("end")).map(|(ms, _)| ms);
-
-                repo::upsert_event_by_google_id(
-                    &c,
-                    gid,
-                    None, // subject_id — pulled events aren't auto-filed to a subject
-                    &title,
-                    description.as_deref(),
-                    location.as_deref(),
-                    None, // color
-                    start_ms,
-                    end_ms,
-                    all_day,
-                    "event",
-                    None, // reminder_ms
-                )?;
-                pulled += 1;
             }
         }
 
