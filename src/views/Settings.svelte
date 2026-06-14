@@ -227,8 +227,15 @@
       e.stopImmediatePropagation();
       const k = e.key === "Escape" ? null : e.key;
       if (k && listening) {
-        const ok = keybinds.set(listening, k); // persists + applies live
-        if (!ok) {
+        const action = listening;
+        const ok = keybinds.set(action, k); // persists + applies live
+        if (ok) {
+          app.pushToast({
+            kind: "success",
+            title: "Keybind updated",
+            body: `${ACTION_LABELS[action]} → “${k === " " ? "Space" : k}”. Takes effect outside this screen.`,
+          });
+        } else {
           app.pushToast({
             kind: "warning",
             title: "Key already in use",
@@ -1233,7 +1240,7 @@ Notes: {about}</pre>
                     type="button"
                     class={"seg-opt" + (keybinds.preset === opt.id ? " on" : "")}
                     disabled={opt.id === "custom"}
-                    onclick={() => { if (opt.id === "helix" || opt.id === "vim") keybinds.applyPreset(opt.id); }}
+                    onclick={() => { if (opt.id === "helix" || opt.id === "vim") { keybinds.applyPreset(opt.id); app.pushToast({ kind: "success", title: `${opt.label} keybinds applied`, body: "Shortcuts take effect outside this screen." }); } }}
                   >{opt.label}</button>
                 {/each}
               </div>
