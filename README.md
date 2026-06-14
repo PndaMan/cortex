@@ -142,7 +142,7 @@ bun run tauri build
 | Lecture transcription | local [`openai-whisper`](https://github.com/openai/whisper) / whisper.cpp / auto `faster-whisper`, **or** a homelab Whisper URL | set the Whisper URL in Settings → Integrations to skip local setup |
 | Web search / images | a self-hosted [SearXNG](https://docs.searxng.org/) with JSON output enabled | set its URL in Settings |
 | Local models | [Ollama](https://ollama.com) (local or homelab) | keyless chat + embeddings |
-| Slide previews | LibreOffice (`soffice`) | renders PPTX/DOCX to PDF |
+| Slide previews (optional) | LibreOffice (`soffice`) | DOCX/PPTX **text ingests natively with no tools**; LibreOffice is only needed for the faithful rendered-PDF preview. On Windows/macOS you don't have to install it — the doc still ingests, just without slide thumbnails. |
 | PDF text | `pdftotext` (poppler) | faster & cleaner than OCR |
 | YouTube + music | [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) (**bundled**) + [`mpv`](https://mpv.io/) for playback | yt-dlp ships with the app; mpv still system-installed |
 | Encrypted backups | [`age`](https://github.com/FiloSottile/age) + [`rclone`](https://rclone.org/) (**both bundled**) | configure in Settings → Backups |

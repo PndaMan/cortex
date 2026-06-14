@@ -721,22 +721,29 @@ pub async fn add_source(
         }
     };
 
-    // 2b. pptx/docx: render a PDF for inline slide preview, overriding the
-    //     stored original-bytes path so the frontend shows PDF pages. A failed
-    //     render is a hard error (don't silently ship a half-ingested source).
+    // 2b. pptx/docx: best-effort PDF render for an inline slide preview. The text
+    //     is already extracted natively (no tools needed), so this is purely
+    //     cosmetic — if no office→PDF converter (LibreOffice) is installed, we
+    //     skip it and keep the original file as the stored path. This means
+    //     Windows/macOS users never have to install LibreOffice just to ingest.
     if matches!(kind.as_str(), "pptx" | "docx") {
         if let Some(src_path) = input.path.as_deref() {
-            emit_progress(&app, &source_id, "parsing", "rendering slides to PDF", 25);
-            let pdf_dest = sources_dir.join(format!("{source_id}.pdf"));
-            if let Err(e) = ingest::libreoffice_to_pdf(src_path, &pdf_dest) {
-                let c = state.db.lock().unwrap();
-                let _ = repo::finalize_source(&c, &source_id, "error", None, None, Some(&e.to_string()));
-                emit_progress(&app, &source_id, "error", &e.to_string(), 100);
-                return Err(e);
-            }
-            if let Some(p) = pdf_dest.to_str() {
-                let c = state.db.lock().unwrap();
-                repo::set_stored_path(&c, &source_id, p)?;
+            if ingest::office_converter_available() {
+                emit_progress(&app, &source_id, "parsing", "rendering slides to PDF", 25);
+                let pdf_dest = sources_dir.join(format!("{source_id}.pdf"));
+                match ingest::libreoffice_to_pdf(src_path, &pdf_dest) {
+                    Ok(()) => {
+                        if let Some(p) = pdf_dest.to_str() {
+                            let c = state.db.lock().unwrap();
+                            repo::set_stored_path(&c, &source_id, p)?;
+                        }
+                    }
+                    // Converter present but render failed — don't fail ingestion;
+                    // the source is still fully usable from its extracted text.
+                    Err(e) => {
+                        eprintln!("slide preview render failed for {source_id}: {e}");
+                    }
+                }
             }
         }
     }

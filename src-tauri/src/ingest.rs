@@ -76,7 +76,13 @@ pub fn parse(kind: &str, input: &AddSourceInput) -> Result<(String, Option<Strin
                 .path
                 .as_deref()
                 .ok_or_else(|| Error::Other(format!("{kind} source needs a file path")))?;
-            libreoffice_to_text(p)
+            // Native OOXML extraction first (no external tools). Fall back to
+            // LibreOffice only for legacy binary .doc/.ppt (not zip-based) or if
+            // the native pass yields nothing.
+            match ooxml_to_text(p) {
+                Ok(t) if !t.trim().is_empty() => Ok((t, None)),
+                _ => libreoffice_to_text(p),
+            }
         }
         "yt" => {
             let url = input
@@ -396,6 +402,73 @@ fn libreoffice_bin() -> String {
         }
     }
     "libreoffice".to_string()
+}
+
+/// Is an office→PDF converter (LibreOffice) available? Used to decide whether to
+/// attempt a faithful slide-preview render — when it isn't, ingestion still
+/// succeeds via native text extraction, just without the rendered PDF preview.
+pub fn office_converter_available() -> bool {
+    which("libreoffice").is_some() || which("soffice").is_some()
+}
+
+/// Extract text from a `.docx`/`.pptx` natively (they're just zip + XML) so
+/// office documents ingest on every OS with **no external tool** — Windows and
+/// macOS users don't need LibreOffice. Legacy binary `.doc`/`.ppt` aren't
+/// zip-based, so this returns `Err` for them and the caller falls back to
+/// LibreOffice. Paragraph (`</w:p>`, `</a:p>`) and slide boundaries become
+/// newlines so the extracted text stays readable and chunkable.
+pub fn ooxml_to_text(path: &str) -> Result<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)?;
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|e| Error::Other(format!("{path} is not a valid OOXML (zip) file: {e}")))?;
+
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Which XML parts hold the body text, in reading order.
+    let parts: Vec<String> = if ext == "docx" {
+        vec!["word/document.xml".to_string()]
+    } else {
+        let mut slides: Vec<String> = (0..zip.len())
+            .filter_map(|i| zip.by_index(i).ok().map(|f| f.name().to_string()))
+            .filter(|n| n.starts_with("ppt/slides/slide") && n.ends_with(".xml"))
+            .collect();
+        // slide2.xml before slide10.xml — sort by the embedded number, not lexically.
+        slides.sort_by_key(|n| {
+            n.trim_start_matches("ppt/slides/slide")
+                .trim_end_matches(".xml")
+                .parse::<u32>()
+                .unwrap_or(u32::MAX)
+        });
+        slides
+    };
+
+    // A run of text is <w:t>…</w:t> (Word) or <a:t>…</a:t> (PowerPoint); a
+    // paragraph end (</w:p> / </a:p>) becomes a newline.
+    let re = regex::Regex::new(r"(?s)<(?:w|a):t[^>]*>(.*?)</(?:w|a):t>|</(?:w|a):p>").unwrap();
+    let mut out = String::new();
+    for part in &parts {
+        let mut xml = String::new();
+        if let Ok(mut f) = zip.by_name(part) {
+            if f.read_to_string(&mut xml).is_err() {
+                continue;
+            }
+        } else {
+            continue;
+        }
+        for cap in re.captures_iter(&xml) {
+            match cap.get(1) {
+                Some(m) => out.push_str(&decode_entities(m.as_str())),
+                None => out.push('\n'),
+            }
+        }
+        out.push_str("\n\n"); // blank line between slides / the document body
+    }
+    Ok(out.trim().to_string())
 }
 
 /// A `-env:UserInstallation` arg pointing at a throwaway profile inside `outdir`.
@@ -738,6 +811,53 @@ mod tests {
     #[test]
     fn chunker_empty_input() {
         assert!(chunk_text("   ", 100, 10).is_empty());
+    }
+
+    #[test]
+    fn ooxml_text_extraction_docx_and_pptx_no_tools() {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let dir = std::env::temp_dir().join(format!("cortex-ooxml-test-{}", crate::db::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Minimal .docx: two paragraphs with an escaped ampersand.
+        let docx = dir.join("doc.docx");
+        {
+            let mut zw = zip::ZipWriter::new(std::fs::File::create(&docx).unwrap());
+            zw.start_file("word/document.xml", SimpleFileOptions::default()).unwrap();
+            zw.write_all(
+                br#"<?xml version="1.0"?><w:document><w:body>
+                <w:p><w:r><w:t>Hello</w:t></w:r><w:r><w:t xml:space="preserve"> world</w:t></w:r></w:p>
+                <w:p><w:r><w:t>Cats &amp; dogs</w:t></w:r></w:p>
+                </w:body></w:document>"#,
+            ).unwrap();
+            zw.finish().unwrap();
+        }
+        let dtext = ooxml_to_text(docx.to_str().unwrap()).unwrap();
+        assert!(dtext.contains("Hello world"), "docx text: {dtext:?}");
+        assert!(dtext.contains("Cats & dogs"), "entity decode: {dtext:?}");
+
+        // Minimal .pptx: two slides, slide10 must sort after slide2.
+        let pptx = dir.join("deck.pptx");
+        {
+            let mut zw = zip::ZipWriter::new(std::fs::File::create(&pptx).unwrap());
+            for (n, body) in [(2u32, "Second"), (10u32, "Tenth")] {
+                zw.start_file(format!("ppt/slides/slide{n}.xml"), SimpleFileOptions::default()).unwrap();
+                zw.write_all(format!(r#"<p:sld><a:p><a:r><a:t>{body}</a:t></a:r></a:p></p:sld>"#).as_bytes()).unwrap();
+            }
+            zw.finish().unwrap();
+        }
+        let ptext = ooxml_to_text(pptx.to_str().unwrap()).unwrap();
+        assert!(ptext.contains("Second") && ptext.contains("Tenth"), "pptx text: {ptext:?}");
+        assert!(ptext.find("Second").unwrap() < ptext.find("Tenth").unwrap(), "slide order: {ptext:?}");
+
+        // A non-OOXML file (legacy binary) errors so the caller falls back to LibreOffice.
+        let doc = dir.join("legacy.doc");
+        std::fs::write(&doc, b"\xD0\xCF\x11\xE0 not a zip").unwrap();
+        assert!(ooxml_to_text(doc.to_str().unwrap()).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
