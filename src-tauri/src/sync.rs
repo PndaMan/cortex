@@ -183,6 +183,39 @@ pub async fn sync_pull(app: AppHandle) -> Result<bool> {
     .map_err(|e| Error::Other(format!("sync pull task failed: {e}")))?
 }
 
+/// Whether a `settings` key is a device-independent PREFERENCE that's safe to
+/// sync across devices. The `settings` table is otherwise excluded from sync
+/// because it also holds credentials + device-specific endpoints/state. This is
+/// an allowlist with a hard credential guard — API keys, tokens and URLs never
+/// sync, even if a future key sneaks into an allowlisted group.
+fn is_syncable_setting(key: &str) -> bool {
+    // Hard exclusions first (credentials, device endpoints, device-local state).
+    const BLOCK_SUBSTR: &[&str] = &["_key", "token", "secret", "password", "_url"];
+    if BLOCK_SUBSTR.iter().any(|b| key.contains(b)) {
+        return false;
+    }
+    const BLOCK_PREFIX: &[&str] = &[
+        "sync", "moodle", "google", "last_", "homelab", "tailscale", "whisper",
+        "searxng", "ollama", "offline",
+    ];
+    if BLOCK_PREFIX.iter().any(|p| key.starts_with(p)) {
+        return false;
+    }
+    // Allowlisted preference groups: keybinds, model/budget choices, pomodoro,
+    // profile fields.
+    const ALLOW_PREFIX: &[&str] = &["keybind_", "model_", "budget_", "pomo_", "profile_"];
+    if ALLOW_PREFIX.iter().any(|p| key.starts_with(p)) {
+        return true;
+    }
+    // Allowlisted standalone preferences.
+    const ALLOW_EXACT: &[&str] = &[
+        "theme", "follow_omarchy", "reading_font", "density", "default_station",
+        "autoplay", "web_images_enabled", "exp_moodle", "cs_memory", "station_favs",
+        "host_voices",
+    ];
+    ALLOW_EXACT.contains(&key)
+}
+
 /// Names of user tables to merge (everything except internal/never-merged ones).
 fn user_tables(conn: &Connection, schema: &str) -> Result<Vec<String>> {
     let mut st = conn.prepare(&format!(
@@ -312,6 +345,28 @@ fn merge_attached(conn: &Connection, remote: &Path) -> Result<()> {
                    WHERE entity_table='{t}' AND entity_id=main.\"{t}\".id)"
             );
             conn.execute(&sql, [])?;
+        }
+    }
+
+    // Selectively merge PREFERENCE settings (theme, keybinds, model choices,
+    // profile, pomodoro, …). The `settings` table is excluded from the table loop
+    // above because it also holds creds/endpoints; here we copy only allowlisted,
+    // device-independent keys. No per-key timestamp exists, so this is
+    // last-push-wins — fine for preferences.
+    if has_table(conn, "rmt", "settings") {
+        let pairs: Vec<(String, String)> = {
+            let mut st = conn.prepare("SELECT key, value FROM rmt.settings")?;
+            let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        for (k, v) in pairs {
+            if is_syncable_setting(&k) {
+                conn.execute(
+                    "INSERT INTO main.settings (key, value) VALUES (?1, ?2) \
+                     ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    rusqlite::params![k, v],
+                )?;
+            }
         }
     }
 
@@ -521,6 +576,27 @@ mod tests {
     use super::*;
     use crate::db::{now_ms, AppState};
     use std::fs;
+
+    #[test]
+    fn syncable_settings_never_include_credentials() {
+        // Credentials & device endpoints must NEVER sync across devices.
+        for k in [
+            "gemini_api_key", "openrouter_api_key", "openai_api_key", "claude_api_key",
+            "moodle_token", "moodle_userid", "moodle_url", "ollama_url", "searxng_url",
+            "whisper_url", "sync_url", "sync_enabled", "google_calendar_token",
+            "last_subject_id", "offline_mode",
+        ] {
+            assert!(!is_syncable_setting(k), "{k} must not sync");
+        }
+        // Preferences SHOULD sync.
+        for k in [
+            "theme", "density", "reading_font", "keybind_cmdk", "keybind_preset",
+            "model_chat", "budget_cheatsheet", "pomo_workMin", "profile_name",
+            "default_station", "web_images_enabled", "cs_memory",
+        ] {
+            assert!(is_syncable_setting(k), "{k} should sync");
+        }
+    }
 
     fn ins(c: &Connection, id: &str, name: &str, upd: i64) {
         c.execute(
