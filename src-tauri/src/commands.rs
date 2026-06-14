@@ -91,7 +91,9 @@ pub(crate) fn read_keys(c: &Connection) -> Result<llm::Keys> {
         openai: key("openai_api_key")?,
         claude: key("claude_api_key")?,
         custom_endpoint: key("custom_endpoint")?,
-        ollama_url: key("ollama_url")?,
+        // Resolve through the homelab fallback chain so Ollama chat also works
+        // over Tailscale/public, not just on the LAN.
+        ollama_url: crate::homelab::resolved_setting(c, "ollama_url"),
     })
 }
 
@@ -550,7 +552,7 @@ pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult>
             (
                 effective_embed_provider(&c),
                 repo::get_setting(&c, "gemini_api_key")?,
-                repo::get_setting(&c, "ollama_url")?,
+                crate::homelab::resolved_setting(&c, "ollama_url"),
             )
         };
         let embedder = embed::from_settings(&provider, gemini_key.as_deref(), ollama_url.as_deref());
@@ -744,7 +746,7 @@ pub async fn add_source(
         (
             effective_embed_provider(&c),
             repo::get_setting(&c, "gemini_api_key")?,
-            repo::get_setting(&c, "ollama_url")?,
+            crate::homelab::resolved_setting(&c, "ollama_url"),
         )
     };
     let embedder = embed::from_settings(&provider, gemini_key.as_deref(), ollama_url.as_deref());
@@ -841,7 +843,7 @@ pub fn search_chunks(
         (
             effective_embed_provider(&c),
             repo::get_setting(&c, "gemini_api_key")?,
-            repo::get_setting(&c, "ollama_url")?,
+            crate::homelab::resolved_setting(&c, "ollama_url"),
         )
     };
     let embedder = embed::from_settings(&provider, gemini_key.as_deref(), ollama_url.as_deref());
@@ -866,7 +868,7 @@ pub fn global_search(state: State<AppState>, query: String) -> Result<Vec<Search
         (
             effective_embed_provider(&c),
             repo::get_setting(&c, "gemini_api_key")?,
-            repo::get_setting(&c, "ollama_url")?,
+            crate::homelab::resolved_setting(&c, "ollama_url"),
         )
     };
     let mut hits: Vec<SearchHit> = Vec::new();
@@ -1044,7 +1046,7 @@ pub async fn chat_answer(
         guard_offline_llm(&c, &chat_spec)?;
         (
             effective_embed_provider(&c),
-            repo::get_setting(&c, "ollama_url")?,
+            crate::homelab::resolved_setting(&c, "ollama_url"),
             chat_spec,
             read_keys(&c)?,
             profile_preamble(&c)?,
@@ -2696,11 +2698,8 @@ pub fn set_settings(state: State<AppState>, values: std::collections::HashMap<St
 /// The configured homelab Whisper base URL, if any (empty → None).
 fn whisper_remote_url(state: &AppState) -> Option<String> {
     let c = state.db.lock().ok()?;
-    repo::get_setting(&c, "whisper_url")
-        .ok()
-        .flatten()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    // Resolve through the homelab fallback chain (local → Tailscale → public).
+    crate::homelab::resolved_setting(&c, "whisper_url")
 }
 
 /// Restrict a client-supplied audio extension to known containers so it can't
@@ -3136,7 +3135,7 @@ pub async fn save_recording(
         (
             effective_embed_provider(&c),
             repo::get_setting(&c, "gemini_api_key")?,
-            repo::get_setting(&c, "ollama_url")?,
+            crate::homelab::resolved_setting(&c, "ollama_url"),
         )
     };
     let embedder = embed::from_settings(&embed_provider, gemini_key.as_deref(), ollama_url.as_deref());
@@ -3304,11 +3303,10 @@ pub async fn web_search(
     .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
-/// Configured SearXNG base URL (trailing slash trimmed), or None if unset.
+/// Configured SearXNG base URL (resolved through the homelab fallback chain:
+/// local → Tailscale → public), or None if unset.
 fn searxng_base(c: &Connection) -> Result<Option<String>> {
-    Ok(repo::get_setting(c, "searxng_url")?
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.trim_end_matches('/').to_string()))
+    Ok(crate::homelab::resolved_setting(c, "searxng_url"))
 }
 
 /// Raw SearXNG JSON `results` array for a query + category.

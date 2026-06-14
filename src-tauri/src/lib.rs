@@ -11,6 +11,7 @@ mod embed;
 mod error;
 mod exam;
 mod google;
+mod homelab;
 mod ingest;
 mod llm;
 mod models;

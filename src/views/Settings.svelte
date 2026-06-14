@@ -271,6 +271,16 @@
     whisperState = await testEndpoint(whisperUrl);
   }
 
+  // ---- global homelab access (Tailscale / public bases shared by all services) ----
+  let hlTailscale = $state("");
+  let hlPublic    = $state("");
+  function saveHomelabBases() {
+    api.setSettings({
+      homelab_tailscale_base: hlTailscale.trim(),
+      homelab_public_base: hlPublic.trim(),
+    }).catch(() => {});
+  }
+
   // ---- live homelab sync (smart per-record merge + binary file sync) ----
   // Three endpoint tiers tried in order (auto): local LAN → Tailscale → public.
   let syncUrl   = $state(""); // local / LAN
@@ -756,6 +766,8 @@
       if (s.searxng_url)                   searxng  = s.searxng_url;
       if (s.whisper_url)                   whisperUrl = s.whisper_url;
       // Live sync
+      if (s.homelab_tailscale_base) hlTailscale = s.homelab_tailscale_base;
+      if (s.homelab_public_base)    hlPublic = s.homelab_public_base;
       if (s.sync_url)   syncUrl  = s.sync_url;
       if (s.sync_url_tailscale) syncUrlTs = s.sync_url_tailscale;
       if (s.sync_url_public)    syncUrlPub = s.sync_url_public;
@@ -1402,6 +1414,24 @@ Notes: {about}</pre>
           <h1 class="set-title">Local models, web search & backups</h1>
           <p class="set-sub">Optional, self-hosted services. Cortex stays fully local without any of them — or run them all with the <span class="mono">homelab/</span> docker compose.</p>
         </header>
+
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">Homelab access</h3>
+            <p class="set-group-d">Reach your homelab from anywhere. Each service below is configured with its <strong>local</strong> URL; if it's unreachable, Cortex retries the same service over <strong>Tailscale</strong>, then your <strong>public</strong> address — swapping just the host, keeping the port/path. Leave blank to stay local-only. (Live sync has its own explicit endpoints below.)</p>
+          </div>
+          <div class="set-card">
+            <div class="set-row stacked">
+              <div class="set-row-t">Tailscale base <span class="faint">optional</span></div>
+              <input class="input mono" bind:value={hlTailscale} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="http://homelab.tailnet-xxxx.ts.net" />
+              <div class="set-row-d">Scheme + host (no port) — e.g. your homelab's Tailscale MagicDNS name. Cortex keeps each service's own port.</div>
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">Public base <span class="faint">optional</span></div>
+              <input class="input mono" bind:value={hlPublic} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://lab.example.com" />
+            </div>
+          </div>
+        </section>
 
         {@render endpointService({
           title: "Local models (Ollama)",
