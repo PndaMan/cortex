@@ -202,6 +202,8 @@ pub fn run() {
             commands::create_subject,
             commands::update_subject,
             commands::delete_subject,
+            commands::archive_subject,
+            commands::list_archived_subjects,
             commands::create_topic,
             commands::update_topic,
             commands::delete_topic,

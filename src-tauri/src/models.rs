@@ -22,6 +22,9 @@ pub struct Subject {
     /// Comma-separated keywords for matching calendar event titles to this subject.
     #[serde(default)]
     pub calendar_aliases: Option<String>,
+    /// Archived subjects are hidden from all normal views but retained for storage.
+    #[serde(default)]
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

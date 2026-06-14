@@ -506,6 +506,7 @@
   $effect(() => {
     if (tab === "calendar" && gStatus === null) loadGoogle();
     if (tab === "homelab" && depReport === null) loadDeps();
+    if (tab === "data") loadArchived();
   });
 
   // ---- external dependency status ----
@@ -689,6 +690,15 @@
   // ---- data & privacy state ----
   let offlineMode = $state(false);
   let stats       = $state<api.DbStats | null>(null);
+  let archivedSubjects = $state<api.Subject[]>([]);
+
+  async function loadArchived() {
+    archivedSubjects = await app.listArchivedSubjects();
+  }
+  async function restoreSubject(id: string) {
+    await app.setSubjectArchived(id, false);
+    await Promise.all([loadArchived(), loadStats()]);
+  }
 
   function fmtBytes(n: number): string {
     if (n >= 1024 * 1024 * 1024) return (n / (1024 * 1024 * 1024)).toFixed(1) + " GB";
@@ -2018,6 +2028,32 @@ Notes: {about}</pre>
             </div>
           </div>
         </section>
+
+        {#if archivedSubjects.length}
+          <section class="set-group">
+            <div class="set-group-h">
+              <h3 class="set-group-t">Archived subjects</h3>
+              <p class="set-group-d">Hidden from the app, kept for storage. Restore any time.</p>
+            </div>
+            <div class="set-card">
+              {#each archivedSubjects as s (s.id)}
+                <div class="set-row">
+                  <div class="set-row-l">
+                    <div class="set-row-t">
+                      <span style="color:{app.subjectColor(s)}">{s.glyph}</span> {s.name}
+                    </div>
+                    <div class="set-row-d">
+                      {s.code ? s.code + " · " : ""}{s.sourceCount} source{s.sourceCount === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                  <div class="set-row-r">
+                    <button class="btn" onclick={() => restoreSubject(s.id)}>Restore</button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </section>
+        {/if}
 
         <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Manage</h3></div>

@@ -236,6 +236,18 @@ pub fn delete_subject(state: State<AppState>, id: String) -> Result<()> {
     repo::delete_subject(&c, &id)
 }
 
+#[tauri::command]
+pub fn archive_subject(state: State<AppState>, id: String, archived: bool) -> Result<()> {
+    let c = state.db.lock().unwrap();
+    repo::set_subject_archived(&c, &id, archived)
+}
+
+#[tauri::command]
+pub fn list_archived_subjects(state: State<AppState>) -> Result<Vec<Subject>> {
+    let c = state.db.lock().unwrap();
+    repo::list_archived_subjects(&c)
+}
+
 // ---- topics ------------------------------------------------------------
 
 #[tauri::command]

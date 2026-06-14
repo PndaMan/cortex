@@ -95,6 +95,19 @@
     app.closeEdit();
   }
 
+  async function archive() {
+    const t = app.editing;
+    if (!t || t.kind !== "subject") return;
+    const ok = await app.confirm({
+      title: `Archive "${t.name}"?`,
+      body: "It's hidden everywhere but its data is kept. Restore it any time from Settings → Data.",
+      okLabel: "Archive",
+    });
+    if (!ok) return;
+    await app.setSubjectArchived(t.id, true);
+    app.closeEdit();
+  }
+
   function onKey(e: KeyboardEvent) {
     if (!app.editing) return;
     e.stopPropagation();
@@ -186,6 +199,9 @@
 
       <div class="edit-actions">
         <button class="btn btn--danger btn--sm" type="button" style="margin-right:auto" onclick={del}>Delete</button>
+        {#if t.kind === "subject"}
+          <button class="btn btn--ghost btn--sm" type="button" onclick={archive}>Archive</button>
+        {/if}
         <button class="btn btn--ghost btn--sm" type="button" onclick={() => app.closeEdit()}>Cancel</button>
         <button class="btn btn--primary btn--sm" type="button" onclick={save}>Save</button>
       </div>

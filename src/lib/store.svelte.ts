@@ -1170,6 +1170,40 @@ class AppStore {
     }
   }
 
+  // Archive (hide everywhere, keep data) or restore a subject. Mirrors delete's
+  // active-subject handling so archiving the open subject doesn't strand the view.
+  async setSubjectArchived(id: string, archived: boolean) {
+    try {
+      await api.archiveSubject(id, archived);
+      const wasActive = this.activeSubjectId === id;
+      this.subjects = await api.listSubjects();
+      if (archived && wasActive) {
+        this.activeSubjectId = this.subjects[0]?.id ?? null;
+        this.activeSource = null;
+        this.view = this.subjects.length ? "subject" : "dashboard";
+      }
+      this.pushToast({
+        kind: "success",
+        title: archived ? "Subject archived" : "Subject restored",
+      });
+    } catch (e) {
+      this.pushToast({
+        kind: "error",
+        title: archived ? "Archive failed" : "Restore failed",
+        body: String(e),
+      });
+    }
+  }
+
+  // Archived subjects for the Settings restore list (not kept in `subjects`).
+  async listArchivedSubjects(): Promise<api.Subject[]> {
+    try {
+      return await api.listArchivedSubjects();
+    } catch {
+      return [];
+    }
+  }
+
   async updateSubject(id: string, name: string, code?: string, glyph?: string, color?: string) {
     try {
       await api.updateSubject(id, name, code, glyph, color);

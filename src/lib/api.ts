@@ -46,6 +46,7 @@ export interface Subject {
   updated_at: number;
   moodle_course_id?: string | null;
   calendar_aliases?: string | null;
+  archived?: boolean;
 }
 
 export interface IngestResult {
@@ -156,6 +157,10 @@ export const updateSubject = (
   color?: string
 ) => invoke<Subject>("update_subject", { id, name, code, glyph, color });
 export const deleteSubject = (id: string) => invoke<void>("delete_subject", { id });
+export const archiveSubject = (id: string, archived: boolean) =>
+  invoke<void>("archive_subject", { id, archived });
+export const listArchivedSubjects = () =>
+  invoke<Subject[]>("list_archived_subjects", {});
 
 // ---- topics ----
 export const createTopic = (subjectId: string, name: string, glyph?: string, tags?: string[]) =>

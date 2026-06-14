@@ -61,6 +61,38 @@ pub fn delete_subject(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Archive / unarchive a subject. Archived subjects are hidden from every normal
+/// view (sidebar, calendar matching, analytics) but their data is retained.
+pub fn set_subject_archived(conn: &Connection, id: &str, archived: bool) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE subjects SET archived=?2, updated_at=?3 WHERE id=?1",
+        params![id, archived as i64, now_ms()],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound(format!("subject {id}")));
+    }
+    Ok(())
+}
+
+/// Archived subjects only — for the "Archived subjects" restore list in Settings.
+/// Lightweight: includes source counts but not the full topic tree.
+pub fn list_archived_subjects(conn: &Connection) -> Result<Vec<Subject>> {
+    let sql = format!("SELECT {SUBJECT_COLS} FROM subjects WHERE archived=1 ORDER BY name");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], map_subject)?;
+    let mut subjects: Vec<Subject> = rows.collect::<rusqlite::Result<_>>()?;
+    for s in &mut subjects {
+        s.source_count = conn
+            .query_row(
+                "SELECT count(*) FROM sources WHERE subject_id=?1",
+                params![s.id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+    }
+    Ok(subjects)
+}
+
 fn map_subject(r: &rusqlite::Row) -> rusqlite::Result<Subject> {
     Ok(Subject {
         id: r.get(0)?,
@@ -77,17 +109,18 @@ fn map_subject(r: &rusqlite::Row) -> rusqlite::Result<Subject> {
         updated_at: r.get(9)?,
         moodle_course_id: r.get(10)?,
         calendar_aliases: r.get(11)?,
+        archived: r.get::<_, i64>(12)? != 0,
     })
 }
 
 const SUBJECT_COLS: &str =
-    "id, name, code, glyph, color, status, streak, position, created_at, updated_at, moodle_course_id, calendar_aliases";
+    "id, name, code, glyph, color, status, streak, position, created_at, updated_at, moodle_course_id, calendar_aliases, archived";
 
 /// Full Subjects → Topics → Sources tree (what the sidebar + dashboard render).
 /// Batched: a fixed 5 queries regardless of subject/topic/source counts
 /// (previously 1 + per-subject topics + per-topic sources + per-source tags).
 pub fn list_subjects(conn: &Connection) -> Result<Vec<Subject>> {
-    let sql = format!("SELECT {SUBJECT_COLS} FROM subjects ORDER BY position, created_at");
+    let sql = format!("SELECT {SUBJECT_COLS} FROM subjects WHERE archived=0 ORDER BY position, created_at");
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], map_subject)?;
     let mut subjects: Vec<Subject> = rows.collect::<rusqlite::Result<_>>()?;
@@ -141,7 +174,7 @@ pub fn match_event_subject(conn: &Connection, title: &str) -> Result<Option<Stri
     }
     let subs: Vec<(String, String, String, String)> = {
         let mut st = conn.prepare(
-            "SELECT id, name, IFNULL(code,''), IFNULL(calendar_aliases,'') FROM subjects",
+            "SELECT id, name, IFNULL(code,''), IFNULL(calendar_aliases,'') FROM subjects WHERE archived=0",
         )?;
         let rows = st.query_map([], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
@@ -2587,6 +2620,7 @@ pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummar
         "SELECT subject_id, SUM(ended_ms - started_ms) AS ms
          FROM pomodoro_sessions
          WHERE kind IN ('work','app') AND started_ms >= ?1 AND subject_id IS NOT NULL
+           AND subject_id IN (SELECT id FROM subjects WHERE archived=0)
          GROUP BY subject_id",
     )?;
     for row in stmt.query_map(params![since_ms], |r| {
@@ -2607,6 +2641,7 @@ pub fn analytics_summary(conn: &Connection, days: i64) -> Result<AnalyticsSummar
         "SELECT subject_id, COUNT(*) AS n, SUM(correct) AS ok
          FROM attempts
          WHERE created_at >= ?1
+           AND subject_id IN (SELECT id FROM subjects WHERE archived=0)
          GROUP BY subject_id",
     )?;
     for row in stmt.query_map(params![since_ms], |r| {
@@ -3058,6 +3093,32 @@ mod tests {
         assert_eq!(subs[0].topics.len(), 1);
         assert_eq!(subs[0].topics[0].sources.len(), 1);
         assert_eq!(subs[0].topics[0].sources[0].tags.len(), 2);
+    }
+
+    #[test]
+    fn archived_subjects_hide_from_list_but_stay_restorable() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let keep = insert_subject(&c, "Active", None, None, None).unwrap();
+        let hide = insert_subject(&c, "Stored", Some("ST-1"), None, None).unwrap();
+
+        // Archive one → it drops out of the normal list and calendar matching.
+        set_subject_archived(&c, &hide, true).unwrap();
+        let live = list_subjects(&c).unwrap();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].id, keep);
+        assert!(!live[0].archived);
+        assert!(match_event_subject(&c, "Stored lecture 1").unwrap().is_none());
+
+        // It still exists for the restore list, then comes back on unarchive.
+        let archived = list_archived_subjects(&c).unwrap();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].id, hide);
+        assert!(archived[0].archived);
+
+        set_subject_archived(&c, &hide, false).unwrap();
+        assert_eq!(list_subjects(&c).unwrap().len(), 2);
+        assert!(list_archived_subjects(&c).unwrap().is_empty());
     }
 
     #[test]
