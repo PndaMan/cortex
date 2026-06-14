@@ -89,13 +89,21 @@
   const engScore = (t: api.TopicStat) => t.sources + t.materials * 1.5 + t.cards + t.reviews * 0.5;
   const radarValues = $derived.by(() => {
     const ts = radarTopics;
-    if (radarMetric === "accuracy") return ts.map((t) => (t.reviews > 0 ? t.accuracy : 0));
-    if (radarMetric === "cards") {
+    let raw: number[];
+    if (radarMetric === "accuracy") {
+      raw = ts.map((t) => (t.reviews > 0 ? t.accuracy : 0));
+      return raw; // accuracy is already a meaningful 0..1 grade — keep it linear
+    } else if (radarMetric === "cards") {
       const mx = Math.max(1, ...ts.map((t) => t.cards));
-      return ts.map((t) => t.cards / mx);
+      raw = ts.map((t) => t.cards / mx);
+    } else {
+      const mx = Math.max(1, ...ts.map(engScore));
+      raw = ts.map((t) => engScore(t) / mx);
     }
-    const mx = Math.max(1, ...ts.map(engScore));
-    return ts.map((t) => engScore(t) / mx);
+    // Perceptual (sqrt) scaling for the count-based metrics: amplifies small
+    // values so sparse early data is still legible, and compresses as it grows —
+    // the top topic still reaches the rim. A topic with ANY data clears the centre.
+    return raw.map((v) => (v > 0 ? Math.max(0.12, Math.sqrt(v)) : 0));
   });
   const radarMetricLabel = $derived(
     radarMetric === "accuracy" ? "review accuracy" : radarMetric === "cards" ? "flashcards" : "engagement (sources · materials · cards)"
