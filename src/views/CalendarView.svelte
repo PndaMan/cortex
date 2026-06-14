@@ -793,7 +793,9 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--rad-3);
     background: var(--surface-2);
-    overflow: hidden;
+    /* No overflow:hidden — it clipped the Picker's dropdown menu (the "All
+       subjects dropdown broken" bug). The menu is absolutely positioned and must
+       escape this wrapper. */
     min-width: 170px;
   }
 
