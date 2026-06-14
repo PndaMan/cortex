@@ -19,7 +19,7 @@ Your data never leaves your machine, and you bring your own AI keys.
   <img alt="Status" src="https://img.shields.io/badge/status-v1.0-2dd5b7.svg" />
 </p>
 
-[Why Cortex?](#why-cortex) · [Features](#features) · [Quick start](#quick-start) · [Configuration](#configuration) · [How it works](#how-it-works) · [Roadmap](#roadmap) · [Contributing](#contributing)
+[Why Cortex?](#why-cortex) · [Features](#features) · [Download](#download--install) · [Build from source](#build-from-source) · [Configuration](#configuration) · [How it works](#how-it-works) · [Roadmap](#roadmap) · [Contributing](#contributing)
 
 </div>
 
@@ -82,7 +82,36 @@ NotebookLM is great, but it's a web product: your sources live on someone else's
 - **Close-to-tray** — closing the window keeps ingest/generation/music running behind a tray icon (Open · Play/Pause · Quit); reminders become OS notifications while hidden.
 - A responsive shell that stays intentional when tiled narrow (drawer sidebar below 1080px).
 
-## Quick start
+## Download & install
+
+Grab the latest build for your operating system from the
+**[Releases page](https://github.com/PndaMan/cortex/releases/latest)** — no
+toolchain required.
+
+### macOS
+1. Download **`Cortex_x.y.z_universal.dmg`** (works on both Apple Silicon and Intel).
+2. Open the `.dmg` and drag **Cortex** into **Applications**.
+3. First launch: right-click **Cortex → Open** (the build isn't notarized yet, so
+   macOS asks you to confirm an unidentified developer once).
+
+### Windows
+1. Download **`Cortex_x.y.z_x64-setup.exe`**.
+2. Run it. SmartScreen may warn about an unrecognized app — click
+   **More info → Run anyway** (the installer isn't code-signed yet).
+3. Launch **Cortex** from the Start menu.
+
+### Linux
+| Distro family | File | Install |
+|---|---|---|
+| Debian / Ubuntu | `Cortex_x.y.z_amd64.deb` | `sudo apt install ./Cortex_*.deb` |
+| Fedora / RHEL | `Cortex-x.y.z-1.x86_64.rpm` | `sudo dnf install ./Cortex-*.rpm` |
+| Any (portable) | `Cortex_x.y.z_amd64.AppImage` | `chmod +x Cortex_*.AppImage && ./Cortex_*.AppImage` |
+
+> Builds are produced automatically by CI ([`.github/workflows/release.yml`](.github/workflows/release.yml))
+> on every `v*` tag. They are **not yet code-signed/notarized**, hence the
+> one-time security prompts above.
+
+## Build from source
 
 ### Prerequisites
 - **Rust** (stable) and the [Tauri 2 system dependencies](https://v2.tauri.app/start/prerequisites/) for your OS (on Linux: WebKitGTK 4.1, GTK 3, libsoup3, etc.).
