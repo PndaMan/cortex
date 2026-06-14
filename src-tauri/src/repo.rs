@@ -76,11 +76,12 @@ fn map_subject(r: &rusqlite::Row) -> rusqlite::Result<Subject> {
         created_at: r.get(8)?,
         updated_at: r.get(9)?,
         moodle_course_id: r.get(10)?,
+        calendar_aliases: r.get(11)?,
     })
 }
 
 const SUBJECT_COLS: &str =
-    "id, name, code, glyph, color, status, streak, position, created_at, updated_at, moodle_course_id";
+    "id, name, code, glyph, color, status, streak, position, created_at, updated_at, moodle_course_id, calendar_aliases";
 
 /// Full Subjects → Topics → Sources tree (what the sidebar + dashboard render).
 /// Batched: a fixed 5 queries regardless of subject/topic/source counts
@@ -121,6 +122,81 @@ pub fn get_subject(conn: &Connection, id: &str) -> Result<Subject> {
         |r| r.get(0),
     )?;
     Ok(s)
+}
+
+// ---- calendar event → subject matching (no AI) -------------------------
+// Match a timetable/calendar event title to a Cortex subject by, in priority
+// order: user-set alias keywords, then the subject name, then its code — all
+// compared case/punctuation-insensitively. Deterministic, no model calls.
+
+fn squash_alnum(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
+}
+
+/// Best subject id for an event title (None if nothing matches confidently).
+pub fn match_event_subject(conn: &Connection, title: &str) -> Result<Option<String>> {
+    let t = squash_alnum(title);
+    if t.is_empty() {
+        return Ok(None);
+    }
+    let subs: Vec<(String, String, String, String)> = {
+        let mut st = conn.prepare(
+            "SELECT id, name, IFNULL(code,''), IFNULL(calendar_aliases,'') FROM subjects",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
+        })?;
+        rows.filter_map(|x| x.ok()).collect()
+    };
+    // 1) alias keywords (highest priority — the user's own mapping).
+    for (id, _n, _c, aliases) in &subs {
+        for a in aliases.split(',') {
+            let sa = squash_alnum(a);
+            if sa.len() >= 3 && t.contains(&sa) {
+                return Ok(Some(id.clone()));
+            }
+        }
+    }
+    // 2) subject name as a substring of the title (e.g. "socioinfo" ⊂ title).
+    for (id, name, _c, _a) in &subs {
+        let sn = squash_alnum(name);
+        if sn.len() >= 4 && t.contains(&sn) {
+            return Ok(Some(id.clone()));
+        }
+    }
+    // 3) subject code present in the title (e.g. "178").
+    for (id, _n, code, _a) in &subs {
+        let sc = squash_alnum(code);
+        if sc.len() >= 3 && t.contains(&sc) {
+            return Ok(Some(id.clone()));
+        }
+    }
+    Ok(None)
+}
+
+/// Re-file calendar events that aren't yet assigned to a subject, by matching
+/// their title. Never overrides an event that already has a subject. Returns the
+/// number newly filed.
+pub fn retag_calendar_events(conn: &Connection) -> Result<usize> {
+    let pending: Vec<(String, String)> = {
+        let mut st = conn.prepare(
+            "SELECT id, title FROM events WHERE subject_id IS NULL OR subject_id=''",
+        )?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        rows.filter_map(|x| x.ok()).collect()
+    };
+    let now = now_ms();
+    let mut n = 0usize;
+    for (id, title) in pending {
+        if let Some(sid) = match_event_subject(conn, &title)? {
+            conn.execute(
+                "UPDATE events SET subject_id=?2, updated_at=?3 WHERE id=?1",
+                params![id, sid, now],
+            )?;
+            n += 1;
+        }
+    }
+    Ok(n)
 }
 
 // ---- topics ------------------------------------------------------------

@@ -1405,6 +1405,26 @@ pub fn clear_subject_framework(state: State<AppState>, subject_id: String) -> Re
     Ok(())
 }
 
+/// Set a subject's calendar match keywords (comma-separated) and immediately
+/// re-file unassigned calendar events. Returns how many events were newly filed.
+#[tauri::command]
+pub fn set_subject_aliases(state: State<AppState>, subject_id: String, aliases: String) -> Result<usize> {
+    let c = state.db.lock().unwrap();
+    c.execute(
+        "UPDATE subjects SET calendar_aliases=?2, updated_at=?3 WHERE id=?1",
+        rusqlite::params![subject_id, aliases.trim(), crate::db::now_ms()],
+    )?;
+    repo::retag_calendar_events(&c)
+}
+
+/// Re-match all unfiled calendar events to subjects (name/code/alias). Returns
+/// the number newly filed.
+#[tauri::command]
+pub fn retag_calendar_events(state: State<AppState>) -> Result<usize> {
+    let c = state.db.lock().unwrap();
+    repo::retag_calendar_events(&c)
+}
+
 // ---- chat history (one rolling thread per subject) --------------------
 
 #[tauri::command]

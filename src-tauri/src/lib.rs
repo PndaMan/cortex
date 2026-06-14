@@ -294,6 +294,8 @@ pub fn run() {
             commands::get_subject_framework,
             commands::get_subject_framework_text,
             commands::clear_subject_framework,
+            commands::set_subject_aliases,
+            commands::retag_calendar_events,
             // notes
             notes::create_note,
             notes::list_notes,

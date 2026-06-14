@@ -688,6 +688,13 @@ pub async fn google_sync(app: AppHandle) -> Result<SyncResult> {
             }
         }
 
+        // Auto-file freshly pulled timetable events to their Cortex subject by
+        // matching the title (no AI) — name/code/alias.
+        {
+            let c = state.db.lock().unwrap();
+            let _ = repo::retag_calendar_events(&c);
+        }
+
         // ---- PUSH ----------------------------------------------------
         // Local events with no google id yet → create them on Google, then
         // record the returned id so they aren't pushed again.

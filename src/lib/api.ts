@@ -45,6 +45,7 @@ export interface Subject {
   created_at: number;
   updated_at: number;
   moodle_course_id?: string | null;
+  calendar_aliases?: string | null;
 }
 
 export interface IngestResult {
@@ -227,6 +228,11 @@ export const moodleData = () => invoke<MoodleData>("moodle_data");
 export const moodleLinkSubject = (subjectId: string, courseId: string | null) =>
   invoke<void>("moodle_link_subject", { subjectId, courseId });
 export const moodleAutolink = () => invoke<number>("moodle_autolink");
+
+// ---- calendar event → subject matching (no AI) ----
+export const setSubjectAliases = (subjectId: string, aliases: string) =>
+  invoke<number>("set_subject_aliases", { subjectId, aliases });
+export const retagCalendarEvents = () => invoke<number>("retag_calendar_events");
 
 // ---- per-subject module framework ----
 export interface FrameworkMeta {

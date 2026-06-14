@@ -19,6 +19,9 @@ pub struct Subject {
     /// Moodle course id this subject is linked to (Settings → Experimental), if any.
     #[serde(default)]
     pub moodle_course_id: Option<String>,
+    /// Comma-separated keywords for matching calendar event titles to this subject.
+    #[serde(default)]
+    pub calendar_aliases: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

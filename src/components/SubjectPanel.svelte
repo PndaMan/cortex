@@ -179,6 +179,22 @@
     if (name) await app.createTopic(name);
   }
 
+  // Calendar match keywords (no AI): comma-separated terms that appear in this
+  // subject's timetable events, so lectures auto-file to it.
+  let aliasInput = $state("");
+  $effect(() => { aliasInput = subj?.calendar_aliases ?? ""; });
+  async function saveAliases() {
+    if (!subj || aliasInput === (subj.calendar_aliases ?? "")) return;
+    try {
+      const n = await api.setSubjectAliases(subj.id, aliasInput);
+      await app.refresh();
+      app.notifyEventsChanged();
+      if (n > 0) app.pushToast({ kind: "success", title: `Filed ${n} calendar event${n === 1 ? "" : "s"}` });
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Couldn't save keywords", body: String(e) });
+    }
+  }
+
   function editSubject() {
     if (!subj) return;
     app.openEdit({
@@ -341,6 +357,13 @@
               </div>
             </div>
           {/if}
+        </section>
+
+        <!-- Calendar matching -->
+        <section class="sp-card">
+          <div class="sp-card-h"><Icon name="calendar" size={14} /><span>Calendar matching</span></div>
+          <input class="input mono" placeholder="keywords, e.g. GenLing, GL178" bind:value={aliasInput} onblur={saveAliases} />
+          <p class="sp-faint sm" style="margin:8px 0 0">Comma-separated terms that appear in your timetable events for this subject — lectures with these in the title auto-file here (no AI). Saved on blur; re-files your calendar instantly.</p>
         </section>
 
         <!-- Topics -->
