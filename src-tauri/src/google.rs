@@ -628,9 +628,34 @@ pub async fn google_sync(app: AppHandle) -> Result<SyncResult> {
                 .collect();
             if ids.is_empty() { vec![cal_id.clone()] } else { ids }
         };
+        // Calendar id → its colour (hex), so pulled events (and the subjects they
+        // match) can adopt the same colour you see in Google Calendar.
+        let cal_colors: std::collections::HashMap<String, String> = {
+            let mut m = std::collections::HashMap::new();
+            if let Ok(resp) = client
+                .get("https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250")
+                .bearer_auth(&access)
+                .send()
+            {
+                if let Ok(json) = resp.json::<serde_json::Value>() {
+                    if let Some(items) = json.get("items").and_then(|v| v.as_array()) {
+                        for cal in items {
+                            if let (Some(id), Some(color)) = (
+                                cal.get("id").and_then(|v| v.as_str()),
+                                cal.get("backgroundColor").and_then(|v| v.as_str()),
+                            ) {
+                                m.insert(id.to_string(), color.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            m
+        };
         let time_min = format_rfc3339_utc(now_ms() - 30 * 86_400 * 1_000);
         let mut pulled = 0i64;
         for pull_id in &pull_ids {
+            let cal_color = cal_colors.get(pull_id).cloned();
             let url = format!(
                 "https://www.googleapis.com/calendar/v3/calendars/{}/events?singleEvents=true&maxResults=250&orderBy=startTime&timeMin={}",
                 pct(pull_id),
@@ -676,7 +701,7 @@ pub async fn google_sync(app: AppHandle) -> Result<SyncResult> {
                         &title,
                         description.as_deref(),
                         location.as_deref(),
-                        None, // color
+                        cal_color.as_deref(), // adopt the Google calendar's colour
                         start_ms,
                         end_ms,
                         all_day,
@@ -693,6 +718,8 @@ pub async fn google_sync(app: AppHandle) -> Result<SyncResult> {
         {
             let c = state.db.lock().unwrap();
             let _ = repo::retag_calendar_events(&c);
+            // Make subjects visually match their Google calendar colour.
+            let _ = repo::sync_subject_colors_from_events(&c);
         }
 
         // ---- PUSH ----------------------------------------------------

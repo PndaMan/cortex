@@ -573,6 +573,8 @@
     gBusy = true;
     try {
       const r = await api.googleSync();
+      await app.refresh();            // pulled events filed to subjects; colours updated
+      app.notifyEventsChanged();      // refresh the calendar view
       app.pushToast({ kind: "success", title: "Calendar synced", body: `${r.pulled} pulled · ${r.pushed} pushed` });
     } catch (e) {
       app.pushToast({ kind: "error", title: "Sync failed", body: String(e) });
