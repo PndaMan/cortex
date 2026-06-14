@@ -862,7 +862,9 @@
   }
   .chat-stop .stop-sq { width: 10px; height: 10px; border-radius: 2px; background: var(--err); display: block; }
   .chat-stop { border-color: var(--border-strong); }
-  .chat-model-pick { max-width: 200px; font-size: 11px; }
+  /* Shrinkable so a narrow (resized) chat dock keeps the action buttons visible
+     instead of pushing them off the right edge — the picker truncates instead. */
+  .chat-model-pick { max-width: 200px; min-width: 44px; flex: 0 1 auto; font-size: 11px; }
 
   /* ── scope selector (the reworked top bar: one clean clickable control) ─── */
   .scope-pick {

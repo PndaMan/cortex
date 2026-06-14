@@ -74,7 +74,10 @@
 /* ============ CHAT DOCK ============ */
 .chatdock { width: var(--chat-w, 396px); flex: none; border-left: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; min-height: 0; position: relative; }
 .chatdock-inner { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.chat-head { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 10px 0 12px; border-bottom: 1px solid var(--border); flex: none; }
+.chat-head { display: flex; align-items: center; gap: 6px; height: 44px; padding: 0 10px 0 12px; border-bottom: 1px solid var(--border); flex: none; }
+/* Keep the action buttons fixed-size so a narrow (resized) dock shrinks the
+   scope/model pickers instead of pushing the buttons off the right edge. */
+.chat-head > .btn { flex: none; }
 .chat-scroll { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
 .chat-scope-note { font-size: var(--t-xs); color: var(--fg-muted); display: flex; align-items: center; gap: 6px; padding-bottom: 4px; border-bottom: 1px dashed var(--border); }
 .chat-scope-note b { color: var(--fg-bright); font-weight: 600; }
