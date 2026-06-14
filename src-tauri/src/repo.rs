@@ -2099,6 +2099,19 @@ pub fn upsert_event_by_google_id(
             Ok(id)
         }
         None => {
+            // Don't resurrect an event the user deleted: if its google_id was
+            // tombstoned, skip re-pulling it.
+            let deleted: bool = conn
+                .query_row(
+                    "SELECT 1 FROM tombstones WHERE entity_table='google_event' AND entity_id=?1",
+                    params![google_id],
+                    |_| Ok(true),
+                )
+                .optional()?
+                .unwrap_or(false);
+            if deleted {
+                return Ok(String::new());
+            }
             let id = new_id();
             conn.execute(
                 "INSERT INTO events
@@ -3275,6 +3288,29 @@ mod tests {
         // done flag and board status stay in lock-step.
         assert_eq!(ev.status, "done");
         assert_eq!(list_events(&c, None, Some(0), Some(5_000)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn deleted_google_event_is_not_resurrected_on_repull() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        // First pull creates it.
+        let id = upsert_event_by_google_id(
+            &c, "gcal-123", None, "Lecture", None, None, None, 1_000, None, false, "event", None,
+        )
+        .unwrap();
+        assert!(!id.is_empty());
+        assert_eq!(list_events(&c, None, None, None).unwrap().len(), 1);
+        // User deletes it (writes the google_event tombstone via trigger).
+        delete_event(&c, &id).unwrap();
+        assert_eq!(list_events(&c, None, None, None).unwrap().len(), 0);
+        // Next Google pull must NOT bring it back.
+        let again = upsert_event_by_google_id(
+            &c, "gcal-123", None, "Lecture", None, None, None, 1_000, None, false, "event", None,
+        )
+        .unwrap();
+        assert!(again.is_empty(), "deleted google event should be skipped");
+        assert_eq!(list_events(&c, None, None, None).unwrap().len(), 0);
     }
 
     #[test]

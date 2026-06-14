@@ -666,6 +666,8 @@ export const setEventDone = (id: string, done: boolean) =>
   invoke<CalEvent>("set_event_done", { id, done });
 export const setEventStatus = (id: string, status: "todo" | "doing" | "done") =>
   invoke<CalEvent>("set_event_status", { id, status });
+/** Open an http(s) URL in the system browser (webview <a target=_blank> is a no-op in Tauri). */
+export const openExternal = (url: string) => invoke<void>("open_external", { url });
 /** Set the deadline study checklist (ticked topic ids). */
 export const setEventChecklist = (id: string, topicIds: string[]) =>
   invoke<CalEvent>("set_event_checklist", { id, topicIds });

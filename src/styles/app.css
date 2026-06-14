@@ -213,7 +213,8 @@
 .md-up li { display: flex; align-items: baseline; gap: 10px; font-size: var(--t-xs); }
 .md-up-date { color: var(--accent); white-space: nowrap; min-width: 54px; }
 .md-up-name { color: var(--fg); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
-a.md-up-name:hover { color: var(--accent); text-decoration: underline; }
+button.md-up-link { background: none; border: none; padding: 0; font: inherit; text-align: left; cursor: pointer; }
+a.md-up-name:hover, button.md-up-link:hover { color: var(--accent); text-decoration: underline; }
 .md-up-course { color: var(--fg-faint); white-space: nowrap; font-size: var(--t-2xs); max-width: 38%; overflow: hidden; text-overflow: ellipsis; }
 .st-id > div { min-width: 0; }
 .st-name { font-size: var(--t-md); color: var(--fg-bright); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

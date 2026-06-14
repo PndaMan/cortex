@@ -3,6 +3,7 @@
   // app.detail and opened from BOTH the notification centre and the subject panel,
   // so the experience is identical everywhere. Sits above every other overlay.
   import { app } from "../lib/store.svelte";
+  import * as api from "../lib/api";
   import Icon from "./Icon.svelte";
 
   const d = $derived(app.detail);
@@ -96,7 +97,7 @@
         {/if}
         <div class="grow"></div>
         {#if d.url}
-          <a class="btn btn--sm btn--primary" href={d.url} target="_blank" rel="noreferrer"><Icon name="external" size={12} /> Open in Moodle</a>
+          <button class="btn btn--sm btn--primary" onclick={() => d.url && api.openExternal(d.url)}><Icon name="external" size={12} /> Open in Moodle</button>
         {/if}
       </footer>
     </div>

@@ -248,6 +248,33 @@ pub fn list_archived_subjects(state: State<AppState>) -> Result<Vec<Subject>> {
     repo::list_archived_subjects(&c)
 }
 
+/// Open a URL in the system's default browser. Used for "Open in Moodle" and
+/// other external links — a webview `<a target="_blank">` is a no-op in Tauri,
+/// so links must round-trip through the OS opener.
+#[tauri::command]
+pub fn open_external(url: String) -> Result<()> {
+    let url = url.trim();
+    // Only allow real web links — never hand arbitrary strings to the shell.
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(Error::Other("refusing to open a non-http(s) URL".into()));
+    }
+    use std::process::Command;
+    #[cfg(target_os = "linux")]
+    let cmds: &[&str] = &["xdg-open"];
+    #[cfg(target_os = "macos")]
+    let cmds: &[&str] = &["open"];
+    #[cfg(target_os = "windows")]
+    let cmds: &[&str] = &["explorer"];
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    let cmds: &[&str] = &["xdg-open", "open"];
+    for c in cmds {
+        if Command::new(c).arg(url).spawn().is_ok() {
+            return Ok(());
+        }
+    }
+    Err(Error::Other("couldn't launch a browser".into()))
+}
+
 // ---- topics ------------------------------------------------------------
 
 #[tauri::command]

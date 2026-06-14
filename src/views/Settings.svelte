@@ -2005,7 +2005,7 @@ Notes: {about}</pre>
                         <li>
                           <span class="md-up-date mono">{new Date(d.due_at * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span>
                           {#if d.url}
-                            <a class="md-up-name" href={d.url} target="_blank" rel="noreferrer" title={d.name}>{d.name}</a>
+                            <button class="md-up-name md-up-link" onclick={() => d.url && api.openExternal(d.url)} title={d.name}>{d.name}</button>
                           {:else}
                             <span class="md-up-name" title={d.name}>{d.name}</span>
                           {/if}
