@@ -2099,6 +2099,46 @@ fn fsrs_interval(s: f64) -> i64 {
     (days.round() as i64).clamp(1, 36_500)
 }
 
+/// Preview the next interval (in days) each grade would schedule for a card,
+/// WITHOUT persisting — mirrors `srs_grade`'s math so the UI can show "Again /
+/// Hard / Good / Easy → 1d / 3d / 9d / 21d" like Anki. Returns [again, hard,
+/// good, easy].
+pub fn srs_preview(
+    conn: &Connection,
+    subject_id: &str,
+    kind: &str,
+    item_key: &str,
+) -> Result<[i64; 4]> {
+    let now = now_ms();
+    #[allow(clippy::type_complexity)]
+    let existing: Option<(f64, i64, Option<f64>, Option<f64>, i64)> = conn
+        .query_row(
+            "SELECT ease, interval_d, stability, difficulty, updated_at
+             FROM srs_cards WHERE subject_id=?1 AND kind=?2 AND item_key=?3",
+            params![subject_id, kind, item_key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .optional()?;
+    let is_new = existing.is_none();
+    let (ease, interval_d, stability, difficulty, last_seen) =
+        existing.unwrap_or((2.5, 0, None, None, now));
+
+    let mut out = [1i64; 4];
+    for g in 1..=4usize {
+        let s = if is_new {
+            fsrs_init_stability(g)
+        } else {
+            let s0 = stability.unwrap_or((interval_d as f64).max(0.5));
+            let d0 = difficulty.unwrap_or((11.0 - 3.0 * ease).clamp(1.0, 10.0));
+            let elapsed_d = ((now - last_seen) as f64 / 86_400_000.0).max(0.0);
+            let r = fsrs_retrievability(elapsed_d, s0);
+            fsrs_next_stability(d0, s0, r, g)
+        };
+        out[g - 1] = if g == 1 { 1 } else { fsrs_interval(s) };
+    }
+    Ok(out)
+}
+
 /// Grade a card with FSRS and upsert its schedule. `quality` is 0-5 from the
 /// existing UI (Again≈1, Hard≈3, Good≈4, Easy≈5), mapped to FSRS's four grades.
 /// Also logs an `attempts` row (correct = quality >= 3) so the legacy "review

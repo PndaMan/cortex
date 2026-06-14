@@ -40,6 +40,28 @@
       : deck
   );
 
+  // Next-interval preview per grade [again, hard, good, easy] for the current
+  // card, so each rating button shows what it'll schedule (Anki-style). Fetched
+  // whenever the card changes; null while loading / when no subject is active.
+  let intervals = $state<number[] | null>(null);
+  $effect(() => {
+    const sid = app.activeSubjectId;
+    const card = activeDeck[i];
+    if (!sid || !card) { intervals = null; return; }
+    let cancelled = false;
+    api.srsPreview(sid, "flashcard", card.q)
+      .then((v) => { if (!cancelled) intervals = v; })
+      .catch(() => { if (!cancelled) intervals = null; });
+    return () => { cancelled = true; };
+  });
+  function fmtInterval(d: number): string {
+    if (d <= 0) return "<1d";
+    if (d < 7) return `${d}d`;
+    if (d < 30) return `${Math.round(d / 7)}w`;
+    if (d < 365) return `${Math.round(d / 30)}mo`;
+    return `${(d / 365).toFixed(d < 730 ? 1 : 0)}y`;
+  }
+
   function rate(cls: string) {
     if (glow) return;
     const quality = RATINGS.find((r) => r.cls === cls)?.q ?? 4;
@@ -238,12 +260,13 @@
     </div>
 
     <div class="fc-rate{flipped ? ' show' : ''}">
-      {#each RATINGS as r (r.id)}
+      {#each RATINGS as r, idx (r.id)}
         <button
           class="btn rate-{r.cls}{glow === r.cls ? ' is-picked' : ''}"
           onclick={() => rate(r.cls)}
         >
-          {r.label} <span class="kbd">{r.key}</span>
+          <span class="rate-top">{r.label} <span class="kbd">{r.key}</span></span>
+          {#if intervals && intervals[idx] != null}<span class="rate-ivl">{fmtInterval(intervals[idx])}</span>{/if}
         </button>
       {/each}
     </div>

@@ -314,6 +314,7 @@ pub fn run() {
             review::review_set,
             review::srs_grade,
             review::srs_due,
+            review::srs_preview,
             review::srs_stats,
             // study analytics
             analytics::log_pomodoro_session,

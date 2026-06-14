@@ -348,7 +348,9 @@ a.md-up-name:hover { color: var(--accent); text-decoration: underline; }
 .fc-hint { font-size: var(--t-2xs); color: var(--fg-faint); }
 .fc-rate { display: flex; gap: 9px; opacity: 0; pointer-events: none; transition: opacity var(--dur); }
 .fc-rate.show { opacity: 1; pointer-events: auto; }
-.fc-rate .btn { min-width: 78px; justify-content: center; }
+.fc-rate .btn { min-width: 84px; flex-direction: column; align-items: center; justify-content: center; gap: 2px; height: auto; padding-top: 7px; padding-bottom: 7px; }
+.fc-rate .rate-top { display: inline-flex; align-items: center; gap: 5px; }
+.fc-rate .rate-ivl { font-size: var(--t-2xs, 10.5px); font-weight: 600; font-family: var(--font-mono); opacity: 0.85; }
 .rate-again { border-color: color-mix(in oklab, var(--err) 40%, transparent); color: var(--err); }
 .rate-hard { border-color: color-mix(in oklab, var(--warn) 40%, transparent); color: var(--warn); }
 .rate-good { border-color: color-mix(in oklab, var(--info) 40%, transparent); color: var(--info); }

@@ -759,6 +759,9 @@ export const srsGrade = (
 /** Cards due for review now (oldest-due first). */
 export const srsDue = (subjectId: string, kind: "quiz" | "flashcard") =>
   invoke<DueCard[]>("srs_due", { subjectId, kind });
+/** Next interval (days) per grade: [again, hard, good, easy]. */
+export const srsPreview = (subjectId: string, kind: "quiz" | "flashcard", itemKey: string) =>
+  invoke<number[]>("srs_preview", { subjectId, kind, itemKey });
 /** Due-now + total scheduled counts for a subject+kind. */
 export const srsStats = (subjectId: string, kind: "quiz" | "flashcard") =>
   invoke<SrsStats>("srs_stats", { subjectId, kind });

@@ -73,6 +73,19 @@ pub fn srs_due(state: State<AppState>, subject_id: String, kind: String) -> Resu
     repo::srs_due(&c, &subject_id, &kind)
 }
 
+/// Preview next interval (days) per grade [again, hard, good, easy] for a card,
+/// so the study UI can show what each button will schedule.
+#[tauri::command]
+pub fn srs_preview(
+    state: State<AppState>,
+    subject_id: String,
+    kind: String,
+    item_key: String,
+) -> Result<Vec<i64>> {
+    let c = state.db.lock().unwrap();
+    Ok(repo::srs_preview(&c, &subject_id, &kind, &item_key)?.to_vec())
+}
+
 /// Due-now and total scheduled-card counts for a subject+kind.
 #[tauri::command]
 pub fn srs_stats(state: State<AppState>, subject_id: String, kind: String) -> Result<SrsStats> {
