@@ -654,6 +654,10 @@ pub async fn google_sync(app: AppHandle) -> Result<SyncResult> {
         };
         let time_min = format_rfc3339_utc(now_ms() - 30 * 86_400 * 1_000);
         let mut pulled = 0i64;
+        // subject_id → its Google calendar colour. Events themselves stay
+        // colourless so they inherit (and follow) their subject's colour; only the
+        // subject adopts the Google colour. Per-event colour stays a manual choice.
+        let mut subj_colors: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         for pull_id in &pull_ids {
             let cal_color = cal_colors.get(pull_id).cloned();
             let url = format!(
@@ -694,14 +698,21 @@ pub async fn google_sync(app: AppHandle) -> Result<SyncResult> {
                     };
                     let end_ms = parse_endpoint(ev.get("end")).map(|(ms, _)| ms);
 
+                    // Record the subject's Google colour (don't colour the event —
+                    // it inherits the subject); retag fills subject_id afterwards.
+                    if let Some(col) = &cal_color {
+                        if let Ok(Some(sid)) = repo::match_event_subject(&c, &title) {
+                            subj_colors.entry(sid).or_insert_with(|| col.clone());
+                        }
+                    }
                     repo::upsert_event_by_google_id(
                         &c,
                         gid,
-                        None, // subject_id — pulled events aren't auto-filed to a subject
+                        None, // subject_id — filled by retag below (respects manual moves)
                         &title,
                         description.as_deref(),
                         location.as_deref(),
-                        cal_color.as_deref(), // adopt the Google calendar's colour
+                        None, // no event colour — inherits the subject's colour
                         start_ms,
                         end_ms,
                         all_day,
@@ -718,8 +729,14 @@ pub async fn google_sync(app: AppHandle) -> Result<SyncResult> {
         {
             let c = state.db.lock().unwrap();
             let _ = repo::retag_calendar_events(&c);
-            // Make subjects visually match their Google calendar colour.
-            let _ = repo::sync_subject_colors_from_events(&c);
+            // Subjects adopt their Google calendar colour; events stay colourless
+            // and inherit it. (Per-event colour remains a manual override.)
+            for (sid, col) in &subj_colors {
+                let _ = c.execute(
+                    "UPDATE subjects SET color=?2, updated_at=?3 WHERE id=?1",
+                    rusqlite::params![sid, col, now_ms()],
+                );
+            }
         }
 
         // ---- PUSH ----------------------------------------------------

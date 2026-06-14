@@ -199,23 +199,6 @@ pub fn retag_calendar_events(conn: &Connection) -> Result<usize> {
     Ok(n)
 }
 
-/// Set each subject's colour to match the Google-calendar colour of the events
-/// filed to it (most common colour wins), so subjects look like Google Calendar.
-/// Only touches subjects that have at least one coloured event. Returns rows changed.
-pub fn sync_subject_colors_from_events(conn: &Connection) -> Result<usize> {
-    let n = conn.execute(
-        "UPDATE subjects SET \
-           color = (SELECT e.color FROM events e \
-                    WHERE e.subject_id = subjects.id AND e.color IS NOT NULL AND e.color <> '' \
-                    GROUP BY e.color ORDER BY count(*) DESC LIMIT 1), \
-           updated_at = ?1 \
-         WHERE EXISTS (SELECT 1 FROM events e WHERE e.subject_id = subjects.id \
-                       AND e.color IS NOT NULL AND e.color <> '')",
-        params![now_ms()],
-    )?;
-    Ok(n)
-}
-
 // ---- topics ------------------------------------------------------------
 
 pub fn insert_topic(
