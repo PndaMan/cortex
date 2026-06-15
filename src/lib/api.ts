@@ -296,8 +296,8 @@ export const getCheatsheet = (subjectId: string, topicId?: string) =>
 /** Whole-subject sheet, composed from the stored per-topic sheets. */
 export const getSubjectCheatsheet = (subjectId: string) =>
   invoke<CheatsheetData | null>("get_subject_cheatsheet", { subjectId });
-export const updateCheatsheet = (subjectId: string, topicId: string | undefined, sections: CsSection[]) =>
-  invoke<void>("update_cheatsheet", { subjectId, topicId, sections });
+export const updateCheatsheet = (subjectId: string, topicId: string | undefined, sections: CsSection[], snapshot = true) =>
+  invoke<void>("update_cheatsheet", { subjectId, topicId, sections, snapshot });
 export const listCheatsheetVersions = (subjectId: string, topicId?: string) =>
   invoke<CheatsheetVersionMeta[]>("list_cheatsheet_versions", { subjectId, topicId });
 export const getCheatsheetVersion = (versionId: string) =>
