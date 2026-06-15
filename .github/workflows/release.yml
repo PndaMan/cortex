@@ -113,6 +113,28 @@ jobs:
       - name: Install frontend dependencies
         run: bun install
 
+      # The committed icon.icns wasn't transparent; regenerate it from the transparent
+      # square master (icon-macos.png) on the macOS runner so the Dock/Finder icon is the
+      # floating brain with no background. (iconutil is macOS-only — done here, not in repo.)
+      - name: Regenerate the transparent macOS app icon
+        if: matrix.platform == 'macos-latest'
+        run: |
+          set -e
+          SRC=src-tauri/icons/icon-macos.png
+          mkdir -p Cortex.iconset
+          sips -z 16 16     "$SRC" --out Cortex.iconset/icon_16x16.png      >/dev/null
+          sips -z 32 32     "$SRC" --out Cortex.iconset/icon_16x16@2x.png   >/dev/null
+          sips -z 32 32     "$SRC" --out Cortex.iconset/icon_32x32.png      >/dev/null
+          sips -z 64 64     "$SRC" --out Cortex.iconset/icon_32x32@2x.png   >/dev/null
+          sips -z 128 128   "$SRC" --out Cortex.iconset/icon_128x128.png    >/dev/null
+          sips -z 256 256   "$SRC" --out Cortex.iconset/icon_128x128@2x.png >/dev/null
+          sips -z 256 256   "$SRC" --out Cortex.iconset/icon_256x256.png    >/dev/null
+          sips -z 512 512   "$SRC" --out Cortex.iconset/icon_256x256@2x.png >/dev/null
+          sips -z 512 512   "$SRC" --out Cortex.iconset/icon_512x512.png    >/dev/null
+          sips -z 1024 1024 "$SRC" --out Cortex.iconset/icon_512x512@2x.png >/dev/null
+          iconutil -c icns Cortex.iconset -o src-tauri/icons/icon.icns
+          echo "Regenerated transparent src-tauri/icons/icon.icns"
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:

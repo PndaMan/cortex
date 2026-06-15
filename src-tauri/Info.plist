@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Merged into the macOS app bundle's Info.plist by the Tauri CLI at build time.
+     Only ADD keys here — do NOT redeclare CFBundle*/version keys (Tauri generates those).
+     Without these usage strings macOS denies mic/camera access WITHOUT ever showing the
+     consent prompt, forcing the user into System Settings. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Cortex uses your microphone to record lectures for transcription.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Cortex uses your camera to capture photos for your notes.</string>
+</dict>
+</plist>

@@ -543,6 +543,20 @@
       app.pushToast({ kind: "warning", title: "Couldn't copy", body: depReport.install_command });
     }
   }
+  // One-click install (macOS/Homebrew only — no sudo needed there).
+  let depInstalling = $state(false);
+  async function installDeps() {
+    depInstalling = true;
+    try {
+      const msg = await api.installDependencies();
+      app.pushToast({ kind: "success", title: "Dependencies", body: msg });
+      await loadDeps();
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Install failed", body: String(e) });
+    } finally {
+      depInstalling = false;
+    }
+  }
   let gCalendars = $state<api.GoogleCalendar[]>([]);
   let gCalBusy = $state(false);
   async function loadGoogle() {
@@ -1521,8 +1535,11 @@ Notes: {about}</pre>
                   <div class="row-inline">
                     <input class="input mono" readonly value={depReport.install_command} />
                     <button class="btn" onclick={copyDepCmd}><Icon name="doc" size={12} /> Copy</button>
+                    {#if depReport.manager === "brew"}
+                      <button class="btn btn--primary" onclick={installDeps} disabled={depInstalling}><Icon name="plus" size={12} /> {depInstalling ? "Installing…" : "Install"}</button>
+                    {/if}
                   </div>
-                  <div class="set-row-d">{depReport.note}</div>
+                  <div class="set-row-d">{depReport.manager === "brew" ? "One-click install via Homebrew (no sudo). LibreOffice is large — this can take a few minutes." : depReport.note}</div>
                 </div>
               {:else}
                 <div class="set-row-d" style="color:var(--ok); margin-top:8px">All dependencies present 🎉</div>

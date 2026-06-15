@@ -317,6 +317,7 @@ pub fn run() {
             commands::set_subject_aliases,
             commands::retag_calendar_events,
             commands::dependency_status,
+            commands::install_dependencies,
             // notes
             notes::create_note,
             notes::list_notes,

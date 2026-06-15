@@ -2859,6 +2859,56 @@ pub fn dependency_status() -> DependencyReport {
     }
 }
 
+/// One-click install of the missing system dependencies. macOS only: Homebrew
+/// needs no sudo, so it's safe to run for the user. Linux/Windows managers need a
+/// terminal (sudo), so there we return the command for them to paste. Runs only the
+/// `brew install …` part (whisper/pipx installs on first transcription instead).
+#[tauri::command]
+pub async fn install_dependencies() -> Result<String> {
+    tauri::async_runtime::spawn_blocking(|| -> Result<String> {
+        let report = dependency_status();
+        if report.install_command.is_empty() {
+            return Ok("All dependencies are already installed.".into());
+        }
+        if report.manager != "brew" {
+            return Err(Error::Other(format!(
+                "One-click install is macOS-only (Homebrew needs no sudo). Run this in a terminal:\n{}",
+                report.install_command
+            )));
+        }
+        let Some(brew_cmd) = report
+            .install_command
+            .split(" && ")
+            .find(|c| c.starts_with("brew install"))
+            .map(str::to_string)
+        else {
+            return Ok("Nothing to install via Homebrew (whisper installs on first transcription).".into());
+        };
+        // A GUI app's inherited PATH usually omits Homebrew, so prepend it explicitly.
+        let extra = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin";
+        let path = std::env::var("PATH")
+            .map(|p| format!("{extra}:{p}"))
+            .unwrap_or_else(|_| extra.to_string());
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&brew_cmd)
+            .env("PATH", path)
+            .env("HOMEBREW_NO_AUTO_UPDATE", "1")
+            .output()
+            .map_err(|e| Error::Other(format!("couldn't start Homebrew: {e}. Is brew installed?")))?;
+        if out.status.success() {
+            Ok("Dependencies installed — hit Re-check to confirm.".into())
+        } else {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let tail = err.lines().rev().take(8).collect::<Vec<_>>();
+            let tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+            Err(Error::Other(format!("Homebrew install failed:\n{tail}")))
+        }
+    })
+    .await
+    .map_err(|e| Error::Other(e.to_string()))?
+}
+
 /// Restrict a client-supplied audio extension to known containers so it can't
 /// smuggle path separators or oddities into the recordings filename.
 fn sanitize_ext(ext: Option<&str>) -> &'static str {
