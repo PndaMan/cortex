@@ -430,10 +430,18 @@
       send();
       return;
     }
-    // When the composer is EMPTY, Escape or "c" closes the chat — so the same
-    // key that opens it also closes it, even though the dock pages land focus
-    // here. With text typed, "c" types normally and Esc just blurs.
-    if (!draft.trim() && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key === "c" || e.key === "Escape")) {
+    // Esc leaves chat *insert* mode (→ normal), staying in the chat. It must NOT
+    // bubble to the global key handler, which would navigate back a page.
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      (e.target as HTMLElement | null)?.blur();
+      app.setMode("NOR");
+      return;
+    }
+    // When the composer is EMPTY, "c" closes the chat (the same key opens it);
+    // with text typed, "c" types normally.
+    if (!draft.trim() && !e.metaKey && !e.ctrlKey && !e.altKey && e.key === "c") {
       e.preventDefault();
       (e.target as HTMLElement | null)?.blur();
       app.setMode("NOR");

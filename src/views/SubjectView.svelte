@@ -404,9 +404,17 @@
   </div>
 {:else}
   <div class="workspace-scroll">
-    <div style:text-align="center" style:padding="80px 32px" style:color="var(--fg-faint)">
-      <Icon name="diamond" size={28} />
-      <p style:margin-top="16px">Select a subject from the sidebar to get started.</p>
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:62vh;padding:48px 32px;text-align:center;color:var(--fg-faint)">
+      <Icon name="diamond" size={30} color="var(--fg-faint)" />
+      {#if app.subjects.length === 0}
+        <p class="read" style="font-size:var(--r-lg);color:var(--fg-bright);margin:4px 0 0">No subjects yet</p>
+        <p style="max-width:360px;margin:0">Add your first subject to start building cheatsheets, flashcards and more.</p>
+        <button class="btn btn--primary btn--sm" style="margin-top:6px" onclick={() => app.setView("add-subject")}>
+          <Icon name="plus" size={13} /> New subject
+        </button>
+      {:else}
+        <p style="margin:0">Select a subject from the sidebar to get started.</p>
+      {/if}
     </div>
   </div>
 {/if}

@@ -200,6 +200,7 @@
       <div class="sb-subj">
         <div
           class="sb-subj-row{app.activeSubjectId === s.id && app.view !== 'dashboard' ? ' on' : ''}"
+          data-subject-id={s.id}
           onclick={() => clickSubject(s)}
           role="button"
           tabindex="0"
@@ -258,6 +259,8 @@
               {@const tOpen = openTopics.has(t.id)}
               <div
                 class="sb-topic"
+                data-topic-id={t.id}
+                data-subject-id={s.id}
                 onclick={() => clickTopic(s, t)}
                 role="button"
                 tabindex="0"

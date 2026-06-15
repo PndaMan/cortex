@@ -2,7 +2,44 @@
   // Themed right-click menu — replaces the bare WebKitGTK context menu so the
   // app stops feeling like a webview/PWA. Context-aware: editable targets get
   // Cut/Copy/Paste/Select all; plain text with a selection gets Copy/Select all.
+  // Right-clicking a sidebar subject/topic row gets Edit / Archive / Delete.
+  import { app } from "../lib/store.svelte";
   type Item = { label: string; key?: string; run: () => void; disabled?: boolean };
+
+  // Edit / Archive / Delete for a sidebar subject or topic row, or null if the
+  // target isn't one. Topic check first — a topic row is also inside a subject.
+  function entityItems(target: Element | null): Item[] | null {
+    const topicEl = target?.closest("[data-topic-id]") as HTMLElement | null;
+    if (topicEl) {
+      const tid = topicEl.dataset.topicId!;
+      const sid = topicEl.dataset.subjectId!;
+      const subj = app.subjects.find((s) => s.id === sid);
+      const topic = subj?.topics.find((t) => t.id === tid);
+      if (!topic) return null;
+      return [
+        { label: "Edit topic", run: () => app.openEdit({ kind: "topic", id: topic.id, name: topic.name, subjectId: sid, glyph: topic.glyph || "◆", tags: topic.tags ?? [] }) },
+        { label: "Delete topic", run: async () => {
+            if (await app.confirm({ title: `Delete topic "${topic.name}"?`, danger: true, okLabel: "Delete" })) app.deleteTopic(topic.id, sid);
+          } },
+      ];
+    }
+    const subjEl = target?.closest("[data-subject-id]") as HTMLElement | null;
+    if (subjEl) {
+      const sid = subjEl.dataset.subjectId!;
+      const s = app.subjects.find((x) => x.id === sid);
+      if (!s) return null;
+      return [
+        { label: "Edit subject", run: () => app.openEdit({ kind: "subject", id: s.id, name: s.name, code: s.code ?? "", glyph: s.glyph, color: app.subjectColor(s) }) },
+        { label: "Archive subject", run: async () => {
+            if (await app.confirm({ title: `Archive "${s.name}"?`, body: "Hidden everywhere but its data is kept. Restore from Settings → Data.", okLabel: "Archive" })) app.setSubjectArchived(s.id, true);
+          } },
+        { label: "Delete subject", run: async () => {
+            if (await app.confirm({ title: `Delete "${s.name}"?`, danger: true, okLabel: "Delete" })) app.deleteSubject(s.id);
+          } },
+      ];
+    }
+    return null;
+  }
 
   let open = $state(false);
   let x = $state(0);
@@ -56,6 +93,10 @@
   }
 
   function buildItems(target: Element | null): Item[] {
+    // Subject/topic rows get their own actions (and skip the text menu).
+    const entity = entityItems(target);
+    if (entity) return entity;
+
     const editable = isEditable(target);
     const out: Item[] = [];
 
