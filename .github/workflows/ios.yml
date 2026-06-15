@@ -1,0 +1,155 @@
+name: iOS
+
+# Builds the Cortex iOS app. Two paths:
+#   • simulator  — compiles the port for the iOS Simulator UNSIGNED. Needs NO Apple
+#                  account; this is the free "does the port build for iOS?" check.
+#   • testflight — signed App Store / TestFlight build. MANUAL only (run from the
+#                  Actions tab with sign = true). Reuses the Production-environment
+#                  secrets, BUT iOS signing needs more than the macOS notarization set:
+#                    - APPLE_CERTIFICATE must be an Apple **Distribution** (iOS) cert.
+#                      The macOS "Developer ID Application" cert will NOT sign for the
+#                      App Store — if that's what's stored, add an iOS distribution
+#                      cert (swap the secret, or add APPLE_IOS_CERTIFICATE and wire it).
+#                    - IOS_PROVISIONING_PROFILE_BASE64 — NEW secret: a base64 of a
+#                      .mobileprovision for the App ID `study.cortex.app`.
+#                    - `study.cortex.app` registered as an App ID in App Store Connect.
+#                    - APPLE_ID + APPLE_PASSWORD (an app-specific password) for upload.
+#                  Missing any of those → the testflight job fails at signing/upload;
+#                  the simulator job still proves the code compiles for iOS.
+#
+# Never runs on `main` — only a mobile branch or a manual dispatch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: "Also run the signed TestFlight build (needs iOS cert + provisioning profile)"
+        type: boolean
+        default: false
+  push:
+    branches: [mobile, mobile-ios]
+
+jobs:
+  simulator:
+    name: iOS Simulator (unsigned compile check)
+    # Runs on every mobile-branch push and on a manual dispatch unless sign==true.
+    if: ${{ github.event_name == 'push' || inputs.sign != true }}
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Install Rust (iOS simulator target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Initialise the iOS project
+        run: cargo tauri ios init --ci
+
+      - name: Build for the iOS Simulator (unsigned)
+        run: cargo tauri ios build --target aarch64-sim --ci
+
+      - name: Upload app artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cortex-ios-simulator
+          path: src-tauri/gen/apple/build/**
+          if-no-files-found: ignore
+
+  testflight:
+    name: iOS TestFlight (signed)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.sign == true }}
+    runs-on: macos-14
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+
+      - name: Install Rust (iOS device target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      # Import the iOS signing certificate. This MUST be an Apple Distribution /
+      # iOS Distribution cert — the macOS "Developer ID" cert will not sign for the
+      # App Store. Fails loudly so a wrong cert is obvious.
+      - name: Import signing certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -e
+          echo "$APPLE_CERTIFICATE" | base64 --decode > cert.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security default-keychain -s build.keychain
+          security list-keychains -d user -s build.keychain login.keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          echo "Signing identities available:"
+          security find-identity -v -p codesigning build.keychain
+
+      # Install the provisioning profile (NEW secret: base64 of a .mobileprovision
+      # for study.cortex.app). Required for an App Store / TestFlight export.
+      - name: Install provisioning profile
+        env:
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          if [ -z "$IOS_PROVISIONING_PROFILE_BASE64" ]; then
+            echo "::error::IOS_PROVISIONING_PROFILE_BASE64 is not set. Add a base64-encoded .mobileprovision for study.cortex.app (Apple Developer → Profiles)."
+            exit 1
+          fi
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/cortex.mobileprovision"
+
+      - name: Initialise the iOS project
+        run: cargo tauri ios init --ci
+
+      - name: Build signed IPA (App Store)
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: cargo tauri ios build --export-method app-store-connect --ci
+
+      - name: Upload to App Store Connect (TestFlight)
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: |
+          set -e
+          IPA="$(find src-tauri/gen/apple/build -name '*.ipa' | head -1)"
+          if [ -z "$IPA" ]; then echo "::error::No .ipa produced"; exit 1; fi
+          echo "Uploading $IPA to App Store Connect…"
+          xcrun altool --upload-app -t ios -f "$IPA" -u "$APPLE_ID" -p "$APPLE_PASSWORD"
+
+      - name: Upload IPA artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cortex-ios-ipa
+          path: src-tauri/gen/apple/build/**/*.ipa
+          if-no-files-found: ignore

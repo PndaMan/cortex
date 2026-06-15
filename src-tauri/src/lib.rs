@@ -27,6 +27,8 @@ use db::AppState;
 use tauri::Manager;
 
 /// Reveal (and focus) the main window — used by the tray's Open and left-click.
+/// Desktop-only: its callers (tray + single-instance) don't exist on mobile.
+#[cfg(desktop)]
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -37,16 +39,22 @@ fn show_main_window(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        // Single instance MUST be the first plugin. A second launch (e.g. from
-        // the app menu while Cortex is already running) just reveals/focuses the
-        // existing window instead of spawning another process.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            show_main_window(app);
-        }))
+    let mut builder = tauri::Builder::default();
+    // Desktop-only plugins. Single-instance (a second launch reveals/focuses the
+    // existing window instead of spawning another process) and the auto-updater
+    // don't exist on mobile, where the OS / app store handle those. Gated so the
+    // iOS/Android build links without them.
+    #[cfg(desktop)]
+    {
+        builder = builder
+            .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+                show_main_window(app);
+            }))
+            .plugin(tauri_plugin_updater::Builder::new().build());
+    }
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         // Moodle SSO callback: the launch flow redirects to cortexmoodle://token=…
         // This handler receives the RAW callback URI (so the base64 token isn't
@@ -98,6 +106,8 @@ pub fn run() {
 
             // Tray icon: lets the app keep working (ingest, generation, music)
             // after the window is closed. Left-click or "Open" reopens it.
+            // Desktop-only — there is no system tray on iOS/Android.
+            #[cfg(desktop)]
             {
                 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
                 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
