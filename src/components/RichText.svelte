@@ -4,23 +4,37 @@
   // chips that are clickable (open the cited source). Rendered as real elements
   // (no innerHTML) so it's safe and the citations stay interactive.
   import { app } from "../lib/store.svelte";
+  import katex from "katex";
+  import "katex/dist/katex.min.css";
 
   let { text }: { text: string } = $props();
 
-  type Inline = { t: "text" | "b" | "i" | "code" | "cite"; v: string };
+  // Render a LaTeX string to KaTeX HTML. throwOnError:false → invalid math shows as
+  // its source rather than crashing. KaTeX emits its own sanitized markup (it never
+  // passes through arbitrary HTML), so {@html} of the result stays safe.
+  function renderMath(src: string, display: boolean): string {
+    try {
+      return katex.renderToString(src, { displayMode: display, throwOnError: false });
+    } catch {
+      return src.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
+    }
+  }
+
+  type Inline = { t: "text" | "b" | "i" | "code" | "cite" | "math"; v: string };
   type CalloutKind = "note" | "tip" | "warning" | "important" | "example";
   type Block =
     | { type: "h2" | "h3" | "p"; text: string }
     | { type: "image"; src: string; alt: string }
     | { type: "hr" }
     | { type: "code"; text: string }
+    | { type: "math"; text: string }
     | { type: "barchart"; bars: { label: string; value: number }[] }
     | { type: "ul" | "ol"; items: string[] }
     | { type: "table"; head: string[]; rows: string[][] }
     | { type: "quote"; lines: string[] }
     | { type: "callout"; kind: CalloutKind; title: string; lines: string[] };
 
-  const INLINE_RE = /⟦([^⟧]+)⟧|\*\*([^*]+)\*\*|`([^`]+)`|\*([^*\n]+)\*/g;
+  const INLINE_RE = /⟦([^⟧]+)⟧|\*\*([^*]+)\*\*|`([^`]+)`|\\\(([^\n]+?)\\\)|\*([^*\n]+)\*/g;
 
   function inlineTokens(s: string): Inline[] {
     const out: Inline[] = [];
@@ -32,7 +46,8 @@
       if (m[1] !== undefined) out.push({ t: "cite", v: m[1].trim() });
       else if (m[2] !== undefined) out.push({ t: "b", v: m[2] });
       else if (m[3] !== undefined) out.push({ t: "code", v: m[3] });
-      else if (m[4] !== undefined) out.push({ t: "i", v: m[4] });
+      else if (m[4] !== undefined) out.push({ t: "math", v: m[4] });
+      else if (m[5] !== undefined) out.push({ t: "i", v: m[5] });
       last = m.index + m[0].length;
     }
     if (last < s.length) out.push({ t: "text", v: s.slice(last) });
@@ -87,6 +102,25 @@
       }
       if (t.startsWith("```")) { flushAll(); code = []; codeLang = t.slice(3).trim().toLowerCase(); continue; }
       if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) { flushAll(); blocks.push({ type: "hr" }); continue; }
+
+      // ── $$ display-math block (single- or multi-line) ──
+      if (t.startsWith("$$")) {
+        flushAll();
+        const inner = t.slice(2);
+        if (inner.trim().endsWith("$$") && inner.trim().length >= 2) {
+          blocks.push({ type: "math", text: inner.slice(0, inner.lastIndexOf("$$")).trim() });
+        } else {
+          const buf: string[] = inner.trim() ? [inner] : [];
+          idx++;
+          while (idx < lines.length && !lines[idx].includes("$$")) { buf.push(lines[idx]); idx++; }
+          if (idx < lines.length) {
+            const before = lines[idx].slice(0, lines[idx].indexOf("$$"));
+            if (before.trim()) buf.push(before);
+          }
+          blocks.push({ type: "math", text: buf.join("\n").trim() });
+        }
+        continue;
+      }
 
       // ── standalone image: a line that is just ![alt](url) ──
       const im = /^!\[([^\]]*)\]\(([^)\s]+)\)$/.exec(t);
@@ -187,6 +221,7 @@
     {:else if tok.t === "i"}<em>{tok.v}</em>
     {:else if tok.t === "code"}<code class="rt-code">{tok.v}</code>
     {:else if tok.t === "cite"}<button type="button" class="cite rt-cite" onclick={() => openCite(tok.v)}>{tok.v}</button>
+    {:else if tok.t === "math"}<span class="rt-math-inline">{@html renderMath(tok.v, false)}</span>
     {:else}{tok.v}{/if}
   {/each}
 {/snippet}
@@ -203,6 +238,8 @@
       <img class="rt-img" src={b.src} alt={b.alt} loading="lazy" />
     {:else if b.type === "code"}
       <pre class="rt-pre"><code>{b.text}</code></pre>
+    {:else if b.type === "math"}
+      <div class="rt-math">{@html renderMath(b.text, true)}</div>
     {:else if b.type === "barchart"}
       {@const max = Math.max(...b.bars.map((x) => Math.abs(x.value)), 1)}
       <div class="rt-chart">
