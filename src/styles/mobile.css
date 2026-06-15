@@ -49,3 +49,43 @@ html[data-mobile] .subj-tab {
   display: inline-flex;
   align-items: center;
 }
+
+/* ── Per-view touch passes (Phase 1, increment 2) ─────────────────────────── */
+
+/* Settings: the 220px nav + content two-pane (app.css .settings) has no mobile
+ * breakpoint, so it stays cramped on a phone. Stack it into one scrolling column
+ * (nav list on top, pane below). A horizontal segmented nav is a later polish. */
+html[data-mobile] .settings {
+  display: block;
+  overflow: visible;
+}
+html[data-mobile] .set-nav {
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+}
+html[data-mobile] .set-body {
+  overflow: visible;
+}
+html[data-mobile] .set-pane {
+  padding: var(--sp-5) var(--sp-4) var(--sp-8);
+}
+
+/* Materials: per-card actions are hover-revealed (.mat-act opacity:0) — there's no
+ * hover on touch, so always show them. */
+html[data-mobile] .mat-act {
+  opacity: 1 !important;
+}
+
+/* Cheatsheet: the floating section index (.cs-index, position:fixed) opens on
+ * hover and overlaps content — no touch equivalent, so hide it on mobile. Topics
+ * stay reachable via the .cs-tabs row; the cheatsheet-layout rail already
+ * collapses below 720px (app.css). */
+html[data-mobile] .cs-index {
+  display: none;
+}
+
+/* Calendar: a true agenda-first view is a later increment; for now keep the month
+ * day-cells tappable. */
+html[data-mobile] .cal-cell {
+  min-height: 44px;
+}
