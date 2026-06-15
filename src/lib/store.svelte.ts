@@ -1468,6 +1468,37 @@ class AppStore {
   }
 
   // ---- themed dialogs (confirm / prompt) ----
+  // Auto-updater: check the GitHub Releases endpoint, and on confirmation
+  // download + install + relaunch. `silent` suppresses the "up to date" / error
+  // toasts (used for an unobtrusive background check).
+  updateChecking = $state(false);
+  async checkForUpdates(silent = false) {
+    if (this.updateChecking) return;
+    this.updateChecking = true;
+    try {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const update = await check();
+      if (!update) {
+        if (!silent) this.pushToast({ kind: "success", title: "You're up to date", body: "Cortex is running the latest version." });
+        return;
+      }
+      const ok = await this.confirm({
+        title: `Update to ${update.version}?`,
+        body: update.body?.trim() || "A new version of Cortex is available.",
+        okLabel: "Update & restart",
+      });
+      if (!ok) return;
+      this.pushToast({ kind: "info", title: "Downloading update…", body: "Cortex will restart when it's ready." });
+      await update.downloadAndInstall();
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+      await relaunch();
+    } catch (e) {
+      if (!silent) this.pushToast({ kind: "error", title: "Update check failed", body: String(e) });
+    } finally {
+      this.updateChecking = false;
+    }
+  }
+
   #dialogResolve: ((v: any) => void) | null = null;
   /** Themed replacement for window.confirm. Resolves true on OK, false otherwise. */
   confirm(opts: { title: string; body?: string; danger?: boolean; okLabel?: string }): Promise<boolean> {

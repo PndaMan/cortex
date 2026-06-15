@@ -18,6 +18,8 @@ tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"]
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 base64 = "0.22"
 percent-encoding = "2"
 serde = { version = "1", features = ["derive"] }

@@ -2143,7 +2143,18 @@ Notes: {about}</pre>
         <div class="set-card">
           <div class="set-row">
             <div class="set-row-l"><div class="set-row-t">Version</div></div>
-            <div class="set-row-r"><span class="mono faint">0.1.0 · build 2026.06.02</span></div>
+            <div class="set-row-r"><span class="mono faint">1.0.2</span></div>
+          </div>
+          <div class="set-row">
+            <div class="set-row-l">
+              <div class="set-row-t">Updates</div>
+              <div class="set-row-d">Check GitHub for a newer release and install it.</div>
+            </div>
+            <div class="set-row-r">
+              <button class="btn" onclick={() => app.checkForUpdates()} disabled={app.updateChecking}>
+                <Icon name="refresh" size={12} /> {app.updateChecking ? "Checking…" : "Check for updates"}
+              </button>
+            </div>
           </div>
           <div class="set-row">
             <div class="set-row-l"><div class="set-row-t">Engine</div></div>
