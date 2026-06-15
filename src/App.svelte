@@ -177,10 +177,12 @@
     }
     function onZoomKey(e: KeyboardEvent) {
       if (!(e.ctrlKey || e.metaKey)) return;
-      if (["=", "+", "-", "_", "0"].includes(e.key)) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
+      // Repurpose the native zoom combos to drive Cortex's OWN UI scale (CSS zoom),
+      // so Cmd/Ctrl +/- actually resize the app on every OS (incl. macOS) without the
+      // zoomable-web-page feel, and Cmd/Ctrl 0 resets to 100%.
+      if (["=", "+"].includes(e.key)) { e.preventDefault(); e.stopPropagation(); app.setUiScale(app.uiScale + 10); }
+      else if (["-", "_"].includes(e.key)) { e.preventDefault(); e.stopPropagation(); app.setUiScale(app.uiScale - 10); }
+      else if (e.key === "0") { e.preventDefault(); e.stopPropagation(); app.setUiScale(100); }
     }
     // passive:false is required for preventDefault on wheel.
     window.addEventListener("wheel", onWheel, { passive: false, capture: true });
