@@ -55,21 +55,31 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
+          set +e
           if [ -z "$APPLE_CERTIFICATE" ]; then echo "No signing cert configured — building unsigned."; exit 0; fi
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          # Put the build keychain in codesign's SEARCH LIST (default alone isn't enough).
-          security list-keychains -d user -s build.keychain login.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
-          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          # Import FIRST; only adopt the keychain if it works. On failure, tear it
+          # down and exit clean so the build proceeds UNSIGNED (no broken keychain).
+          if ! security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign; then
+            echo "::warning::Apple cert import failed (wrong .p12 password?) — building UNSIGNED."
+            security delete-keychain build.keychain 2>/dev/null
+            exit 0
+          fi
+          security default-keychain -s build.keychain
+          security list-keychains -d user -s build.keychain login.keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           echo "Identities in keychain:"; security find-identity -v -p codesigning build.keychain
           # Prefer a Developer ID Application identity (required for notarization).
           CERT_ID=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)".*/\1/')
           [ -z "$CERT_ID" ] && CERT_ID=$(security find-identity -v -p codesigning build.keychain | grep -o '"[^"]*"' | head -1 | tr -d '"')
-          [ -z "$CERT_ID" ] && { echo "No usable signing identity — building unsigned."; exit 1; }
+          if [ -z "$CERT_ID" ]; then
+            echo "::warning::No usable signing identity — building unsigned."
+            security delete-keychain build.keychain 2>/dev/null
+            exit 0
+          fi
           echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
           echo "ok=true" >> "$GITHUB_OUTPUT"
           echo "Using signing identity: $CERT_ID"
