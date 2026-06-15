@@ -39,26 +39,29 @@ jobs:
     runs-on: ${{ matrix.platform }}
     # Signing secrets live in the "Production" environment.
     environment: Production
-    # Signing secrets surfaced as env so steps can gate on their presence
-    # (the `secrets` context isn't allowed in `if:`). All optional — when unset,
-    # the build is simply unsigned and everything still works.
+    # Notarization creds are safe to expose to tauri-action; the cert itself is
+    # NOT (it's only given to the import step below, so tauri-action doesn't
+    # re-import it and fail on a cert/password issue).
     env:
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
-      # ── macOS code signing + notarization (only when the cert secret is set) ──
-      # Best-effort: a bad cert/password logs a warning and the build continues
-      # UNSIGNED rather than failing the whole release.
+      # ── macOS code signing + notarization ──
+      # Imports the cert into a keychain and exports the signing identity for
+      # tauri-action. Best-effort: any failure logs a warning and the build
+      # continues UNSIGNED rather than failing the whole release.
       - name: Import Apple Developer certificate
-        if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
+        if: matrix.platform == 'macos-latest'
         continue-on-error: true
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then echo "No signing cert configured — building unsigned."; exit 0; fi
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
@@ -66,9 +69,12 @@ jobs:
           security set-keychain-settings -t 3600 -u build.keychain
           security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          CERT_ID=$(security find-identity -v -p codesigning build.keychain | grep -o '"[^"]*"' | head -1 | tr -d '"')
+          echo "Identities in keychain:"; security find-identity -v -p codesigning build.keychain
+          # Prefer a Developer ID Application identity (required for notarization).
+          CERT_ID=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)".*/\1/')
+          [ -z "$CERT_ID" ] && CERT_ID=$(security find-identity -v -p codesigning build.keychain | grep -o '"[^"]*"' | head -1 | tr -d '"')
           echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
-          echo "Imported signing identity: $CERT_ID"
+          echo "Using signing identity: $CERT_ID"
 
       - name: Install Linux build dependencies
         if: matrix.platform == 'ubuntu-22.04'
