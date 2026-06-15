@@ -34,7 +34,10 @@
     | { type: "quote"; lines: string[] }
     | { type: "callout"; kind: CalloutKind; title: string; lines: string[] };
 
-  const INLINE_RE = /⟦([^⟧]+)⟧|\*\*([^*]+)\*\*|`([^`]+)`|\\\(([^\n]+?)\\\)|\*([^*\n]+)\*/g;
+  // Math is matched BEFORE italics so a `*` inside an expression can't trigger <em>.
+  // \(…\) is unambiguous; bare $…$ is guarded (open not followed by space, close not
+  // followed by a digit) so currency like "$5" / "$5 and $10" is left alone.
+  const INLINE_RE = /⟦([^⟧]+)⟧|\*\*([^*]+)\*\*|`([^`]+)`|\\\(([^\n]+?)\\\)|\$(?!\s)([^$\n]*?[^\s$])\$(?!\d)|\*([^*\n]+)\*/g;
 
   function inlineTokens(s: string): Inline[] {
     const out: Inline[] = [];
@@ -47,7 +50,8 @@
       else if (m[2] !== undefined) out.push({ t: "b", v: m[2] });
       else if (m[3] !== undefined) out.push({ t: "code", v: m[3] });
       else if (m[4] !== undefined) out.push({ t: "math", v: m[4] });
-      else if (m[5] !== undefined) out.push({ t: "i", v: m[5] });
+      else if (m[5] !== undefined) out.push({ t: "math", v: m[5] });
+      else if (m[6] !== undefined) out.push({ t: "i", v: m[6] });
       last = m.index + m[0].length;
     }
     if (last < s.length) out.push({ t: "text", v: s.slice(last) });
