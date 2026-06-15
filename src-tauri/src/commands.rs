@@ -2909,6 +2909,60 @@ pub async fn install_dependencies() -> Result<String> {
     .map_err(|e| Error::Other(e.to_string()))?
 }
 
+#[derive(serde::Serialize)]
+pub struct FolderFile {
+    pub path: String,
+    pub name: String,
+}
+
+/// Recursively list the ingestable files in a folder (the supported source types),
+/// so "Add folder" can queue each one. Bounded depth + capped count so a huge tree
+/// can't hang the UI. Skips hidden dirs and anything Cortex can't parse.
+#[tauri::command]
+pub fn list_folder_sources(dir: String) -> Result<Vec<FolderFile>> {
+    const EXTS: &[&str] = &[
+        "pdf", "docx", "pptx", "doc", "ppt", "txt", "md", "png", "jpg", "jpeg", "webp",
+    ];
+    fn walk(dir: &Path, out: &mut Vec<FolderFile>, depth: usize) {
+        if depth > 8 || out.len() >= 500 {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for entry in rd.flatten() {
+            if out.len() >= 500 {
+                return;
+            }
+            let p = entry.path();
+            let hidden = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with('.'))
+                .unwrap_or(false);
+            if hidden {
+                continue;
+            }
+            if p.is_dir() {
+                walk(&p, out, depth + 1);
+            } else if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                if EXTS.contains(&ext.to_lowercase().as_str()) {
+                    let name = p
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("file")
+                        .to_string();
+                    out.push(FolderFile {
+                        path: p.to_string_lossy().into_owned(),
+                        name,
+                    });
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(Path::new(&dir), &mut out, 0);
+    Ok(out)
+}
+
 /// Restrict a client-supplied audio extension to known containers so it can't
 /// smuggle path separators or oddities into the recordings filename.
 fn sanitize_ext(ext: Option<&str>) -> &'static str {

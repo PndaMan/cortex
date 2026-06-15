@@ -1233,6 +1233,22 @@ Notes: {about}</pre>
         </header>
 
         <section class="set-group">
+          <div class="set-group-h"><h3 class="set-group-t">Display</h3></div>
+          <div class="set-card">
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">UI scale</div>
+                <div class="set-row-d">Make everything larger or smaller — helps on high-resolution displays.</div>
+              </div>
+              <div class="row-inline">
+                <input type="range" min="80" max="150" step="5" value={app.uiScale} oninput={(e) => app.setUiScale(+e.currentTarget.value)} aria-label="UI scale" />
+                <span class="mono" style="min-width:42px;text-align:right">{app.uiScale}%</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Theme</h3></div>
           <div class="set-card">
             <div class="set-row">

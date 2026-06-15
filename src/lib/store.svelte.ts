@@ -762,6 +762,13 @@ class AppStore {
         const v = parseInt(all["pomo_" + k] ?? "", 10);
         if (Number.isFinite(v) && v > 0) (this.pomo as unknown as Record<string, number>)[k] = v;
       }
+      // Restore UI scale (CSS zoom on the root — distinct from webview zoom, which is
+      // disabled). Lets the UI feel right on high-resolution displays.
+      {
+        const sc = parseInt(all["ui_scale"] ?? "", 10);
+        if (Number.isFinite(sc) && sc >= 70 && sc <= 160) this.uiScale = sc;
+      }
+      this.applyUiScale();
     } catch {
       this.applyTheme(this.theme);
     }
@@ -1338,6 +1345,19 @@ class AppStore {
     this.theme = t;
     this.applyTheme(t);
     api.setSetting("theme", t).catch(() => {});
+  }
+  uiScale = $state<number>(100);
+  /** Apply the UI scale as a CSS zoom on the document root (NOT webview zoom, which is
+   *  disabled) + mirror to localStorage so the next launch paints at the right size. */
+  applyUiScale() {
+    const z = Math.max(70, Math.min(160, this.uiScale)) / 100;
+    document.documentElement.style.zoom = String(z);
+    try { localStorage.setItem("cortex-ui-scale", String(this.uiScale)); } catch { /* storage off */ }
+  }
+  setUiScale(v: number) {
+    this.uiScale = Math.max(70, Math.min(160, Math.round(v)));
+    this.applyUiScale();
+    api.setSetting("ui_scale", String(this.uiScale)).catch(() => {});
   }
   /** Read the desktop's current Omarchy theme and adopt it if it maps to one of
    *  Cortex's palettes. Returns the matched theme, or null if none/unavailable.

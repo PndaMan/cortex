@@ -112,6 +112,34 @@
     }
   }
 
+  /** Pick a folder and queue every supported file inside it (recursively). */
+  async function beginFolder() {
+    if (!guardSubject()) return;
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const dir = await open({ directory: true, multiple: false });
+      if (!dir || typeof dir !== "string") return;
+      const files = await api.listFolderSources(dir);
+      if (files.length === 0) {
+        app.pushToast({ kind: "warning", title: "Nothing to import", body: "No PDFs, slides, docs or images in that folder." });
+        return;
+      }
+      const imgExts = ["png", "jpg", "jpeg", "webp"];
+      for (const f of files) {
+        const ext = (f.name.split(".").pop() ?? "").toLowerCase();
+        const input: Parameters<typeof api.addSource>[0] = imgExts.includes(ext)
+          ? { subject_id: selectedSubjectId, topic_id: topicId, path: f.path, kind: "image", name: f.name, tags: [] }
+          : { subject_id: selectedSubjectId, topic_id: topicId, path: f.path, name: f.name, tags: [] };
+        queueIngest(input, f.name);
+      }
+      app.pushToast({ kind: "info", title: `Ingesting ${files.length} file${files.length === 1 ? "" : "s"}`, body: "Folder contents added to the queue." });
+      app.openSubject(selectedSubjectId);
+      app.setTab("sources");
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Folder import failed", body: String(e) });
+    }
+  }
+
   function beginUrl() {
     if (!guardSubject()) return;
     if (!value.trim()) return;
@@ -301,9 +329,12 @@
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="add-drop addsrc-drop" onclick={beginUpload}>
             <Icon name="doc" size={22} color="var(--fg-faint)" />
-            <span class="mono">Click to browse — select one or many files</span>
-            <span class="mono faint">PDF · PPTX · DOCX · TXT · MD</span>
+            <span class="mono">Drag files in, or click to browse — one or many</span>
+            <span class="mono faint">PDF · PPTX · DOCX · TXT · MD · images</span>
           </div>
+          <button class="btn btn--ghost btn--sm" style="margin-top:8px" onclick={beginFolder}>
+            <Icon name="grid" size={12} /> Add a folder — imports every supported file inside
+          </button>
         {:else if method === "photo"}
           <span class="onb-label mono">SNAP PHOTO</span>
           <!-- svelte-ignore a11y_click_events_have_key_events -->

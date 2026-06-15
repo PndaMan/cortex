@@ -15,6 +15,14 @@ try {
   }
 } catch { /* storage unavailable — default theme stands */ }
 
+// Same idea for the UI scale: a CSS `zoom` on the root (NOT webview zoom, which is
+// disabled in App.svelte) so the UI feels right on high-resolution displays. Applied
+// pre-paint from the localStorage mirror; the store reconciles it from settings on init.
+try {
+  const sc = localStorage.getItem("cortex-ui-scale");
+  if (sc && /^\d{2,3}$/.test(sc)) document.documentElement.style.zoom = String(Number(sc) / 100);
+} catch { /* storage unavailable */ }
+
 import { mount } from "svelte";
 import App from "./App.svelte";
 

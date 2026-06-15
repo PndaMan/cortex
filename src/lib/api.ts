@@ -244,6 +244,8 @@ export interface DepStatus { name: string; detail: string; present: boolean }
 export interface DependencyReport { manager: string; deps: DepStatus[]; install_command: string; note: string }
 export const dependencyStatus = () => invoke<DependencyReport>("dependency_status");
 export const installDependencies = () => invoke<string>("install_dependencies");
+export interface FolderFile { path: string; name: string }
+export const listFolderSources = (dir: string) => invoke<FolderFile[]>("list_folder_sources", { dir });
 
 // ---- per-subject module framework ----
 export interface FrameworkMeta {
