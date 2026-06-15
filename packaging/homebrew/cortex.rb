@@ -8,11 +8,11 @@ cask "cortex" do
   version "1.0.6"
 
   on_arm do
-    sha256 "REPLACE_WITH_AARCH64_DMG_SHA256"
+    sha256 "b55c18049ccb04578a3e80ec594a369073fdc7036eee09c3d5d0aefa458de5e2"
     url "https://github.com/PndaMan/cortex/releases/download/v#{version}/Cortex_#{version}_aarch64.dmg"
   end
   on_intel do
-    sha256 "REPLACE_WITH_X64_DMG_SHA256"
+    sha256 "ff67a7b777c25711c35a2a9f5553198d839b785ece81ff8f1c80a5d60b3ab25e"
     url "https://github.com/PndaMan/cortex/releases/download/v#{version}/Cortex_#{version}_x64.dmg"
   end
 
@@ -22,9 +22,6 @@ cask "cortex" do
 
   app "Cortex.app"
 
-  # Until the app is notarized, Gatekeeper quarantines it. Either notarize (see
-  # SIGNING.md) or tell users to clear the quarantine flag once after install:
-  #   xattr -dr com.apple.quarantine "/Applications/Cortex.app"
   zap trash: [
     "~/Library/Application Support/study.cortex.app",
     "~/Library/Caches/study.cortex.app",
