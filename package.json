@@ -15,12 +15,14 @@
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-dialog": "^2.2.0",
     "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-updater": "^2.10.1"
+    "@tauri-apps/plugin-updater": "^2.10.1",
+    "katex": "^0.17.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@tauri-apps/cli": "^2.1.0",
     "@tsconfig/svelte": "^5.0.4",
+    "@types/katex": "^0.16.8",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "svelte": "^5.56.3",
