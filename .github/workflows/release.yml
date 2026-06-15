@@ -137,3 +137,76 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  # ── Publish the release, then update AUR + Homebrew tap automatically ──
+  # Runs only after every matrix build succeeds (so all assets exist), on tag
+  # pushes. Computes checksums from the published assets and pushes the updated
+  # PKGBUILD (AUR) and Cask (tap) — zero manual checksum edits per release.
+  publish-packages:
+    needs: release
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish release & compute checksums
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"; VER="${TAG#v}"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          mkdir -p dl
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -D dl \
+            -p "Cortex_${VER}_amd64.deb" -p "Cortex_${VER}_aarch64.dmg" -p "Cortex_${VER}_x64.dmg"
+          {
+            echo "ver=$VER"
+            echo "deb=$(sha256sum dl/Cortex_${VER}_amd64.deb | cut -d' ' -f1)"
+            echo "arm=$(sha256sum dl/Cortex_${VER}_aarch64.dmg | cut -d' ' -f1)"
+            echo "x64=$(sha256sum dl/Cortex_${VER}_x64.dmg | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Update PKGBUILD with new version + checksum
+        run: |
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.meta.outputs.ver }}/" packaging/aur/PKGBUILD
+          sed -i "s|^sha256sums=.*|sha256sums=('${{ steps.meta.outputs.deb }}')|" packaging/aur/PKGBUILD
+
+      - name: Push to the AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        with:
+          pkgname: cortex-bin
+          pkgbuild: packaging/aur/PKGBUILD
+          commit_username: Aidan McConnon
+          commit_email: aidanmcconnon210@gmail.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "cortex-bin ${{ steps.meta.outputs.ver }}"
+
+      - name: Push Cask to Homebrew tap
+        env:
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          VER: ${{ steps.meta.outputs.ver }}
+          ARM: ${{ steps.meta.outputs.arm }}
+          X64: ${{ steps.meta.outputs.x64 }}
+        run: |
+          mkdir -p ~/.ssh && printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/tap && chmod 600 ~/.ssh/tap
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap -o StrictHostKeyChecking=accept-new"
+          git clone git@github.com:PndaMan/homebrew-cortex.git tap
+          mkdir -p tap/Casks
+          # Regenerate the Cask from the committed template, swapping version + the
+          # two dmg checksums (arm in the on_arm block, x64 in on_intel).
+          awk -v ver="$VER" -v arm="$ARM" -v x64="$X64" '
+            /^[[:space:]]*version /{ print "  version \"" ver "\""; next }
+            /on_arm do/{blk="arm"} /on_intel do/{blk="x64"}
+            /^[[:space:]]*sha256 /{
+              if(blk=="arm"){print "    sha256 \"" arm "\""; blk=""; next}
+              if(blk=="x64"){print "    sha256 \"" x64 "\""; blk=""; next}
+            }
+            {print}
+          ' packaging/homebrew/cortex.rb > tap/Casks/cortex.rb
+          cd tap
+          git config user.name "Aidan McConnon"
+          git config user.email "aidanmcconnon210@gmail.com"
+          git add Casks/cortex.rb
+          git diff --cached --quiet && { echo "Cask unchanged"; exit 0; }
+          git commit -m "cortex ${VER}"
+          git push origin main
