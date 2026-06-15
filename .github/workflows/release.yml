@@ -53,8 +53,11 @@ jobs:
       - uses: actions/checkout@v4
 
       # ── macOS code signing + notarization (only when the cert secret is set) ──
+      # Best-effort: a bad cert/password logs a warning and the build continues
+      # UNSIGNED rather than failing the whole release.
       - name: Import Apple Developer certificate
         if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
+        continue-on-error: true
         run: |
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
@@ -102,11 +105,12 @@ jobs:
           # Tells scripts/fetch-sidecars.mjs (run via beforeBuildCommand) which
           # triple to fetch binaries for; empty → the runner's host triple.
           SIDECAR_TARGET: ${{ matrix.sidecar-target }}
-          # macOS signing + notarization — tauri-action only signs when these are
-          # set (APPLE_SIGNING_IDENTITY comes from the import step above).
+          # macOS signing + notarization. The cert is imported into the keychain
+          # by the step above (which sets APPLE_SIGNING_IDENTITY only on success),
+          # so we DON'T pass APPLE_CERTIFICATE here — that keeps a bad-password
+          # cert from failing the build; signing simply no-ops when the identity
+          # is empty.
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
