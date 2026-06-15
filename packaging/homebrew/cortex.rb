@@ -5,7 +5,7 @@
 # Bump `version` + both sha256 on each release:
 #   shasum -a 256 Cortex_1.0.1_aarch64.dmg
 cask "cortex" do
-  version "1.0.6"
+  version "1.0.7"
 
   on_arm do
     sha256 "b55c18049ccb04578a3e80ec594a369073fdc7036eee09c3d5d0aefa458de5e2"

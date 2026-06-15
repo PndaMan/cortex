@@ -3,7 +3,7 @@
 # compile). Bump pkgver + sha256sums on each release, regenerate .SRCINFO
 # (`makepkg --printsrcinfo > .SRCINFO`), and push to the AUR git remote.
 pkgname=cortex-bin
-pkgver=1.0.6
+pkgver=1.0.7
 pkgrel=1
 pkgdesc="Local-first, open-source NotebookLM alternative — a desktop study OS"
 arch=('x86_64')
