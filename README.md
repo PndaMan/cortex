@@ -130,6 +130,20 @@ Build a production bundle:
 bun run tauri build
 ```
 
+### Demo / screenshot mode
+
+Run a throwaway instance pre-filled with rich showcase data (subjects, sources,
+cheatsheets, flashcards, a full assignment board, and weeks of backdated study
+activity for the analytics dashboard) — your real library is never touched:
+
+```bash
+./scripts/demo.sh          # launches against a separate demo database
+./scripts/demo.sh reset    # wipe + reseed it from scratch
+```
+
+Under the hood: `CORTEX_DATA_DIR` points the app at a separate folder and
+`CORTEX_DEMO=1` seeds that empty DB. Set those two env vars yourself to script it.
+
 > **Most tools ship inside the release builds.** `yt-dlp` (YouTube + music),
 > `age`, and `rclone` (encrypted backups) are bundled as sidecars by
 > [`scripts/fetch-sidecars.mjs`](scripts/fetch-sidecars.mjs) — no manual install.

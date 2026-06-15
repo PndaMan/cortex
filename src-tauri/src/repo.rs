@@ -3106,6 +3106,190 @@ thread_local! {
         std::cell::RefCell::new(Connection::open_in_memory().expect("scratch conn"));
 }
 
+/// Populate a FRESH database with a broad, realistic dataset for screenshots /
+/// demos — subjects, topics, sources, cheatsheets, flashcards & quizzes,
+/// assignments across the board columns, plus backdated study activity so the
+/// analytics dashboard is full. Guarded: it only runs on an empty library, so
+/// it can never clobber real data. Deterministic (fixed PRNG) for reproducible
+/// screenshots.
+pub fn seed_showcase(conn: &Connection) -> Result<()> {
+    if conn.query_row("SELECT COUNT(*) FROM subjects", [], |r| r.get::<_, i64>(0))? > 0 {
+        return Ok(()); // never seed over an existing library
+    }
+    let now = now_ms();
+    let day = 86_400_000i64;
+    // Tiny deterministic LCG so the showcase looks varied yet reproducible.
+    let mut seed: u64 = 0x9E3779B97F4A7C15;
+    let mut rnd = |n: u64| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) % n
+    };
+
+    struct Subj { name: &'static str, code: &'static str, glyph: &'static str, color: &'static str,
+        topics: &'static [(&'static str, &'static [(&'static str, &'static str)])] }
+    let subjects: &[Subj] = &[
+        Subj { name: "Cognitive Neuroscience", code: "NEU-301", glyph: "🧠", color: "#7c9cff", topics: &[
+            ("Neurons & Synapses", &[("lecture-02-action-potentials.pdf", "pdf"), ("synaptic-transmission.docx", "docx")]),
+            ("Memory Systems", &[("hippocampus-review.pdf", "pdf"), ("working-memory-notes.md", "md")]),
+            ("Visual Perception", &[("v1-pathways.pdf", "pdf"), ("attention-lecture.yt", "yt")]),
+        ]},
+        Subj { name: "Macroeconomics", code: "ECON-202", glyph: "📈", color: "#3ecf8e", topics: &[
+            ("Monetary Policy", &[("central-banking.pdf", "pdf"), ("inflation-targeting.web", "web")]),
+            ("Growth Models", &[("solow-model.pdf", "pdf"), ("endogenous-growth.md", "md")]),
+            ("Labour Markets", &[("unemployment-types.docx", "docx")]),
+        ]},
+        Subj { name: "Organic Chemistry", code: "CHEM-210", glyph: "⚗️", color: "#ff7a59", topics: &[
+            ("Reaction Mechanisms", &[("sn1-sn2.pdf", "pdf"), ("e1-e2-elimination.md", "md")]),
+            ("Stereochemistry", &[("chirality-lecture.pdf", "pdf")]),
+            ("Spectroscopy", &[("nmr-basics.pdf", "pdf"), ("ir-interpretation.web", "web")]),
+        ]},
+        Subj { name: "Modern World History", code: "HIST-150", glyph: "🏛️", color: "#d98cff", topics: &[
+            ("Industrial Revolution", &[("steam-and-society.pdf", "pdf"), ("factory-system.md", "md")]),
+            ("World Wars", &[("causes-of-wwi.pdf", "pdf"), ("interwar-period.docx", "docx")]),
+        ]},
+        Subj { name: "Linear Algebra", code: "MATH-204", glyph: "📐", color: "#ffc14d", topics: &[
+            ("Vector Spaces", &[("subspaces-basis.pdf", "pdf"), ("span-independence.md", "md")]),
+            ("Eigenvalues", &[("diagonalisation.pdf", "pdf")]),
+        ]},
+        Subj { name: "Software Architecture", code: "CS-340", glyph: "🖥️", color: "#5fd0ff", topics: &[
+            ("Design Patterns", &[("gof-patterns.pdf", "pdf"), ("solid-principles.md", "md")]),
+            ("Distributed Systems", &[("consensus-raft.pdf", "pdf"), ("cap-theorem.web", "web")]),
+        ]},
+    ];
+
+    // Subjects → topics → sources.
+    let mut subj_ids: Vec<(String, Vec<(String, String)>)> = Vec::new(); // (sid, [(tid, tname)])
+    for s in subjects {
+        let sid = insert_subject(conn, s.name, Some(s.code), Some(s.glyph), Some(s.color))?;
+        let mut topics = Vec::new();
+        for (tname, sources) in s.topics {
+            let tid = insert_topic(conn, &sid, tname, None, &[])?;
+            for (sname, kind) in *sources {
+                let src = insert_source(conn, &sid, Some(&tid), sname, kind, None)?;
+                finalize_source(
+                    conn, &src, "ready", Some("demo · 4 pages"),
+                    Some(&format!("Key ideas for {tname}: definitions, worked examples, and exam-relevant detail. {sname}")),
+                    None,
+                )?;
+                attach_tags(conn, &src, &["lecture".into()])?;
+            }
+            topics.push((tid, tname.to_string()));
+        }
+        subj_ids.push((sid, topics));
+    }
+
+    // Whole-subject cheatsheets for the first few subjects.
+    for (sid, topics) in subj_ids.iter().take(4) {
+        let mut sections = Vec::new();
+        for (i, (_tid, tname)) in topics.iter().enumerate() {
+            sections.push(CsSection {
+                id: new_id(),
+                title: tname.clone(),
+                state: "ready".into(),
+                items: vec![
+                    CsItem { t: "Core idea".into(), d: format!("The defining principle of {tname}, stated precisely with the conditions under which it holds.") },
+                    CsItem { t: "Why it matters".into(), d: format!("How {tname} connects to the wider topic and where it shows up in problems and exams.") },
+                    CsItem { t: "Worked example".into(), d: "A concrete walk-through from setup to answer, with the common pitfall flagged.".into() },
+                ],
+                image: None,
+                image_query: None,
+            });
+            if i >= 4 { break; }
+        }
+        save_cheatsheet(conn, sid, None, &sections)?;
+    }
+
+    // Flashcards + quiz materials for several subjects.
+    for (sid, topics) in subj_ids.iter().take(5) {
+        let (tid, tname) = &topics[0];
+        let deck: Vec<serde_json::Value> = (1..=8)
+            .map(|n| serde_json::json!({
+                "q": format!("{tname}: key question {n}?"),
+                "a": format!("A precise, exam-ready answer to question {n} about {tname}."),
+            }))
+            .collect();
+        save_material(conn, sid, Some(tid), "flashcards", &format!("{tname} flashcards"),
+            &format!("{} cards", deck.len()), &serde_json::Value::Array(deck))?;
+
+        let quiz: Vec<serde_json::Value> = (1..=6)
+            .map(|n| {
+                let ans = rnd(4) as usize;
+                serde_json::json!({
+                    "q": format!("{tname} — multiple choice {n}?"),
+                    "options": ["First option", "Second option", "Third option", "Fourth option"],
+                    "answer": ans,
+                    "explain": "The correct choice follows directly from the definition.",
+                })
+            })
+            .collect();
+        save_material(conn, sid, Some(tid), "quiz", &format!("{tname} quiz"),
+            &format!("{} questions", quiz.len()), &serde_json::Value::Array(quiz))?;
+    }
+
+    // Assignments / deadlines / exams spread across the board columns + calendar.
+    let kinds = ["assignment", "project", "exam", "deadline"];
+    let prios = ["high", "med", "low"];
+    let statuses = ["todo", "todo", "doing", "doing", "done"];
+    let titles = [
+        "Problem Set", "Literature Review", "Midterm", "Lab Report", "Essay",
+        "Group Project", "Reading Response", "Final Exam", "Take-home Quiz", "Presentation",
+    ];
+    for (i, (sid, topics)) in subj_ids.iter().enumerate() {
+        for j in 0..3 {
+            let kind = kinds[(i + j) % kinds.len()];
+            let title = format!("{} {}", subjects[i].name.split(' ').next().unwrap_or(""), titles[(i * 3 + j) % titles.len()]);
+            let due = now + (rnd(40) as i64 - 10) * day; // -10 .. +30 days
+            let topic_ids: Vec<String> = topics.iter().take(1 + (j % 2)).map(|(t, _)| t.clone()).collect();
+            let id = insert_event(
+                conn, Some(sid), &title, Some("Seeded demo assignment."), None, None,
+                due, None, true, kind, None, &[], Some(prios[(i + j) % prios.len()]), &topic_ids,
+            )?;
+            set_event_status(conn, &id, statuses[(i * 3 + j) % statuses.len()])?;
+        }
+    }
+
+    // Backdated focus sessions (~6 weeks) → heatmap, focus-by-hour clock, bars.
+    for d in 0..42i64 {
+        let sessions_today = rnd(4); // 0..3 study blocks per day
+        for _ in 0..sessions_today {
+            let (sid, _) = &subj_ids[rnd(subj_ids.len() as u64) as usize];
+            let hour = 8 + rnd(14) as i64; // 8:00 .. 21:00
+            let start = now - d * day - (24 - hour) * 3_600_000 - (rnd(60) as i64) * 60_000;
+            let mins = 25 + rnd(50) as i64; // 25..74 min
+            let _ = insert_pomodoro_session(conn, Some(sid), "work", start, start + mins * 60_000);
+        }
+    }
+
+    // Backdated quiz/flashcard attempts (~4 weeks) → accuracy, reviews, radar.
+    for d in 0..30i64 {
+        let n = rnd(8); // 0..7 reviews/day
+        for k in 0..n {
+            let (sid, _) = &subj_ids[rnd(subj_ids.len() as u64) as usize];
+            let kind = if rnd(2) == 0 { "quiz" } else { "flashcard" };
+            let correct = rnd(10) >= 3; // ~70% correct
+            let created = now - d * day - (rnd(12) as i64) * 3_600_000;
+            conn.execute(
+                "INSERT INTO attempts (id, subject_id, material_id, kind, item_index, item_key, correct, created_at)
+                 VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7)",
+                params![new_id(), sid, kind, k as i64, format!("item-{d}-{k}"), correct as i64, created],
+            )?;
+        }
+    }
+
+    // A couple of notes and references for texture.
+    if let Some((sid, topics)) = subj_ids.first() {
+        let _ = insert_note(conn, Some(sid), topics.first().map(|(t, _)| t.as_str()),
+            "Exam focus", "Prioritise mechanisms over memorising names. Revisit the worked examples.");
+    }
+    for (sid, _) in subj_ids.iter().take(3) {
+        let _ = insert_citation(conn, sid, "article", "Foundations of the Field",
+            Some("A. Researcher, B. Scholar"), Some("2021"), Some("Journal of Studies"),
+            Some("https://example.com/paper"), None, Some("Seminal overview."));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3288,6 +3472,27 @@ mod tests {
         // done flag and board status stay in lock-step.
         assert_eq!(ev.status, "done");
         assert_eq!(list_events(&c, None, Some(0), Some(5_000)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn seed_showcase_populates_and_is_guarded() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        seed_showcase(&c).unwrap();
+        let count = |sql: &str| c.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+        assert!(count("SELECT COUNT(*) FROM subjects") >= 6);
+        assert!(count("SELECT COUNT(*) FROM sources") > 0);
+        assert!(count("SELECT COUNT(*) FROM materials") > 0);
+        assert!(count("SELECT COUNT(*) FROM events") > 0);
+        assert!(count("SELECT COUNT(*) FROM attempts") > 0);
+        assert!(count("SELECT COUNT(*) FROM pomodoro_sessions") > 0);
+        assert!(count("SELECT COUNT(*) FROM cheatsheets") > 0);
+        // Board columns are represented.
+        assert!(count("SELECT COUNT(*) FROM events WHERE status='done'") > 0);
+        // Guard: a second run must not double-seed.
+        let subjects_before = count("SELECT COUNT(*) FROM subjects");
+        seed_showcase(&c).unwrap();
+        assert_eq!(count("SELECT COUNT(*) FROM subjects"), subjects_before);
     }
 
     #[test]

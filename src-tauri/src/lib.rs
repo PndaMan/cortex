@@ -63,10 +63,13 @@ pub fn run() {
         })
         .setup(|app| {
             // Per-app data dir (created if missing); DB lives at cortex.db.
-            let dir = app
-                .path()
-                .app_data_dir()
-                .expect("resolve app data dir");
+            // CORTEX_DATA_DIR overrides it — used to run an isolated, throwaway
+            // instance (e.g. a screenshot/demo profile) WITHOUT touching the
+            // real library at the default location.
+            let dir = match std::env::var("CORTEX_DATA_DIR") {
+                Ok(d) if !d.trim().is_empty() => std::path::PathBuf::from(d.trim()),
+                _ => app.path().app_data_dir().expect("resolve app data dir"),
+            };
             std::fs::create_dir_all(&dir).expect("create app data dir");
             let db_path = dir.join("cortex.db");
             // NOTE: the homelab pull/merge intentionally does NOT run here — it
@@ -74,6 +77,17 @@ pub fn run() {
             // homelab is unreachable). The frontend calls `sync_pull` in the
             // background after the window is shown; see store loadSyncStatus.
             let state = AppState::new(&db_path).expect("init database");
+
+            // Demo/screenshot profile: when CORTEX_DEMO is set, fill a *fresh*
+            // database with rich showcase data. Guarded to only seed an empty
+            // DB, so it can never overwrite a real library.
+            if std::env::var("CORTEX_DEMO").is_ok() {
+                let c = state.db.lock().unwrap();
+                if let Err(e) = repo::seed_showcase(&c) {
+                    eprintln!("demo seed failed: {e}");
+                }
+            }
+
             app.manage(state);
 
             // If a previous session crashed, its mpv music sidecar is still
