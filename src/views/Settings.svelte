@@ -66,37 +66,76 @@
   });
 
   // ---- providers ----
-  const PROVIDERS = [
-    { id: "gemini",     label: "Gemini",              models: ["gemini-2.5-flash","gemini-2.5-pro","gemini-2.0-flash-001"] },
-    { id: "openrouter", label: "OpenRouter",          models: [
-      "stepfun/step-3.7-flash",
-      "google/gemini-2.5-flash",
-      "anthropic/claude-sonnet-4.5",
-      "openai/gpt-5-mini",
-      "openai/gpt-4o",
-      "openai/gpt-4o-mini",
-      "openai/o3-mini",
-      "anthropic/claude-3.7-sonnet",
-      "anthropic/claude-3.5-sonnet",
-      "anthropic/claude-3.5-haiku",
-      "google/gemini-2.0-flash-001",
-      "google/gemini-2.5-pro",
-      "deepseek/deepseek-chat",
-      "deepseek/deepseek-r1",
-      "meta-llama/llama-3.3-70b-instruct",
-      "qwen/qwen-2.5-72b-instruct",
-      "mistralai/mistral-large",
-      "x-ai/grok-2-1212",
+  // Model catalog. Each provider's models are ordered by MY cost-to-quality read —
+  // best value (cheap + capable) first, then premium/frontier, then reasoning — and
+  // labelled with a human name + a one-word tier hint so the dropdown is scannable.
+  // `custom` (OpenRouter / OpenAI-compatible) lets you type any slug not listed.
+  type Model = { id: string; label: string };
+  const PROVIDERS: { id: string; label: string; models: Model[] }[] = [
+    { id: "gemini", label: "Gemini", models: [
+      { id: "gemini-2.5-flash",      label: "Gemini 2.5 Flash — ⚡ best value" },
+      { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite — cheapest" },
+      { id: "gemini-2.0-flash-001",  label: "Gemini 2.0 Flash — legacy, cheap" },
+      { id: "gemini-2.5-pro",        label: "Gemini 2.5 Pro — ★ premium" },
     ] },
-    { id: "openai",     label: "OpenAI",              models: ["gpt-4o","gpt-4o-mini","o3-mini"] },
-    { id: "claude",     label: "Claude",              models: ["claude-opus-4-8","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-3-7-sonnet-20250219","claude-3-5-sonnet-20241022","claude-3-5-haiku-20241022"] },
-    { id: "ollama",     label: "Ollama (local)",      models: ["llama3.3:70b","qwen2.5:32b","mistral-small"] },
-    { id: "custom",     label: "Custom endpoint",     models: ["custom-model"] },
+    { id: "openrouter", label: "OpenRouter (everything)", models: [
+      // ── best value: cheap + capable ──
+      { id: "google/gemini-2.5-flash",            label: "Gemini 2.5 Flash — ⚡ best value" },
+      { id: "google/gemini-2.5-flash-lite",       label: "Gemini 2.5 Flash-Lite — cheapest" },
+      { id: "openai/gpt-5-mini",                  label: "GPT-5 mini — cheap + smart" },
+      { id: "openai/gpt-4o-mini",                 label: "GPT-4o mini — cheap" },
+      { id: "anthropic/claude-3.5-haiku",         label: "Claude 3.5 Haiku — fast + cheap" },
+      { id: "stepfun/step-3.7-flash",             label: "Step 3.7 Flash — cheap reasoning" },
+      { id: "deepseek/deepseek-chat",             label: "DeepSeek V3 — very cheap" },
+      { id: "meta-llama/llama-3.3-70b-instruct",  label: "Llama 3.3 70B — open, cheap" },
+      { id: "qwen/qwen-2.5-72b-instruct",         label: "Qwen 2.5 72B — open" },
+      { id: "mistralai/mistral-large",            label: "Mistral Large — mid" },
+      { id: "x-ai/grok-2-1212",                   label: "Grok 2 — mid" },
+      { id: "google/gemini-2.0-flash-001",        label: "Gemini 2.0 Flash — legacy cheap" },
+      // ── strong all-rounders ──
+      { id: "openai/gpt-4o",                      label: "GPT-4o — balanced" },
+      { id: "anthropic/claude-3.5-sonnet",        label: "Claude 3.5 Sonnet — strong" },
+      { id: "anthropic/claude-3.7-sonnet",        label: "Claude 3.7 Sonnet — strong" },
+      // ── premium / frontier ──
+      { id: "google/gemini-2.5-pro",              label: "Gemini 2.5 Pro — premium" },
+      { id: "anthropic/claude-sonnet-4.5",        label: "Claude Sonnet 4.5 — ★ premium" },
+      { id: "openai/gpt-5",                       label: "GPT-5 — ★ frontier" },
+      { id: "anthropic/claude-opus-4.1",          label: "Claude Opus 4.1 — top, pricey" },
+      { id: "x-ai/grok-3",                        label: "Grok 3 — premium" },
+      // ── reasoning ──
+      { id: "openai/o3-mini",                     label: "o3-mini — cheap reasoning" },
+      { id: "openai/o3",                          label: "o3 — deep reasoning" },
+      { id: "deepseek/deepseek-r1",               label: "DeepSeek R1 — cheap reasoning" },
+    ] },
+    { id: "openai", label: "OpenAI", models: [
+      { id: "gpt-4o-mini", label: "GPT-4o mini — cheap" },
+      { id: "gpt-5-mini",  label: "GPT-5 mini — cheap + smart" },
+      { id: "gpt-4o",      label: "GPT-4o — balanced" },
+      { id: "gpt-5",       label: "GPT-5 — ★ frontier" },
+      { id: "o3-mini",     label: "o3-mini — cheap reasoning" },
+      { id: "o3",          label: "o3 — deep reasoning" },
+    ] },
+    { id: "claude", label: "Claude", models: [
+      { id: "claude-haiku-4-5-20251001",  label: "Claude Haiku 4.5 — fast + cheap" },
+      { id: "claude-3-5-haiku-20241022",  label: "Claude 3.5 Haiku — cheap" },
+      { id: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet — strong" },
+      { id: "claude-3-7-sonnet-20250219", label: "Claude 3.7 Sonnet — strong" },
+      { id: "claude-sonnet-4-6",          label: "Claude Sonnet 4.6 — ★ premium" },
+      { id: "claude-opus-4-8",            label: "Claude Opus 4.8 — top, pricey" },
+    ] },
+    { id: "ollama", label: "Ollama (local)", models: [
+      { id: "mistral-small", label: "Mistral Small — light, local" },
+      { id: "qwen2.5:32b",   label: "Qwen 2.5 32B — local" },
+      { id: "llama3.3:70b",  label: "Llama 3.3 70B — local, heavy" },
+    ] },
+    { id: "custom", label: "Custom endpoint", models: [
+      { id: "custom-model", label: "custom-model (type your own slug)" },
+    ] },
   ];
-  const EMBED_PROVIDERS = [
-    { id: "gemini",  label: "Gemini",       models: ["text-embedding-004"] },
-    { id: "openai",  label: "OpenAI",       models: ["text-embedding-3-large","text-embedding-3-small"] },
-    { id: "ollama",  label: "Ollama (local)",models: ["nomic-embed-text","mxbai-embed-large"] },
+  const EMBED_PROVIDERS: { id: string; label: string; models: Model[] }[] = [
+    { id: "gemini",  label: "Gemini",        models: [{ id: "text-embedding-004", label: "text-embedding-004" }] },
+    { id: "openai",  label: "OpenAI",        models: [{ id: "text-embedding-3-small", label: "text-embedding-3-small — cheap" }, { id: "text-embedding-3-large", label: "text-embedding-3-large — best" }] },
+    { id: "ollama",  label: "Ollama (local)", models: [{ id: "nomic-embed-text", label: "nomic-embed-text — local" }, { id: "mxbai-embed-large", label: "mxbai-embed-large — local" }] },
   ];
   const MODEL_TASKS = [
     { id: "chat",       label: "Chat",                  desc: "Scoped Q&A across sources" },
@@ -907,8 +946,8 @@
   function onModelProviderChange(taskId: TaskId, p: string) {
     const provList = taskId === "embedding" ? EMBED_PROVIDERS : PROVIDERS;
     const np = provList.find((x) => x.id === p) ?? provList[0];
-    setTask(taskId, { provider: p, model: np.models[0] });
-    const kv: Record<string, string> = { [`model_${taskId}`]: p + ":" + np.models[0] };
+    setTask(taskId, { provider: p, model: np.models[0].id });
+    const kv: Record<string, string> = { [`model_${taskId}`]: p + ":" + np.models[0].id };
     if (taskId === "embedding") kv.embed_provider = p;
     api.setSettings(kv).catch(() => {});
   }
@@ -1136,7 +1175,7 @@ Notes: {about}</pre>
               <Picker
                 value={a.model}
                 onChange={(m) => onModelChange(t.id, m)}
-                options={prov.models.map((m) => ({ id: m, label: m }))}
+                options={prov.models.map((m) => ({ id: m.id, label: m.label }))}
               />
               {#if t.id === "embedding"}
                 <span class="mono faint mt-budget-na">n/a</span>

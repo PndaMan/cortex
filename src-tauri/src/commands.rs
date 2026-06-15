@@ -1236,10 +1236,9 @@ pub async fn chat_answer(
         say so plainly in one line (e.g. \"That isn't covered in the selected sources.\") and STOP — do not \
         fall back to general knowledge. Use light Markdown (bold key terms, short bullet lists; a `---` divider only when \
         genuinely needed) and keep it scannable. Put ALL code in fenced triple-backtick blocks with a \
-        language tag, and never put math, LaTeX, or backticks inside a code block. Write math as PLAIN \
-        text — NEVER use LaTeX or its delimiters ($…$, $$…$$, \\(…\\), \\[…\\]) or LaTeX commands; use \
-        Unicode and inline code instead (x², √x, ≤, ≥, π, Δ, →; write fractions as a/b), and wrap any \
-        expression containing `*` (e.g. `a * b`) in inline backticks so it isn't parsed as italics. \
+        language tag, and never put math or backticks inside a code block. Write maths as LaTeX so it \
+        renders: INLINE maths as \\(…\\) (e.g. \\(x^2\\), \\(\\frac{a}{b}\\)) and DISPLAY equations as \
+        $$…$$ on their OWN line. Do not use bare single-dollar $…$ for inline maths. \
         On the FINAL line, write 2–3 SPECIFIC next-step prompts the learner could tap, each a real \
         short phrase about THIS material (never placeholders like 'a' or 'b'), formatted exactly as: \
         `SUGGESTIONS: <first prompt> | <second prompt> | <third prompt>` — e.g. \
@@ -1998,8 +1997,11 @@ pub async fn generate_cheatsheet(
         `> ` lines. Use them for key insights, gotchas, when-to-use guidance, and exam tips.\n\
         - Markdown TABLES (e.g. `| Concept | Use |` then `|---|---|` then data rows) to compare \
         related concepts or list properties side by side.\n\
-        - **Bold** key terms, inline `code`/`formulas`, ordered lists for step-by-step worked \
+        - **Bold** key terms, inline `code`, ordered lists for step-by-step worked \
         examples, and short bullet lists.\n\
+        - LaTeX MATHS so equations actually render: write INLINE maths as \\(…\\) (e.g. \\(E=mc^2\\), \
+        \\(\\frac{dy}{dx}\\)) and DISPLAY equations as $$…$$ on their OWN line. Use this for EVERY \
+        formula/equation instead of plain text; do not use bare single-dollar $…$.\n\
         - A simple BAR CHART for quantitative comparisons: a fenced block opened with \
         three backticks then the word barchart, then one `Label: number` per line, then closing \
         backticks. Use ONLY for real numeric data from the sources (proportions, magnitudes, \
