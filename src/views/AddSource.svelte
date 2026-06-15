@@ -187,9 +187,11 @@
 <div class="addsrc">
   <!-- Page header -->
   <div class="addsrc-head">
-    <button class="btn btn--icon btn--sm btn--ghost" onclick={() => app.setView("subject")} title="Back">
-      <span style:transform="rotate(180deg)" style:display="flex"><Icon name="chevron" size={14} /></span>
-    </button>
+    {#if !isMobile}
+      <button class="btn btn--icon btn--sm btn--ghost" onclick={() => app.setView("subject")} title="Back">
+        <span style:transform="rotate(180deg)" style:display="flex"><Icon name="chevron" size={14} /></span>
+      </button>
+    {/if}
     <div>
       <div class="eyebrow">Add source</div>
       <h1 class="addsrc-title">New source</h1>

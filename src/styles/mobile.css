@@ -153,22 +153,55 @@ html[data-mobile] .subj-grid {
    clamp() side padding wastes space at 390px and the inner grids can still try a
    second column on wider phones/tablets — force one column + a tighter, scrollable
    page so nothing overlaps. */
+/* Both views lock to the viewport (height:100% + overflow:hidden) and nest their
+   own scrollers — inside .m-main's scroll that collapses to an unusable double-
+   scroll. On mobile: drop the height lock, single column, let the PAGE scroll. */
 html[data-mobile] .addsrc,
 html[data-mobile] .genmat2 {
+  height: auto;
   padding: 14px 14px 20px;
-  overflow: auto;
+  overflow: visible;
 }
 html[data-mobile] .addsrc-grid,
 html[data-mobile] .gm2-grid {
   grid-template-columns: 1fr;
+  align-items: start;
 }
-html[data-mobile] .gm2-left {
-  overflow: visible;
+
+/* ── AddSource: compact the method list, give the input panel real room ─────── */
+html[data-mobile] .addsrc-left { flex: 0 0 auto; gap: 10px; }
+/* method picker → compact icon+label tiles in a wrapping row */
+html[data-mobile] .add-methods {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 6px;
 }
-/* Quick-pick count pills: don't shove them to the far edge on a narrow row. */
-html[data-mobile] .gm2-count-presets {
-  margin-left: 0;
+html[data-mobile] .add-method { padding: 10px 6px; gap: 6px; }
+html[data-mobile] .add-method .am-d { display: none; }
+html[data-mobile] .addsrc-target { margin-top: 12px; }
+html[data-mobile] .addsrc-panel { min-height: 42vh; overflow: visible; }
+html[data-mobile] .addsrc-textarea { min-height: 200px; }
+html[data-mobile] .addsrc-drop { min-height: 170px; }
+
+/* ── GenerateMaterial: kill the inner scrollers, flow + sticky footer ───────── */
+html[data-mobile] .gm2-left { overflow: visible; min-height: auto; padding-right: 0; }
+html[data-mobile] .gm2-right { min-height: auto; }
+html[data-mobile] .gm2-panel { max-height: none; min-height: auto; overflow: visible; }
+html[data-mobile] .gm2-count-presets { margin-left: 0; }
+html[data-mobile] .gm2-foot {
+  position: sticky;
+  bottom: 0;
+  margin-top: 14px;
+  padding: 10px 0 calc(6px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg);
 }
+
+/* ── Notes: the master/detail flex chain collapses to 0 height in .m-main and
+   renders blank. Give it a real height; when the list is expanded, stack it
+   above the editor instead of a cramped 260px side column. ─────────────────── */
+html[data-mobile] .notes-page { padding: 14px 14px 0; }
+html[data-mobile] .notes { min-height: 74vh; margin-bottom: 16px; }
+html[data-mobile] .notes:not(.notes--collapsed) { grid-template-columns: 1fr; }
 
 /* Subject detail / university-portal (Moodle) panel: a centred desktop modal is
    cramped on a phone — make it a near-full-screen sheet and stack its grids. */

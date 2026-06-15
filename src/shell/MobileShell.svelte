@@ -70,8 +70,9 @@
     app.setView(v);
   }
   // A "deep" view sits under a subject/source — show a back chevron for it.
+  // Add source is a bottom-tab destination, so it gets no back chevron.
   const isDeep = $derived(
-    ["source", "add-source", "add-subject", "gen-material", "exam"].includes(app.view)
+    ["source", "add-subject", "gen-material", "exam"].includes(app.view)
   );
   function back() {
     if (app.view === "source") {
@@ -81,6 +82,45 @@
     app.setView(app.activeSubject ? "subject" : "dashboard");
     screen = "router";
   }
+
+  // Unified "go back" for the edge-swipe gesture: close the topmost overlay/screen
+  // first, then walk the deep-view stack — mirrors what the header chevron does.
+  function swipeBack() {
+    if (app.chatOpen) { app.chatOpen = false; return; }
+    if (app.searchOpen) { app.searchOpen = false; return; }
+    if (app.subjectPanelOpen) { app.closeSubjectPanel(); return; }
+    if (screen === "more") { screen = "router"; return; }
+    if (isDeep || app.view === "subject") back();
+  }
+
+  // Left-edge swipe = back, app-wide (mobile-only; this shell only renders on mobile).
+  $effect(() => {
+    let sx = -1, sy = 0;
+    const EDGE = 28, DX = 60, DY = 45;
+    function onStart(e: TouchEvent) {
+      if (e.touches.length !== 1) { sx = -1; return; }
+      const t = e.touches[0];
+      sx = t.clientX <= EDGE ? t.clientX : -1;
+      sy = t.clientY;
+    }
+    function onMove(e: TouchEvent) {
+      if (sx < 0 || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (t.clientX - sx > DX && Math.abs(t.clientY - sy) < DY) {
+        sx = -1;
+        swipeBack();
+      }
+    }
+    function onEnd() { sx = -1; }
+    window.addEventListener("touchstart", onStart, { passive: true });
+    window.addEventListener("touchmove", onMove, { passive: true });
+    window.addEventListener("touchend", onEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onStart);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onEnd);
+    };
+  });
 
   const titleText = $derived.by(() => {
     if (screen === "more") return "More";

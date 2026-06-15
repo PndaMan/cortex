@@ -1246,6 +1246,8 @@ Notes: {about}</pre>
           <p class="set-sub">Cortex re-skins live from your Omarchy theme, or pick one manually.</p>
         </header>
 
+        <!-- Follow-Omarchy mirrors the desktop's Omarchy palette — meaningless on a phone. -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Theme</h3></div>
           <div class="set-card">
@@ -1274,6 +1276,7 @@ Notes: {about}</pre>
             </div>
           </div>
         </section>
+        {/if}
 
         <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Manual theme</h3></div>
@@ -1532,6 +1535,8 @@ Notes: {about}</pre>
           </div>
         </section>
 
+        <!-- Local CLI dependencies (pdftotext/libreoffice/age/…) never exist on a phone. -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h svc-h">
             <div>
@@ -1566,6 +1571,7 @@ Notes: {about}</pre>
             {/if}
           </div>
         </section>
+        {/if}
 
         <section class="set-group">
           <div class="set-group-h">
@@ -1688,6 +1694,8 @@ Notes: {about}</pre>
           </div>
         </section>
 
+        <!-- Encrypted backups use the age + rclone sidecars — desktop-only. -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h svc-h">
             <div>
@@ -1722,6 +1730,7 @@ Notes: {about}</pre>
             </div>
           </div>
         </section>
+        {/if}
 
       </div>
 
@@ -1734,6 +1743,8 @@ Notes: {about}</pre>
           <p class="set-sub">Defaults for the music player and generated audio overviews.</p>
         </header>
 
+        <!-- Music is cut on mobile (no mpv/yt-dlp sidecars) — hide its settings. -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Study music</h3></div>
           <div class="set-card">
@@ -1755,6 +1766,7 @@ Notes: {about}</pre>
             </div>
           </div>
         </section>
+        {/if}
 
         <!-- YouTube streaming needs the mpv + yt-dlp sidecars, which don't ship on
              mobile — hide the whole section there. -->
