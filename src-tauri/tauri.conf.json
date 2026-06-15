@@ -32,7 +32,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "rpm"],
+    "targets": ["deb", "rpm", "appimage"],
     "createUpdaterArtifacts": true,
     "externalBin": [
       "binaries/yt-dlp",

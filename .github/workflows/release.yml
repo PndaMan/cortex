@@ -94,7 +94,8 @@ jobs:
             librsvg2-dev \
             patchelf \
             build-essential \
-            libssl-dev
+            libssl-dev \
+            libfuse2
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
