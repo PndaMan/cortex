@@ -69,6 +69,78 @@ jobs:
           path: src-tauri/gen/apple/build/**
           if-no-files-found: ignore
 
+  device-ipa:
+    name: iOS unsigned IPA (sideload — LiveContainer / iLoader)
+    # Builds an UNSIGNED arm64 device .app and wraps it as a Payload/-structured .ipa.
+    # Needs NO Apple account: LiveContainer JIT-bypasses code signing and iLoader signs
+    # the LiveContainer host, so the guest IPA can ship unsigned. Download the
+    # `cortex-ios-sideload-ipa` artifact and sideload it via iLoader → LiveContainer.
+    if: ${{ github.event_name == 'push' || inputs.sign != true }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+      - name: Install frontend dependencies
+        run: bun install
+
+      # Raw xcodebuild does NOT run Tauri's beforeBuildCommand, so build the web dist
+      # ourselves — the Rust build phase embeds it into the app bundle.
+      - name: Build frontend (web dist)
+        run: bun run build
+
+      - name: Install Rust (iOS device target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Initialise the iOS project
+        run: cargo tauri ios init --ci
+
+      # Build the device app with signing disabled (the Xcode Rust build phase still
+      # compiles the aarch64-apple-ios staticlib), then zip it into an unsigned IPA.
+      - name: Build unsigned device .app → .ipa
+        run: |
+          set -euo pipefail
+          cd src-tauri/gen/apple
+          PROJ="$(ls -d *.xcodeproj | head -1)"
+          LIST="$(xcodebuild -list -project "$PROJ")"
+          SCHEME="$(printf '%s\n' "$LIST" | awk '/Schemes:/{f=1;next} f&&NF{gsub(/^[[:space:]]+/,"");print;exit}')"
+          CONFIG="$(printf '%s\n' "$LIST" | awk '/Build Configurations:/{f=1;next} /Schemes:|If no build/{f=0} f&&NF{gsub(/^[[:space:]]+/,"");print}' | grep -ix 'release' | head -1)"
+          CONFIG="${CONFIG:-release}"
+          echo "Project=$PROJ  Scheme=$SCHEME  Config=$CONFIG"
+          xcodebuild build \
+            -project "$PROJ" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIG" \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/dd \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="-"
+          APP="$(find build/dd/Build/Products -maxdepth 3 -name '*.app' | head -1)"
+          if [ -z "$APP" ]; then echo "::error::No .app was produced"; exit 1; fi
+          echo "Unsigned app: $APP"
+          rm -rf build/Payload && mkdir -p build/Payload
+          cp -R "$APP" build/Payload/
+          (cd build && zip -qry Cortex-unsigned.ipa Payload)
+          ls -lh build/Cortex-unsigned.ipa
+
+      - name: Upload sideloadable IPA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cortex-ios-sideload-ipa
+          path: src-tauri/gen/apple/build/Cortex-unsigned.ipa
+          if-no-files-found: ignore
+
   testflight:
     name: iOS TestFlight (signed)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.sign == true }}

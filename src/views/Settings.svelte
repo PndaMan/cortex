@@ -950,9 +950,12 @@
 
     {#if isMobile}
       <div class="set-mnav">
-        <select class="input set-mnav-sel" bind:value={tab} aria-label="Settings section">
-          {#each TABS as t}<option value={t.id}>{t.label}</option>{/each}
-        </select>
+        <Picker
+          value={tab}
+          onChange={(id) => (tab = id)}
+          options={TABS.map((t) => ({ id: t.id, label: t.label }))}
+          icon={TABS.find((t) => t.id === tab)?.icon}
+        />
       </div>
     {/if}
 

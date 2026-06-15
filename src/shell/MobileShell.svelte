@@ -28,31 +28,28 @@
   import SourceMetaModal from "../components/SourceMetaModal.svelte";
   import PomodoroPanel from "../components/PomodoroPanel.svelte";
 
-  type Screen = "router" | "subjects" | "more";
-  // "subjects"/"more" are mobile-only list screens with no desktop app.view; every
-  // other destination is just an app.view rendered by the router below.
+  type Screen = "router" | "more";
+  // "more" is a mobile-only list screen with no desktop app.view; every other
+  // destination is just an app.view rendered by the router below.
   let screen = $state<Screen>("router");
-  let captureOpen = $state(false);
 
   // Lazy heavy views (mirrors App.svelte's code-split + prefetch idea).
   let SettingsView = $state<any>(null);
-  let RecorderView = $state<any>(null);
   let CalendarViewC = $state<any>(null);
   let AnalyticsViewC = $state<any>(null);
   let ExamViewC = $state<any>(null);
   const loadSettings = () =>
     SettingsView ?? import("../views/Settings.svelte").then((m) => (SettingsView = m.default));
-  const loadRecorder = () =>
-    RecorderView ?? import("../views/Recorder.svelte").then((m) => (RecorderView = m.default));
   const loadCalendar = () =>
     CalendarViewC ?? import("../views/CalendarView.svelte").then((m) => (CalendarViewC = m.default));
   const loadAnalytics = () =>
     AnalyticsViewC ?? import("../views/AnalyticsView.svelte").then((m) => (AnalyticsViewC = m.default));
   const loadExam = () =>
     ExamViewC ?? import("../views/ExamView.svelte").then((m) => (ExamViewC = m.default));
+  // Lecture recording/transcription is intentionally NOT available on mobile: phones
+  // can't run Whisper locally and the homelab /ingest offload isn't built yet.
   $effect(() => {
     if (app.view === "settings") void loadSettings();
-    else if (app.view === "recorder") void loadRecorder();
     else if (app.view === "calendar") void loadCalendar();
     else if (app.view === "analytics") void loadAnalytics();
     else if (app.view === "exam") void loadExam();
@@ -68,16 +65,9 @@
     screen = "router";
     app.setView(v);
   }
-  function pickSubject(id: string) {
-    app.openSubject(id);
-    screen = "router";
-  }
-  function openCapture() {
-    captureOpen = true;
-  }
   // A "deep" view sits under a subject/source — show a back chevron for it.
   const isDeep = $derived(
-    ["source", "add-source", "add-subject", "gen-material", "recorder", "exam"].includes(app.view)
+    ["source", "add-source", "add-subject", "gen-material", "exam"].includes(app.view)
   );
   function back() {
     if (app.view === "source") {
@@ -89,7 +79,6 @@
   }
 
   const titleText = $derived.by(() => {
-    if (screen === "subjects") return "Subjects";
     if (screen === "more") return "More";
     switch (app.view) {
       case "dashboard": return "Home";
@@ -97,7 +86,6 @@
       case "source": return app.activeSource?.name ?? "Source";
       case "add-source": return "Add source";
       case "add-subject": return "New subject";
-      case "recorder": return "Record";
       case "gen-material": return "Generate";
       case "notes": return "Notes";
       case "calendar": return "Calendar";
@@ -108,16 +96,15 @@
     }
   });
 
-  type Tab = "home" | "subjects" | "calendar" | "more" | "none";
+  type Tab = "home" | "add" | "calendar" | "more" | "none";
   const tab = $derived.by<Tab>(() => {
-    if (screen === "subjects") return "subjects";
     if (screen === "more") return "more";
     const v = app.view;
     if (v === "dashboard") return "home";
     if (v === "calendar") return "calendar";
-    if (["subject", "source", "add-source", "gen-material"].includes(v)) return "subjects";
-    if (["analytics", "exam", "notes", "settings", "add-subject", "recorder"].includes(v)) return "more";
-    return "none";
+    if (v === "add-source") return "add";
+    if (["analytics", "exam", "notes", "settings", "add-subject"].includes(v)) return "more";
+    return "none"; // subject / source / gen-material → deep content, no tab lit
   });
 
   // Ask FAB: only where a chat scope makes sense, and only when chat is closed.
@@ -144,31 +131,12 @@
   </header>
 
   <main class="m-main">
-    {#if screen === "subjects"}
+    {#if screen === "more"}
       <div class="m-list">
-        {#each app.subjects as s (s.id)}
-          <button class="m-subj" onclick={() => pickSubject(s.id)}>
-            <span class="m-subj-glyph" style:color={app.subjectColor(s)}>{s.glyph || "◆"}</span>
-            <span class="m-subj-body">
-              <span class="m-subj-name">{s.name}</span>
-              <span class="m-subj-meta">{s.sourceCount} sources · {s.topics.length} topics</span>
-            </span>
-            <Icon name="chevron" size={14} />
-          </button>
-        {/each}
-        {#if app.subjects.length === 0}
-          <div class="m-empty">No subjects yet — add one to get started.</div>
-        {/if}
-        <button class="m-add" onclick={() => go("add-subject")}>
-          <Icon name="plus" size={14} /> New subject
-        </button>
-      </div>
-    {:else if screen === "more"}
-      <div class="m-list">
-        <button class="m-row" onclick={() => (app.searchOpen = true)}><Icon name="search" size={18} /><span class="m-row-l">Search</span><Icon name="chevron" size={14} /></button>
+        <button class="m-row" onclick={() => go("notes")}><Icon name="reader" size={18} /><span class="m-row-l">Notes</span><Icon name="chevron" size={14} /></button>
         <button class="m-row" onclick={() => go("analytics")}><Icon name="chart" size={18} /><span class="m-row-l">Insights</span><Icon name="chevron" size={14} /></button>
         <button class="m-row" onclick={() => go("exam")}><Icon name="cards" size={18} /><span class="m-row-l">Exam mode</span><Icon name="chevron" size={14} /></button>
-        <button class="m-row" onclick={() => go("notes")}><Icon name="reader" size={18} /><span class="m-row-l">Notes</span><Icon name="chevron" size={14} /></button>
+        <button class="m-row" onclick={() => go("add-subject")}><Icon name="plus" size={18} /><span class="m-row-l">New subject</span><Icon name="chevron" size={14} /></button>
         <button class="m-row" onclick={() => go("settings")}><Icon name="settings" size={18} /><span class="m-row-l">Settings</span><Icon name="chevron" size={14} /></button>
       </div>
     {:else}
@@ -187,8 +155,6 @@
         <GenerateMaterial />
       {:else if app.view === "notes"}
         <NotesView />
-      {:else if app.view === "recorder"}
-        {#if RecorderView}{@const C = RecorderView}<C />{/if}
       {:else if app.view === "calendar"}
         {#if CalendarViewC}{@const C = CalendarViewC}<C />{/if}
       {:else if app.view === "analytics"}
@@ -211,11 +177,11 @@
     <button class="m-tab" class:on={tab === "home"} onclick={() => go("dashboard")}>
       <Icon name="home" size={20} /><span>Home</span>
     </button>
-    <button class="m-tab" class:on={tab === "subjects"} onclick={() => (screen = "subjects")}>
-      <Icon name="book" size={20} /><span>Subjects</span>
+    <button class="m-tab" class:on={tab === "add"} onclick={() => go("add-source")}>
+      <Icon name="doc" size={20} /><span>Add</span>
     </button>
-    <button class="m-tab m-tab--cap" onclick={openCapture} aria-label="Capture">
-      <span class="m-cap"><Icon name="plus" size={22} /></span>
+    <button class="m-tab m-tab--search" onclick={() => (app.searchOpen = true)} aria-label="Search">
+      <span class="m-search"><Icon name="search" size={22} /></span>
     </button>
     <button class="m-tab" class:on={tab === "calendar"} onclick={() => go("calendar")}>
       <Icon name="calendar" size={20} /><span>Calendar</span>
@@ -225,26 +191,6 @@
     </button>
   </nav>
 </div>
-
-<!-- Capture bottom sheet -->
-{#if captureOpen}
-  <button class="m-backdrop" aria-label="Close" onclick={() => (captureOpen = false)}></button>
-  <div class="m-sheet m-sheet--bottom" role="dialog" aria-label="Capture">
-    <div class="m-grip"></div>
-    <button class="m-cap-row" onclick={() => { captureOpen = false; go("recorder"); }}>
-      <Icon name="mic" size={18} /> Record lecture
-    </button>
-    <button class="m-cap-row" onclick={() => { captureOpen = false; go("add-source"); }}>
-      <Icon name="plus" size={18} /> Add source
-    </button>
-    <button class="m-cap-row" onclick={() => { captureOpen = false; go("notes"); }}>
-      <Icon name="reader" size={18} /> New note
-    </button>
-    <button class="m-cap-row" onclick={() => { captureOpen = false; go("add-source"); }}>
-      <Icon name="camera" size={18} /> Snap a page (OCR)
-    </button>
-  </div>
-{/if}
 
 <!-- Chat as a full-screen sheet -->
 {#if app.chatOpen}
@@ -343,17 +289,14 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  /* List screens (Subjects / More) */
+  /* List screen (More) */
   .m-list {
     display: flex;
     flex-direction: column;
     gap: 10px;
     padding: 14px;
   }
-  .m-subj,
-  .m-row,
-  .m-add,
-  .m-cap-row {
+  .m-row {
     display: flex;
     align-items: center;
     gap: 12px;
@@ -370,16 +313,7 @@
   }
   .m-row-l { flex: 1; min-width: 0; }
   .m-row :global(svg:last-child) { color: var(--fg-faint); flex: none; }
-  .m-subj:active,
-  .m-row:active,
-  .m-add:active,
-  .m-cap-row:active { background: var(--surface-2); }
-  .m-subj-glyph { flex: none; font-size: 18px; }
-  .m-subj-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-  .m-subj-name { color: var(--fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .m-subj-meta { color: var(--fg-faint); font-size: var(--t-2xs); }
-  .m-add { justify-content: center; color: var(--fg-muted); background: var(--surface-2); }
-  .m-empty { color: var(--fg-faint); padding: 24px 12px; text-align: center; }
+  .m-row:active { background: var(--surface-2); }
 
   /* Bottom tab bar */
   .m-tabs {
@@ -406,9 +340,9 @@
   }
   .m-tab.on { color: var(--accent); }
   .m-tab:active { color: var(--fg-bright); }
-  /* Elevated center capture button */
-  .m-tab--cap { padding: 0; }
-  .m-cap {
+  /* Elevated center search button */
+  .m-tab--search { padding: 0; }
+  .m-search {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -441,38 +375,11 @@
   }
 
   /* Sheets */
-  .m-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    border: none;
-    padding: 0;
-    cursor: default;
-    z-index: 60;
-  }
   .m-sheet {
     position: fixed;
     z-index: 61;
     background: var(--bg);
     color: var(--fg);
-  }
-  .m-sheet--bottom {
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 8px 12px calc(16px + env(safe-area-inset-bottom, 0px));
-    border-top: 1px solid var(--border);
-    border-radius: var(--rad-4) var(--rad-4) 0 0;
-  }
-  .m-grip {
-    width: 36px;
-    height: 4px;
-    border-radius: 999px;
-    background: var(--border-strong);
-    margin: 4px auto 8px;
   }
   .m-sheet--full {
     inset: 0;
