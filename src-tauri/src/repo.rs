@@ -3178,24 +3178,76 @@ pub fn seed_showcase(conn: &Connection) -> Result<()> {
         subj_ids.push((sid, topics));
     }
 
-    // Whole-subject cheatsheets for the first few subjects.
-    for (sid, topics) in subj_ids.iter().take(4) {
-        let mut sections = Vec::new();
-        for (i, (_tid, tname)) in topics.iter().enumerate() {
-            sections.push(CsSection {
+    // Hand-written, well-formatted cheatsheets so the (default) cheatsheet tab
+    // looks polished in screenshots — bold, lists, tables, callouts, formulas,
+    // and a bar chart all exercise the RichText renderer.
+    let sec = |title: &str, items: &[(&str, &str)]| CsSection {
+        id: new_id(),
+        title: title.into(),
+        state: "ready".into(),
+        items: items.iter().map(|(t, d)| CsItem { t: (*t).into(), d: (*d).into() }).collect(),
+        image: None,
+        image_query: None,
+    };
+    // index → sections. Subjects 0–2 are rich; the rest get a tidy, lighter sheet.
+    let cheatsheets: Vec<Vec<CsSection>> = vec![
+        // 0 · Cognitive Neuroscience
+        vec![
+            sec("The Action Potential", &[
+                ("Definition", "A rapid, **all-or-none** electrical impulse — the neuron's unit of signalling. Fires only when the membrane depolarises past its `threshold (≈ −55 mV)`."),
+                ("The four phases", "1. **Resting** — held near `−70 mV` by the Na⁺/K⁺ pump.\n2. **Depolarisation** — voltage-gated **Na⁺** channels open; inside turns positive.\n3. **Repolarisation** — Na⁺ channels inactivate, **K⁺** channels open.\n4. **Hyperpolarisation** — brief overshoot below rest, then recovery."),
+                ("Why it's one-way", "> [!important]\n> The **refractory period** stops a signal travelling backwards and caps the maximum firing rate."),
+            ]),
+            sec("Synaptic Transmission", &[
+                ("Major neurotransmitters", "| Transmitter | Role | Effect |\n|---|---|---|\n| Glutamate | Primary excitatory | Depolarising |\n| GABA | Primary inhibitory | Hyperpolarising |\n| Dopamine | Reward, motor control | Modulatory |\n| Serotonin | Mood, sleep | Modulatory |"),
+                ("Mechanism", "An impulse opens **Ca²⁺** channels → vesicles fuse → transmitter crosses the cleft → binds postsynaptic receptors.\n\n> [!tip]\n> Most psychiatric drugs act *here* — blocking reuptake or mimicking a transmitter."),
+            ]),
+            sec("Memory Systems", &[
+                ("Two broad systems", "- **Declarative** (explicit): facts & events — depends on the *hippocampus*.\n- **Procedural** (implicit): skills & habits — depends on the *basal ganglia* and *cerebellum*."),
+                ("Retention by study method (%)", "```barchart\nNo review (1 week): 25\nMassed cramming: 55\nSpaced repetition: 85\n```"),
+            ]),
+        ],
+        // 1 · Macroeconomics
+        vec![
+            sec("Monetary Policy", &[
+                ("The central-bank toolkit", "- **Policy rate** — the price of overnight money.\n- **Open-market operations** — buying/selling bonds to set liquidity.\n- **Reserve requirements** & **forward guidance**."),
+                ("Expansionary vs contractionary", "| | Expansionary | Contractionary |\n|---|---|---|\n| Rate | **Cut** | **Raise** |\n| Goal | Boost demand | Cool inflation |\n| Risk | Overheating | Recession |"),
+                ("Transmission lag", "> [!warning]\n> Policy works with **long and variable lags** (6–18 months) — today's hike fights *last year's* inflation."),
+            ]),
+            sec("The Solow Growth Model", &[
+                ("Core equation", "Output per worker grows via capital deepening until depreciation catches investment:\n`Δk = s·f(k) − (n + δ)·k`"),
+                ("Steady state", "1. Capital per worker `k*` is constant.\n2. Long-run growth comes **only** from *technological progress* `A`, not saving more.\n3. Higher saving raises the *level*, not the *growth rate*."),
+            ]),
+        ],
+        // 2 · Organic Chemistry
+        vec![
+            sec("SN1 vs SN2", &[
+                ("Side-by-side", "| | SN1 | SN2 |\n|---|---|---|\n| Steps | Two (carbocation) | One (concerted) |\n| Rate | `rate = k[substrate]` | `rate = k[sub][Nu]` |\n| Substrate | 3° favoured | 1° favoured |\n| Stereochem | Racemisation | **Inversion** |"),
+                ("Picking the path", "> [!example]\n> Bulky **3° halide** + weak nucleophile + polar protic solvent → **SN1**.\n> Unhindered **1° halide** + strong nucleophile → **SN2**."),
+            ]),
+            sec("Stereochemistry", &[
+                ("Key terms", "- **Chiral centre** — carbon with four different groups.\n- **Enantiomers** — non-superimposable mirror images.\n- **Diastereomers** — stereoisomers that are *not* mirror images."),
+                ("R/S rule", "Rank substituents by **CIP priority** (atomic number), point lowest away, read 1→2→3: *clockwise = R*, *anticlockwise = S*."),
+            ]),
+        ],
+    ];
+    for (i, (sid, topics)) in subj_ids.iter().enumerate() {
+        let sections: Vec<CsSection> = if let Some(s) = cheatsheets.get(i) {
+            s.clone()
+        } else {
+            // Lighter but still formatted sheet for the remaining subjects.
+            topics.iter().take(3).map(|(_t, tname)| CsSection {
                 id: new_id(),
                 title: tname.clone(),
                 state: "ready".into(),
-                items: vec![
-                    CsItem { t: "Core idea".into(), d: format!("The defining principle of {tname}, stated precisely with the conditions under which it holds.") },
-                    CsItem { t: "Why it matters".into(), d: format!("How {tname} connects to the wider topic and where it shows up in problems and exams.") },
-                    CsItem { t: "Worked example".into(), d: "A concrete walk-through from setup to answer, with the common pitfall flagged.".into() },
-                ],
+                items: vec![CsItem {
+                    t: "Key points".into(),
+                    d: format!("- The central idea of **{tname}** and the conditions it relies on.\n- How it links to the rest of the course.\n- The mistake students most often make."),
+                }],
                 image: None,
                 image_query: None,
-            });
-            if i >= 4 { break; }
-        }
+            }).collect()
+        };
         save_cheatsheet(conn, sid, None, &sections)?;
     }
 
