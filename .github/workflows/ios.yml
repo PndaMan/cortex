@@ -34,7 +34,7 @@ jobs:
     name: iOS Simulator (unsigned compile check)
     # Runs on every mobile-branch push and on a manual dispatch unless sign==true.
     if: ${{ github.event_name == 'push' || inputs.sign != true }}
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -72,7 +72,7 @@ jobs:
   testflight:
     name: iOS TestFlight (signed)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.sign == true }}
-    runs-on: macos-14
+    runs-on: macos-15
     environment: Production
     steps:
       - uses: actions/checkout@v4
