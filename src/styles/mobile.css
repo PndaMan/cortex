@@ -1,0 +1,51 @@
+/* Mobile touch-adaptation layer — Phase 1 (docs/MOBILE_PORT.md §4).
+ *
+ * Applies ONLY under html[data-mobile] (set in main.ts when isMobile), so it
+ * cannot affect the desktop app. Built entirely from existing design tokens — no
+ * new colours (continuity rule, §3.4). This pass is ADDITIVE: it enlarges touch
+ * targets and fixes touch ergonomics without restyling the look. Per-view mobile
+ * passes build on top of this hook. */
+
+html[data-mobile] {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Kill the grey tap-flash everywhere. */
+html[data-mobile] * {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Momentum scrolling on the main scroll surfaces. */
+html[data-mobile] .m-main,
+html[data-mobile] .workspace-scroll,
+html[data-mobile] .chat-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* iOS auto-zooms when you focus an input under 16px — force >=16px so the page
+ * doesn't jump. Keeps the visual size via the token where it's already >=16px. */
+html[data-mobile] input,
+html[data-mobile] textarea,
+html[data-mobile] select,
+html[data-mobile] .input {
+  font-size: max(16px, var(--t-sm));
+}
+
+/* Comfortable tap targets on the shared controls. Additive min-height only — it
+ * never shrinks anything, and the bottom-tab/header chrome use their own scoped
+ * classes (.m-tab/.m-iconbtn) so they're untouched. */
+html[data-mobile] .btn,
+html[data-mobile] .input,
+html[data-mobile] .field input,
+html[data-mobile] .field select,
+html[data-mobile] .subj-tab {
+  min-height: 44px;
+}
+
+/* Subject segmented tabs: scroll sideways instead of cramping when they overflow
+ * a narrow screen (the row itself stays a single line). */
+html[data-mobile] .subj-tab {
+  display: inline-flex;
+  align-items: center;
+}
