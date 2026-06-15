@@ -7,6 +7,11 @@
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import Icon from "../components/Icon.svelte";
+  import EventModal from "../components/EventModal.svelte";
+
+  // Tapping a card opens the full event editor (title, due date, priority,
+  // topics, notes, reminder) with edit + delete.
+  let editing = $state<api.CalEvent | null>(null);
 
   type Status = "todo" | "doing" | "done";
   const COLUMNS: { id: Status; label: string }[] = [
@@ -70,8 +75,14 @@
   function onPointerUp() {
     window.removeEventListener("pointermove", onPointerMove);
     window.removeEventListener("pointerup", onPointerUp);
+    // A press that never became a drag is a tap → open the card's editor.
+    const tappedId = press && !dragId ? press.id : null;
     if (dragId && overCol) move(dragId, overCol);
     dragId = null; overCol = null; ghost = null; press = null;
+    if (tappedId) {
+      const ev = events.find((e) => e.id === tappedId);
+      if (ev) editing = ev;
+    }
   }
 
   const byStatus = (s: Status) => events.filter((e) => (e.status || "todo") === s);
@@ -205,6 +216,14 @@
 
 {#if ghost}
   <div class="bdrag-ghost" style:left="{ghost.x}px" style:top="{ghost.y}px">{ghost.title}</div>
+{/if}
+
+{#if editing}
+  <EventModal
+    event={editing}
+    onClose={() => (editing = null)}
+    onSaved={() => { editing = null; app.notifyEventsChanged(); }}
+  />
 {/if}
 
 <style>
