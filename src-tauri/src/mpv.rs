@@ -74,10 +74,9 @@ fn socket_path(dir: &Path) -> PathBuf {
 
 /// Resolve `bin` against PATH, returning its absolute path if found.
 fn find_on_path(bin: &str) -> Option<PathBuf> {
-    let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths)
-        .map(|p| p.join(bin))
-        .find(|p| p.is_file())
+    // Delegate to ingest::which so mpv gets the same Homebrew / minimal-PATH fallback
+    // dirs (a Finder-launched macOS app omits /opt/homebrew/bin from PATH).
+    crate::ingest::which(bin).map(PathBuf::from)
 }
 
 /// Ensure a usable `yt-dlp` exists, returning its path. Prefers an existing
@@ -137,7 +136,8 @@ fn ensure_mpv(socket: &Path, ytdlp: &Path, volume: u8) -> Result<()> {
         let _ = ipc(socket, &json!({ "command": ["quit"] }));
         let _ = std::fs::remove_file(socket);
     }
-    let mut cmd = Command::new("mpv");
+    let mpv_bin = find_on_path("mpv").unwrap_or_else(|| PathBuf::from("mpv"));
+    let mut cmd = Command::new(&mpv_bin);
     cmd.arg("--no-video")
         .arg("--idle=yes")
         .arg("--no-terminal")

@@ -231,14 +231,14 @@ fn pdf_to_text(path: &str) -> Result<(String, Option<String>)> {
         return Err(Error::NotFound(format!("file not found: {path}")));
     }
 
-    if which("pdftotext").is_none() {
+    let Some(pdftotext) = which("pdftotext") else {
         return Ok((
             String::new(),
             Some("warning: no extractable text (scanned PDF?); preview still available".into()),
         ));
-    }
+    };
 
-    let output = Command::new("pdftotext")
+    let output = Command::new(&pdftotext)
         .args(["-layout", "-enc", "UTF-8"])
         .arg(src)
         .arg("-")
@@ -594,15 +594,15 @@ pub fn image_mime(path: &str) -> &'static str {
 /// `pdftoppm`. Used to OCR scanned/image-only PDFs through a vision model.
 pub fn pdf_page_images(path: &str, max_pages: usize) -> Result<Vec<Vec<u8>>> {
     use std::process::Command;
-    if which("pdftoppm").is_none() {
+    let Some(pdftoppm) = which("pdftoppm") else {
         return Err(Error::Other(
             "pdftoppm (poppler) not found — needed to OCR scanned PDFs".into(),
         ));
-    }
+    };
     let dir = std::env::temp_dir().join(format!("cortex-ocr-{}", crate::db::new_id()));
     std::fs::create_dir_all(&dir)?;
     let prefix = dir.join("page");
-    let out = Command::new("pdftoppm")
+    let out = Command::new(&pdftoppm)
         .args(["-png", "-r", "150", "-l", &max_pages.to_string()])
         .arg(path)
         .arg(&prefix)
@@ -716,7 +716,12 @@ pub fn which(cmd: &str) -> Option<String> {
     if let Ok(h) = std::env::var("HOME") {
         cands.push(std::path::Path::new(&h).join(".local/bin").join(cmd));
     }
+    // Homebrew: Apple Silicon (/opt/homebrew) first, then Intel (/usr/local). macOS GUI
+    // apps launched from Finder get a minimal PATH that omits both, so probe directly.
+    cands.push(std::path::Path::new("/opt/homebrew/bin").join(cmd));
+    cands.push(std::path::Path::new("/opt/homebrew/sbin").join(cmd));
     cands.push(std::path::Path::new("/usr/local/bin").join(cmd));
+    cands.push(std::path::Path::new("/usr/local/sbin").join(cmd));
     cands.push(std::path::Path::new("/usr/bin").join(cmd));
     cands
         .into_iter()

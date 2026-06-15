@@ -2944,8 +2944,9 @@ fn transcribe(
     // whisper.cpp (expects 16k wav; convert with ffmpeg if available)
     if let Some(bin) = ingest::which("whisper-cli").or_else(|| ingest::which("main")) {
         let wav = outdir.join("rec.wav");
-        let converted = ingest::which("ffmpeg").is_some()
-            && Command::new("ffmpeg")
+        let ffmpeg = ingest::which("ffmpeg");
+        let converted = ffmpeg.is_some()
+            && Command::new(ffmpeg.as_deref().unwrap_or("ffmpeg"))
                 .args(["-y", "-i"])
                 .arg(file)
                 .args(["-ar", "16000", "-ac", "1"])
