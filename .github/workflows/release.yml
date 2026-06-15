@@ -169,6 +169,7 @@ jobs:
       - name: Update PKGBUILD with new version + checksum
         run: |
           sed -i "s/^pkgver=.*/pkgver=${{ steps.meta.outputs.ver }}/" packaging/aur/PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" packaging/aur/PKGBUILD
           sed -i "s|^sha256sums=.*|sha256sums=('${{ steps.meta.outputs.deb }}')|" packaging/aur/PKGBUILD
 
       - name: Push to the AUR
