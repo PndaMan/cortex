@@ -2280,10 +2280,15 @@ pub fn update_cheatsheet(
     subject_id: String,
     topic_id: Option<String>,
     sections: Vec<CsSection>,
+    snapshot: Option<bool>,
 ) -> Result<()> {
     let c = state.db.lock().unwrap();
     repo::save_cheatsheet(&c, &subject_id, topic_id.as_deref(), &sections)?;
-    repo::snapshot_cheatsheet_version(&c, &subject_id, topic_id.as_deref(), &sections, "edited")?;
+    // Inline autosave passes snapshot=false to avoid spamming the version history on
+    // every keystroke; the explicit Save / Esc-exit records one "edited" version.
+    if snapshot.unwrap_or(true) {
+        repo::snapshot_cheatsheet_version(&c, &subject_id, topic_id.as_deref(), &sections, "edited")?;
+    }
     Ok(())
 }
 

@@ -408,6 +408,86 @@
     }
   }
 
+  // ── INLINE INSERT MODE (nvim-style) ──────────────────────────
+  // Press `i` on the cheatsheet to edit it in place; edits autosave (no version
+  // churn — snapshot=false), and Esc exits, recording ONE version. The structured
+  // "Restructure" editor (above) is still there for adding/removing sections + images.
+  let insertMode = $state(false);
+  let inlineDraft = $state<ApiCsSection[]>([]);
+  let inlineDirty = $state(false);
+  let inlineTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Set the element's text ONCE (not reactively) so typing into a contenteditable
+  // never triggers a Svelte re-render that resets the caret to the start.
+  function setText(node: HTMLElement, value: string) {
+    node.textContent = value ?? "";
+  }
+
+  function enterInsert() {
+    if (!hasCheatsheet || mode !== "preview") return;
+    inlineDraft = structuredClone($state.snapshot(sections)) as ApiCsSection[];
+    insertMode = true;
+  }
+  function scheduleInlineSave() {
+    inlineDirty = true;
+    if (inlineTimer) clearTimeout(inlineTimer);
+    inlineTimer = setTimeout(() => void inlineSave(false), 900);
+  }
+  async function inlineSave(snapshot: boolean) {
+    const sub = app.activeSubject;
+    if (inlineTimer) { clearTimeout(inlineTimer); inlineTimer = null; }
+    if (!sub || inlineDraft.length === 0) return;
+    const clean = inlineDraft
+      .map((s) => ({ ...s, title: s.title.trim(), items: s.items.filter((it) => it.t.trim() || it.d.trim()) }))
+      .filter((s) => s.title || s.items.length || s.image);
+    try {
+      await api.updateCheatsheet(sub.id, selectedTopicId ?? undefined, clean as ApiCsSection[], snapshot);
+      inlineDirty = false;
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Autosave failed", body: String(e) });
+    }
+  }
+  async function exitInsert() {
+    if (!insertMode) return;
+    insertMode = false;
+    await inlineSave(true); // final save records ONE version
+    const sub = app.activeSubject;
+    if (sub) {
+      const data = await api.getCheatsheet(sub.id, selectedTopicId ?? undefined);
+      if (data) applyCheatsheet(data);
+    }
+    inlineDraft = [];
+  }
+
+  // Cheatsheet-scoped keys: `i` enters insert mode (beating the global "ask"
+  // shortcut while a sheet is on screen), Esc exits it (instead of back-nav).
+  $effect(() => {
+    function onKey(e: KeyboardEvent) {
+      const el = document.activeElement as HTMLElement | null;
+      const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
+      if (insertMode) {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); void exitInsert(); }
+        return;
+      }
+      if (e.key === "i" && !typing && !el?.isContentEditable && hasCheatsheet && mode === "preview") {
+        e.preventDefault(); e.stopPropagation();
+        enterInsert();
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
+
+  // Leaving the sheet (subject/topic switch) drops any in-progress inline edit.
+  $effect(() => {
+    void app.activeSubjectId; void selectedTopicId;
+    if (insertMode) {
+      insertMode = false;
+      inlineDraft = [];
+      if (inlineTimer) { clearTimeout(inlineTimer); inlineTimer = null; }
+    }
+  });
+
   // ── VERSION HISTORY / DIFF (git-like) ────────────────────────
   let historyOpen = $state(false);
   let versions = $state<CheatsheetVersionMeta[]>([]);
@@ -594,7 +674,13 @@
             </div>
           </div>
           <div class="cs-doc-actions">
-            {#if mode === "edit"}
+            {#if insertMode}
+              <span class="cs-insert-badge mono">— INSERT —</span>
+              <span class="cs-insert-status mono faint">{inlineDirty ? "saving…" : "saved ✓"}</span>
+              <button class="btn btn--sm btn--primary" onclick={exitInsert}>
+                <Icon name="check" size={13} /> Done <span class="kbd">Esc</span>
+              </button>
+            {:else if mode === "edit"}
               <button class="btn btn--sm btn--ghost" onclick={cancelEdit} disabled={saving}>
                 <Icon name="x" size={13} /> Cancel
               </button>
@@ -608,8 +694,11 @@
               <button class="btn btn--sm" onclick={openHistory} title="Browse versions and diff changes">
                 <Icon name="refresh" size={13} /> History
               </button>
-              <button class="btn btn--sm" onclick={enterEdit} title="Edit this cheatsheet">
-                <Icon name="pencil" size={13} /> Edit
+              <button class="btn btn--sm" onclick={enterInsert} title="Edit inline — just type, it autosaves; Esc to finish (i)">
+                <Icon name="pencil" size={13} /> Inline edit <span class="kbd">i</span>
+              </button>
+              <button class="btn btn--sm" onclick={enterEdit} title="Structured editor — add/remove sections + images">
+                <Icon name="grid" size={13} /> Restructure
               </button>
               <button class="btn btn--sm" onclick={generate} disabled={csGenerating}>
                 <Icon name="refresh" size={13} /> {csGenerating ? "Synthesizing…" : "Regenerate"}
@@ -679,8 +768,8 @@
           </div>
         {:else}
           <!-- Sections -->
-          <div class="cs-sections">
-            {#each sections as sec (sec.id)}
+          <div class="cs-sections" class:is-insert={insertMode}>
+            {#each (insertMode ? inlineDraft : sections) as sec (sec.id)}
               {#if sec.id.startsWith("__topic__")}
                 <!-- Topic divider in the composed whole-subject sheet -->
                 <div class="cs-topic-divider" id={"cs-sec-" + sec.id}>
@@ -692,7 +781,9 @@
                 class="cs-section{sec.state === 'draft-pending' ? ' is-pending' : ''}"
               >
                 <header class="cs-sec-head">
-                  <h2 class="cs-sec-title">{sec.title}</h2>
+                  <h2 class="cs-sec-title">
+                    {#if insertMode}<span class="cs-ce" contenteditable="true" use:setText={sec.title} oninput={(e) => { sec.title = (e.currentTarget as HTMLElement).innerText; scheduleInlineSave(); }}></span>{:else}{sec.title}{/if}
+                  </h2>
 
                   {#if sec.state === "draft-pending"}
                     <span class="status-pill status-pill--draft">
@@ -718,8 +809,12 @@
                       </div>
                     {:else}
                     <div class="cs-item" id={"cs-it-" + sec.id + "-" + i}>
-                      <dt>{item.t}</dt>
-                      <dd><RichText text={item.d} /></dd>
+                      <dt>
+                        {#if insertMode}<span class="cs-ce" contenteditable="true" use:setText={item.t} oninput={(e) => { item.t = (e.currentTarget as HTMLElement).innerText; scheduleInlineSave(); }}></span>{:else}{item.t}{/if}
+                      </dt>
+                      <dd>
+                        {#if insertMode}<div class="cs-ce cs-ce-body" contenteditable="true" use:setText={item.d} oninput={(e) => { item.d = (e.currentTarget as HTMLElement).innerText; scheduleInlineSave(); }}></div>{:else}<RichText text={item.d} />{/if}
+                      </dd>
                     </div>
                     {/if}
                   {/each}
@@ -1109,6 +1204,15 @@
     overflow: hidden; border: 1px solid var(--border);
   }
   .cs-sec-img img { width: 100%; height: auto; display: block; }
+
+  /* ── INLINE INSERT MODE ─────────────────────────────────────
+     Contenteditable fields that sit seamlessly in the rendered sheet. */
+  .cs-ce { outline: none; border-radius: 4px; padding: 1px 4px; margin: -1px -4px; transition: background 0.12s, box-shadow 0.12s; }
+  .cs-ce-body { display: block; white-space: pre-wrap; font-family: var(--font-mono); font-size: var(--t-sm); color: var(--fg); min-height: 1.3em; }
+  .cs-sections.is-insert .cs-ce { background: color-mix(in oklab, var(--surface-2) 55%, transparent); box-shadow: inset 0 0 0 1px var(--border); cursor: text; }
+  .cs-sections.is-insert .cs-ce:focus { background: color-mix(in oklab, var(--accent) 12%, transparent); box-shadow: inset 0 0 0 1px var(--accent-dim); }
+  .cs-insert-badge { color: var(--accent); font-weight: 700; letter-spacing: 0.08em; font-size: var(--t-2xs); }
+  .cs-insert-status { font-size: var(--t-2xs); }
 
   /* ── PRINT / EXPORT PDF ─────────────────────────────────────
      window.print() exports the cheatsheet. Hide all app chrome and
