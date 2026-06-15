@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import type { CheatsheetData, CsSection as ApiCsSection, CheatsheetVersionMeta } from "../lib/api";
@@ -424,9 +424,43 @@
     node.textContent = value ?? "";
   }
 
+  // Which detail body is currently open for source editing (key = `${sec.id}:${i}`).
+  // In insert mode every OTHER body shows its rendered preview (bold/math/citations);
+  // clicking one swaps just that block to an editable source field. We always edit the
+  // markdown source string — never the rendered HTML — so math/citations round-trip
+  // losslessly.
+  let editingKey = $state<string | null>(null);
+
+  // Focus a contenteditable and drop the caret at its end.
+  function focusCaretEnd(el: HTMLElement) {
+    el.focus();
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(r);
+  }
+
+  function openBodyEdit(bk: string) {
+    editingKey = bk;
+    void tick().then(() => {
+      // Only one body is contenteditable at a time, so this selector is unambiguous.
+      const el = document.querySelector(".cs-sections.is-insert .cs-ce-body") as HTMLElement | null;
+      if (el) focusCaretEnd(el);
+    });
+  }
+  function closeBodyEdit(e: FocusEvent) {
+    // Re-render this block on blur — but only if another block hasn't already taken over
+    // (clicking block B blurs A after B has already set editingKey).
+    const bk = (e.currentTarget as HTMLElement).dataset.bk ?? null;
+    if (editingKey === bk) editingKey = null;
+  }
+
   function enterInsert() {
     if (!hasCheatsheet || mode !== "preview" || app.chatOpen) return;
     inlineDraft = structuredClone($state.snapshot(sections)) as ApiCsSection[];
+    editingKey = null;
     insertMode = true;
     app.setMode("INS"); // flip the status-bar mode block to INSERT
     // Claim the keyboard so global single-key shortcuts (t/r/c/i…) don't fire while
@@ -434,14 +468,7 @@
     (window as any).__cortexViewKeys = true;
     void tick().then(() => {
       const first = document.querySelector(".cs-sections.is-insert .cs-ce") as HTMLElement | null;
-      if (!first) return;
-      first.focus();
-      const r = document.createRange();
-      r.selectNodeContents(first);
-      r.collapse(false);
-      const sel = window.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(r);
+      if (first) focusCaretEnd(first);
     });
   }
   function scheduleInlineSave() {
@@ -466,6 +493,7 @@
   async function exitInsert() {
     if (!insertMode) return;
     insertMode = false;
+    editingKey = null;
     (window as any).__cortexViewKeys = false;
     app.setMode("NOR");
     await inlineSave(true); // final save records ONE version
@@ -497,15 +525,19 @@
   });
 
   // Leaving the sheet (subject/topic switch) drops any in-progress inline edit.
+  // Depend ONLY on subject/topic — the insertMode read/write is untracked so that
+  // *entering* insert mode doesn't re-fire this effect and instantly tear itself down.
   $effect(() => {
     void app.activeSubjectId; void selectedTopicId;
-    if (insertMode) {
+    untrack(() => {
+      if (!insertMode) return;
       insertMode = false;
+      editingKey = null;
       (window as any).__cortexViewKeys = false;
       app.setMode("NOR");
       inlineDraft = [];
       if (inlineTimer) { clearTimeout(inlineTimer); inlineTimer = null; }
-    }
+    });
   });
 
   // ── VERSION HISTORY / DIFF (git-like) ────────────────────────
@@ -696,6 +728,7 @@
           <div class="cs-doc-actions">
             {#if insertMode}
               <span class="cs-insert-badge mono">— INSERT —</span>
+              <span class="cs-insert-hint faint">click any block to edit</span>
               <span class="cs-insert-status mono faint">{inlineDirty ? "saving…" : "saved ✓"}</span>
               <button class="btn btn--sm btn--primary" onclick={exitInsert}>
                 <Icon name="check" size={13} /> Done <span class="kbd">Esc</span>
@@ -833,7 +866,32 @@
                         {#if insertMode}<span class="cs-ce" contenteditable="true" use:setText={item.t} oninput={(e) => { item.t = (e.currentTarget as HTMLElement).innerText; scheduleInlineSave(); }}></span>{:else}{item.t}{/if}
                       </dt>
                       <dd>
-                        {#if insertMode}<div class="cs-ce cs-ce-body" contenteditable="true" use:setText={item.d} oninput={(e) => { item.d = (e.currentTarget as HTMLElement).innerText; scheduleInlineSave(); }}></div>{:else}<RichText text={item.d} />{/if}
+                        {#if insertMode}
+                          {@const bk = sec.id + ":" + i}
+                          {#if editingKey === bk}
+                            <div
+                              class="cs-ce cs-ce-body"
+                              contenteditable="true"
+                              data-bk={bk}
+                              use:setText={item.d}
+                              oninput={(e) => { item.d = (e.currentTarget as HTMLElement).innerText; scheduleInlineSave(); }}
+                              onblur={closeBodyEdit}
+                            ></div>
+                          {:else}
+                            <!-- Rendered preview that opens to source-edit on click (capture so a
+                                 citation chip inside doesn't navigate instead of opening the editor). -->
+                            <div
+                              class="cs-ce-rich"
+                              role="button"
+                              tabindex="0"
+                              title="Click to edit"
+                              onclickcapture={(e) => { e.preventDefault(); e.stopPropagation(); openBodyEdit(bk); }}
+                              onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); openBodyEdit(bk); } }}
+                            >
+                              {#if item.d.trim()}<RichText text={item.d} />{:else}<span class="cs-ce-empty">Empty — click to write…</span>{/if}
+                            </div>
+                          {/if}
+                        {:else}<RichText text={item.d} />{/if}
                       </dd>
                     </div>
                     {/if}
@@ -1235,6 +1293,14 @@
   .cs-sections.is-insert .cs-ce { background: color-mix(in oklab, var(--surface-2) 60%, transparent); box-shadow: inset 0 0 0 1px var(--border); cursor: text; }
   .cs-sections.is-insert .cs-ce:hover { background: color-mix(in oklab, var(--surface-3) 55%, transparent); }
   .cs-sections.is-insert .cs-ce:focus { background: color-mix(in oklab, var(--accent) 12%, transparent); box-shadow: inset 0 0 0 1px var(--accent); }
+  /* Rendered preview blocks in INSERT mode: read as the finished document, hint
+     editability on hover, swap to the source field (.cs-ce-body) on click. */
+  .cs-sections.is-insert .cs-ce-rich { cursor: text; border-radius: 6px; padding: 3px 5px; margin: -3px -5px; transition: background 0.12s, box-shadow 0.12s; }
+  .cs-sections.is-insert .cs-ce-rich:hover { background: color-mix(in oklab, var(--surface-2) 50%, transparent); box-shadow: inset 0 0 0 1px var(--border); }
+  .cs-sections.is-insert .cs-ce-rich:focus-visible { outline: none; background: color-mix(in oklab, var(--accent) 10%, transparent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .cs-sections.is-insert .cs-ce-rich :global(.rt-cite) { cursor: text; }
+  .cs-ce-empty { color: var(--fg-faint); font-style: italic; }
+  .cs-insert-hint { font-size: var(--t-2xs); }
   .cs-insert-badge { color: var(--accent); font-weight: 700; letter-spacing: 0.08em; font-size: var(--t-2xs); }
   .cs-insert-status { font-size: var(--t-2xs); }
 
