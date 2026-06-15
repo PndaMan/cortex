@@ -193,7 +193,7 @@
     { id: "solarized",   n: "Solarized",        c: "#268bd2", b: "#002b36" },
     { id: "kanagawa",    n: "Kanagawa",         c: "#7e9cd8", b: "#1f1f28" },
   ];
-  let readFont      = $state("serif");
+  let readFont      = $state("mono");
   let density       = $state("regular");
 
   $effect(() => { document.documentElement.setAttribute("data-read", readFont); });
@@ -1283,7 +1283,7 @@ Notes: {about}</pre>
               </div>
               <div class="set-row-r">
                 <div class="seg">
-                  {#each [{ id: "serif", label: "Serif" }, { id: "sans", label: "Sans" }] as opt}
+                  {#each [{ id: "mono", label: "Mono" }, { id: "serif", label: "Serif" }, { id: "sans", label: "Sans" }] as opt}
                     <button type="button" class={"seg-opt" + (readFont === opt.id ? " on" : "")} onclick={() => (readFont = opt.id)}>{opt.label}</button>
                   {/each}
                 </div>

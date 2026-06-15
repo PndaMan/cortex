@@ -347,7 +347,10 @@
    ============================================================ */
 :root {
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-  --font-read: 'Newsreader', Georgia, 'Times New Roman', serif;
+  /* Reading font defaults to JetBrains Mono; the Settings → Appearance toggle
+     can switch it to Serif or Sans (see the [data-read] overrides below). */
+  --font-read: var(--font-mono);
+  --font-serif: 'Newsreader', Georgia, 'Times New Roman', serif;
   --font-sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
   --read-size: 16.5px;
 
@@ -741,7 +744,9 @@ a { color: inherit; }
 }
 
 /* ---- Tweak hooks (reading typeface / density / hints) ---- */
-[data-read="sans"] { --font-read: var(--font-sans); }
+[data-read="mono"]  { --font-read: var(--font-mono); }
+[data-read="serif"] { --font-read: var(--font-serif); }
+[data-read="sans"]  { --font-read: var(--font-sans); }
 [data-read="sans"] .cs-title, [data-read="sans"] .onb-h, [data-read="sans"] .dash-title, [data-read="sans"] .cs-item dt { letter-spacing: -0.005em; }
 [data-density="compact"] .cs-list { gap: 11px; }
 [data-density="compact"] .cs-sections { gap: 26px; }

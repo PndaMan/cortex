@@ -414,7 +414,7 @@ class AppStore {
 
   // chrome / modal state
   mode = $state<Mode>("NOR");
-  theme = $state<Theme>("osaka-jade");
+  theme = $state<Theme>("everforest");
   // When true, Cortex mirrors the desktop's current Omarchy theme on launch.
   followOmarchy = $state(false);
   cmdkOpen = $state(false);
