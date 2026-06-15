@@ -428,6 +428,7 @@
     if (!hasCheatsheet || mode !== "preview" || app.chatOpen) return;
     inlineDraft = structuredClone($state.snapshot(sections)) as ApiCsSection[];
     insertMode = true;
+    app.setMode("INS"); // flip the status-bar mode block to INSERT
     // Claim the keyboard so global single-key shortcuts (t/r/c/i…) don't fire while
     // editing, and focus the first field so the caret is ready to type immediately.
     (window as any).__cortexViewKeys = true;
@@ -466,6 +467,7 @@
     if (!insertMode) return;
     insertMode = false;
     (window as any).__cortexViewKeys = false;
+    app.setMode("NOR");
     await inlineSave(true); // final save records ONE version
     const sub = app.activeSubject;
     if (sub) {
@@ -500,6 +502,7 @@
     if (insertMode) {
       insertMode = false;
       (window as any).__cortexViewKeys = false;
+      app.setMode("NOR");
       inlineDraft = [];
       if (inlineTimer) { clearTimeout(inlineTimer); inlineTimer = null; }
     }
@@ -1225,9 +1228,13 @@
   /* ── INLINE INSERT MODE ─────────────────────────────────────
      Contenteditable fields that sit seamlessly in the rendered sheet. */
   .cs-ce { outline: none; border-radius: 4px; padding: 1px 4px; margin: -1px -4px; transition: background 0.12s, box-shadow 0.12s; }
-  .cs-ce-body { display: block; white-space: pre-wrap; font-family: var(--font-mono); font-size: var(--t-sm); color: var(--fg); min-height: 1.3em; }
-  .cs-sections.is-insert .cs-ce { background: color-mix(in oklab, var(--surface-2) 55%, transparent); box-shadow: inset 0 0 0 1px var(--border); cursor: text; }
-  .cs-sections.is-insert .cs-ce:focus { background: color-mix(in oklab, var(--accent) 12%, transparent); box-shadow: inset 0 0 0 1px var(--accent-dim); }
+  .cs-ce-body { display: block; white-space: pre-wrap; font-size: var(--t-sm); line-height: 1.6; color: var(--fg); min-height: 1.3em; }
+  /* In INSERT mode every editable field gets a visible card + the whole sheet an accent
+     frame, so it reads as an editable document; the focused field is accent-outlined. */
+  .cs-sections.is-insert { box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--accent) 28%, transparent); border-radius: 10px; padding: 6px; }
+  .cs-sections.is-insert .cs-ce { background: color-mix(in oklab, var(--surface-2) 60%, transparent); box-shadow: inset 0 0 0 1px var(--border); cursor: text; }
+  .cs-sections.is-insert .cs-ce:hover { background: color-mix(in oklab, var(--surface-3) 55%, transparent); }
+  .cs-sections.is-insert .cs-ce:focus { background: color-mix(in oklab, var(--accent) 12%, transparent); box-shadow: inset 0 0 0 1px var(--accent); }
   .cs-insert-badge { color: var(--accent); font-weight: 700; letter-spacing: 0.08em; font-size: var(--t-2xs); }
   .cs-insert-status { font-size: var(--t-2xs); }
 
