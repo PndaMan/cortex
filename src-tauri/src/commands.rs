@@ -17,6 +17,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 const NO_MODEL: &str =
     "No model configured — add an API key in Settings → API keys (Gemini or OpenRouter), then pick it under Settings → Models.";
 
+/// Default for everything that reads the `model_chat` setting (chat, plus the
+/// auto-rename / vision-OCR / transcript helpers). A fast NON-reasoning model: the
+/// chat path is blocking (total latency == perceived time-to-first-token) and must
+/// reliably emit the inline ⟦source · loc⟧ citation markers the UI renders. Keep all
+/// `model_chat` readers on the same default so the one setting can't resolve to two
+/// different models. (Cheatsheet/quiz/material default separately to Step 3.7 Flash.)
+const DEFAULT_CHAT_MODEL: &str = "gemini:gemini-2.5-flash";
+
 fn truncate(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
@@ -437,7 +445,7 @@ fn auto_rename_source(state: &State<AppState>, source_id: &str, original_name: &
         let c = state.db.lock().unwrap();
         let spec = match repo::get_setting(&c, "model_chat") {
             Ok(Some(s)) => s,
-            _ => "openrouter:stepfun/step-3.7-flash".to_string(),
+            _ => DEFAULT_CHAT_MODEL.to_string(),
         };
         match read_keys(&c) {
             Ok(k) => (spec, k),
@@ -481,7 +489,7 @@ fn ocr_via_vision(state: &State<AppState>, kind: &str, path: Option<&str>) -> Re
     let (spec, keys) = {
         let c = state.db.lock().unwrap();
         let spec = repo::get_setting(&c, "model_chat")?
-            .unwrap_or_else(|| "openrouter:stepfun/step-3.7-flash".into());
+            .unwrap_or_else(|| DEFAULT_CHAT_MODEL.into());
         (spec, read_keys(&c)?)
     };
     let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
@@ -1087,8 +1095,10 @@ pub async fn chat_answer(
     let state = app.state::<AppState>();
     let (embed_provider, ollama_url, chat_spec, keys, preamble, searxng) = {
         let c = state.db.lock().unwrap();
+        // DEFAULT_CHAT_MODEL is a fast non-reasoning model (see its doc comment for why
+        // chat must not fall back to a reasoning model like Step 3.7).
         let chat_spec =
-            repo::get_setting(&c, "model_chat")?.unwrap_or_else(|| "openrouter:stepfun/step-3.7-flash".into());
+            repo::get_setting(&c, "model_chat")?.unwrap_or_else(|| DEFAULT_CHAT_MODEL.into());
         guard_offline_llm(&c, &chat_spec)?;
         (
             effective_embed_provider(&c),
@@ -3338,7 +3348,7 @@ fn spawn_lecture_summary(
             let c = state.db.lock().unwrap();
             let spec = match repo::get_setting(&c, "model_chat") {
                 Ok(Some(s)) => s,
-                _ => "openrouter:stepfun/step-3.7-flash".into(),
+                _ => DEFAULT_CHAT_MODEL.into(),
             };
             let keys = match read_keys(&c) {
                 Ok(k) => k,
