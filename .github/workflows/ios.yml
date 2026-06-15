@@ -58,6 +58,21 @@ jobs:
       - name: Initialise the iOS project
         run: cargo tauri ios init --ci
 
+      - name: Allow LAN / cleartext homelab HTTP (App Transport Security)
+        # iOS blocks plain-HTTP LAN + Tailscale requests by default, so the homelab
+        # "Test connection" and the sync/whisper/searx/ingest calls all fail. Patch
+        # the generated Info.plist to permit them. Sideload phase — narrow this to
+        # NSExceptionDomains before any App Store submission.
+        run: |
+          set -uo pipefail
+          for plist in $(find src-tauri/gen/apple -name 'Info.plist'); do
+            /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
+            echo "ATS patched: $plist"
+          done
+
       - name: Build for the iOS Simulator (unsigned)
         run: cargo tauri ios build --target aarch64-sim --ci
 
@@ -104,6 +119,21 @@ jobs:
 
       - name: Initialise the iOS project
         run: cargo tauri ios init --ci
+
+      - name: Allow LAN / cleartext homelab HTTP (App Transport Security)
+        # iOS blocks plain-HTTP LAN + Tailscale requests by default, so the homelab
+        # "Test connection" and the sync/whisper/searx/ingest calls all fail. Patch
+        # the generated Info.plist to permit them. Sideload phase — narrow this to
+        # NSExceptionDomains before any App Store submission.
+        run: |
+          set -uo pipefail
+          for plist in $(find src-tauri/gen/apple -name 'Info.plist'); do
+            /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
+            echo "ATS patched: $plist"
+          done
 
       # Build the device app with signing disabled (the Xcode Rust build phase still
       # compiles the aarch64-apple-ios staticlib), then zip it into an unsigned IPA.
@@ -235,6 +265,21 @@ jobs:
 
       - name: Initialise the iOS project
         run: cargo tauri ios init --ci
+
+      - name: Allow LAN / cleartext homelab HTTP (App Transport Security)
+        # iOS blocks plain-HTTP LAN + Tailscale requests by default, so the homelab
+        # "Test connection" and the sync/whisper/searx/ingest calls all fail. Patch
+        # the generated Info.plist to permit them. Sideload phase — narrow this to
+        # NSExceptionDomains before any App Store submission.
+        run: |
+          set -uo pipefail
+          for plist in $(find src-tauri/gen/apple -name 'Info.plist'); do
+            /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
+            echo "ATS patched: $plist"
+          done
 
       - name: Build signed IPA (App Store)
         env:

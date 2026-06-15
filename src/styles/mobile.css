@@ -135,3 +135,54 @@ html[data-mobile] .set-mnav {
 html[data-mobile] .set-mnav .picker-btn {
   min-height: 46px;
 }
+
+/* ── Mobile feedback round 2 — full sweep (real iOS screenshots) ───────────── */
+
+/* Home/Dashboard: desktop .dash is a 1120px centred column with large padding, so
+   on a phone the cards float in whitespace. Use the full width + tight padding,
+   and stack the subject grid to one column. */
+html[data-mobile] .dash {
+  max-width: none;
+  padding: var(--sp-4) var(--sp-4) var(--sp-7);
+}
+html[data-mobile] .subj-grid {
+  grid-template-columns: 1fr;
+}
+
+/* Add source / Generate material: both already collapse to one column, but the
+   clamp() side padding wastes space at 390px and the inner grids can still try a
+   second column on wider phones/tablets — force one column + a tighter, scrollable
+   page so nothing overlaps. */
+html[data-mobile] .addsrc,
+html[data-mobile] .genmat2 {
+  padding: 14px 14px 20px;
+  overflow: auto;
+}
+html[data-mobile] .addsrc-grid,
+html[data-mobile] .gm2-grid {
+  grid-template-columns: 1fr;
+}
+html[data-mobile] .gm2-left {
+  overflow: visible;
+}
+/* Quick-pick count pills: don't shove them to the far edge on a narrow row. */
+html[data-mobile] .gm2-count-presets {
+  margin-left: 0;
+}
+
+/* Subject detail / university-portal (Moodle) panel: a centred desktop modal is
+   cramped on a phone — make it a near-full-screen sheet and stack its grids. */
+html[data-mobile] .sp {
+  width: 100vw;
+  height: 100%;
+  max-height: 100%;
+  border: none;
+  border-radius: 0;
+}
+html[data-mobile] .sp-back {
+  align-items: stretch;
+  backdrop-filter: none;
+}
+html[data-mobile] .sp-grid {
+  grid-template-columns: 1fr;
+}

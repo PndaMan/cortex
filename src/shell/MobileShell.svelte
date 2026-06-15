@@ -27,6 +27,10 @@
   import DiffModal from "../components/DiffModal.svelte";
   import SourceMetaModal from "../components/SourceMetaModal.svelte";
   import PomodoroPanel from "../components/PomodoroPanel.svelte";
+  // Subject detail / university-portal (Moodle) sheet — self-managed via
+  // app.subjectPanelOpen. It's only mounted by the desktop App.svelte, so on
+  // mobile tapping a subject header opened nothing; mount it here too.
+  import SubjectPanel from "../components/SubjectPanel.svelte";
 
   type Screen = "router" | "more";
   // "more" is a mobile-only list screen with no desktop app.view; every other
@@ -163,6 +167,11 @@
         {#if ExamViewC}{@const C = ExamViewC}<C />{/if}
       {:else if app.view === "settings"}
         {#if SettingsView}{@const C = SettingsView}<C />{/if}
+      {:else}
+        <!-- Safety net: any view MobileShell doesn't render (e.g. the desktop-only
+             "recorder", or a view added later) falls back to Home instead of a
+             blank screen. titleText has the matching default ("Cortex"). -->
+        <Dashboard />
       {/if}
     {/if}
   </main>
@@ -212,6 +221,7 @@
 <DiffModal />
 <SourceMetaModal />
 <PomodoroPanel />
+<SubjectPanel />
 
 <style>
   /* All chrome below is styled ONLY from existing design tokens — no new colours

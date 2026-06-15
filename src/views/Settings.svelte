@@ -51,6 +51,13 @@
     { id: "about",      label: "About",         icon: "diamond" },
   ] as const;
 
+  // Mobile is a homelab-first portable view: drop the desktop-only Keybinds tab
+  // and lead with Integrations (homelab). Desktop order/contents are unchanged.
+  const MOBILE_TABS = ["homelab", "keys", "models", "appearance", "calendar", "experimental", "audio", "data", "profile", "about"];
+  const navTabs = isMobile
+    ? MOBILE_TABS.map((id) => TABS.find((t) => t.id === id)).filter((t): t is (typeof TABS)[number] => !!t)
+    : TABS;
+
   let tab = $state<string>("profile");
   // Honour a deep-link from elsewhere (e.g. the subject Overview → Moodle setup).
   $effect(() => {
@@ -296,6 +303,9 @@
     if (!hlBase.trim()) return;
     hlState = "testing";
     hlState = await testEndpoint(hlBase);
+    if (hlState === "fail") {
+      app.pushToast({ kind: "error", title: "Homelab unreachable", body: lastTestError || "Couldn't reach the base URL." });
+    }
   }
 
   // ---- live homelab sync (smart per-record merge + binary file sync) ----
@@ -498,10 +508,16 @@
     return new Date(ms).toLocaleString();
   }
 
+  // Last transport error from a failed reachability test, so the homelab card can
+  // explain WHY (e.g. iOS blocking cleartext LAN, DNS, timeout) instead of "fail".
+  let lastTestError = $state("");
   async function testEndpoint(url: string): Promise<"ok" | "fail"> {
     try {
-      return (await api.pingUrl(url)) ? "ok" : "fail";
-    } catch {
+      const ok = await api.pingUrl(url);
+      lastTestError = ok ? "" : "Reached the server, but it didn't return a success status.";
+      return ok ? "ok" : "fail";
+    } catch (e) {
+      lastTestError = String(e);
       return "fail";
     }
   }
@@ -933,7 +949,7 @@
       <span class="mono" style="color:var(--fg-bright);font-weight:600">Settings</span>
     </div>
 
-    {#each TABS as t}
+    {#each navTabs as t}
       <button
         class={"set-nav-item" + (tab === t.id ? " on" : "")}
         onclick={() => (tab = t.id)}
@@ -953,8 +969,8 @@
         <Picker
           value={tab}
           onChange={(id) => (tab = id)}
-          options={TABS.map((t) => ({ id: t.id, label: t.label }))}
-          icon={TABS.find((t) => t.id === tab)?.icon}
+          options={navTabs.map((t) => ({ id: t.id, label: t.label }))}
+          icon={navTabs.find((t) => t.id === tab)?.icon}
         />
       </div>
     {/if}
@@ -1301,6 +1317,8 @@ Notes: {about}</pre>
                 </div>
               </div>
             </div>
+            <!-- Density is a desktop spacing affordance; touch uses one comfortable scale. -->
+            {#if !isMobile}
             <div class="set-row">
               <div class="set-row-l">
                 <div class="set-row-t">Density</div>
@@ -1314,9 +1332,12 @@ Notes: {about}</pre>
                 </div>
               </div>
             </div>
+            {/if}
           </div>
         </section>
 
+        <!-- Window / tray is a desktop-only concept — hidden on mobile. -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Window</h3></div>
           <div class="set-card">
@@ -1331,6 +1352,7 @@ Notes: {about}</pre>
             </div>
           </div>
         </section>
+        {/if}
       </div>
 
     <!-- ===== KEYBINDS ===== -->
@@ -1734,6 +1756,9 @@ Notes: {about}</pre>
           </div>
         </section>
 
+        <!-- YouTube streaming needs the mpv + yt-dlp sidecars, which don't ship on
+             mobile — hide the whole section there. -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h">
             <h3 class="set-group-t">YouTube streaming</h3>
@@ -1769,6 +1794,7 @@ Notes: {about}</pre>
             {/if}
           </div>
         </section>
+        {/if}
 
         <section class="set-group">
           <div class="set-group-h">

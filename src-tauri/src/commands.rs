@@ -3651,7 +3651,10 @@ pub async fn ping_url(url: String) -> Result<bool> {
         let client = http_client(5);
         match client.get(&url).send() {
             Ok(resp) => Ok(resp.status().is_success()),
-            Err(_) => Ok(false),
+            // Surface the real transport error (DNS/timeout/TLS/connection refused)
+            // so the homelab "Test connection" button can explain WHY it failed. On
+            // iOS a blocked cleartext-LAN request shows up here, not as a silent false.
+            Err(e) => Err(Error::Other(format!("{e}"))),
         }
     })
     .await

@@ -13,13 +13,16 @@
   // Title for text pastes
   let textTitle = $state("");
 
-  const methods = [
+  const allMethods = [
     { id: "upload" as const, ico: "doc",    t: "Upload Files",   d: "PDF · PPTX · DOCX · TXT · MD", k: "u" },
     { id: "url"    as const, ico: "search", t: "Paste URL",       d: "web page · YouTube",            k: "p" },
     { id: "text"   as const, ico: "doc",    t: "Paste Text",      d: "markdown · plain text",         k: "t" },
     { id: "record" as const, ico: "record", t: "Record Lecture",  d: "live audio + transcript",       k: "r" },
     { id: "photo"  as const, ico: "grid",   t: "Snap Photo",      d: "OCR a whiteboard / page",       k: "o" },
   ] as const;
+  // Lecture recording is desktop-only (no native mic plugin / homelab ingest on mobile yet),
+  // and the recorder view isn't mounted in MobileShell — selecting it left a blank screen.
+  const methods = allMethods.filter((m) => !(isMobile && m.id === "record"));
 
   // Subject + topic selectors, seeded ONCE from the per-topic "+" token
   // (app.addSourceTopicId) or the active subject. A single guarded effect
@@ -150,14 +153,14 @@
     if (method === "upload") beginUpload();
     else if (method === "url") beginUrl();
     else if (method === "text") beginText();
-    else if (method === "record") app.setView("recorder");
+    else if (method === "record" && !isMobile) app.setView("recorder");
     else if (method === "photo") beginPhoto();
   }
 
   function selectMethod(id: typeof methods[number]["id"]) {
     method = id;
     value = "";
-    if (id === "record") app.setView("recorder");
+    if (id === "record" && !isMobile) app.setView("recorder");
   }
 
   // Claim the keyboard while this view is open so the method mnemonics
