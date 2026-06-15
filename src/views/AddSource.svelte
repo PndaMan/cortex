@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
+  import { isMobile } from "../lib/platform";
   import * as api from "../lib/api";
   import { jobs } from "../lib/jobs.svelte";
   import Icon from "../components/Icon.svelte";
@@ -246,7 +247,11 @@
         {#if method === null}
           <div class="addsrc-empty">
             <Icon name="plus" size={26} color="var(--fg-faint)" />
-            <p class="mono faint">Pick a source type on the left,<br />or press its key (u · p · t · r · o).</p>
+            {#if isMobile}
+              <p class="mono faint">Pick a source type above to get started.</p>
+            {:else}
+              <p class="mono faint">Pick a source type on the left,<br />or press its key (u · p · t · r · o).</p>
+            {/if}
           </div>
         {:else if method === "url"}
           <span class="onb-label mono">URL</span>

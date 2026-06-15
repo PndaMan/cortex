@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app, THEMES, THEME_LABELS } from "../lib/store.svelte";
   import type { Theme } from "../lib/store.svelte";
+  import { isMobile } from "../lib/platform";
   import * as api from "../lib/api";
   import type { Memory } from "../lib/api";
   import Icon from "../components/Icon.svelte";
@@ -946,6 +947,14 @@
 
   <!-- MAIN BODY -->
   <div class="set-body">
+
+    {#if isMobile}
+      <div class="set-mnav">
+        <select class="input set-mnav-sel" bind:value={tab} aria-label="Settings section">
+          {#each TABS as t}<option value={t.id}>{t.label}</option>{/each}
+        </select>
+      </div>
+    {/if}
 
     <!-- ===== PROFILE ===== -->
     {#if tab === "profile"}

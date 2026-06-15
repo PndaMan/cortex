@@ -197,6 +197,7 @@
   // to claim the keyboard; we stay out of their way then.
   let gPrefix = false;
   $effect(() => {
+    if (isMobile) return; // phones have no hardware-keyboard engine — disable it
     function onKey(e: KeyboardEvent) {
       const el = document.activeElement as HTMLElement | null;
       const typing =

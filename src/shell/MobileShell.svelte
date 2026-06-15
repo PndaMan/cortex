@@ -165,11 +165,11 @@
       </div>
     {:else if screen === "more"}
       <div class="m-list">
-        <button class="m-row" onclick={() => (app.searchOpen = true)}><Icon name="search" size={16} /> Search</button>
-        <button class="m-row" onclick={() => go("analytics")}><Icon name="chart" size={16} /> Insights</button>
-        <button class="m-row" onclick={() => go("exam")}><Icon name="cards" size={16} /> Exam mode</button>
-        <button class="m-row" onclick={() => go("notes")}><Icon name="reader" size={16} /> Notes</button>
-        <button class="m-row" onclick={() => go("settings")}><Icon name="settings" size={16} /> Settings</button>
+        <button class="m-row" onclick={() => (app.searchOpen = true)}><Icon name="search" size={18} /><span class="m-row-l">Search</span><Icon name="chevron" size={14} /></button>
+        <button class="m-row" onclick={() => go("analytics")}><Icon name="chart" size={18} /><span class="m-row-l">Insights</span><Icon name="chevron" size={14} /></button>
+        <button class="m-row" onclick={() => go("exam")}><Icon name="cards" size={18} /><span class="m-row-l">Exam mode</span><Icon name="chevron" size={14} /></button>
+        <button class="m-row" onclick={() => go("notes")}><Icon name="reader" size={18} /><span class="m-row-l">Notes</span><Icon name="chevron" size={14} /></button>
+        <button class="m-row" onclick={() => go("settings")}><Icon name="settings" size={18} /><span class="m-row-l">Settings</span><Icon name="chevron" size={14} /></button>
       </div>
     {:else}
       <!-- router: reuse the existing views verbatim -->
@@ -347,8 +347,8 @@
   .m-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 12px;
+    gap: 10px;
+    padding: 14px;
   }
   .m-subj,
   .m-row,
@@ -356,17 +356,20 @@
   .m-cap-row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     width: 100%;
-    padding: 14px;
+    min-height: 56px;
+    padding: 14px 16px;
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--fg);
-    border-radius: var(--rad-3);
-    font-size: var(--t-sm);
+    border-radius: var(--rad-4);
+    font-size: var(--t-md);
     text-align: left;
     cursor: pointer;
   }
+  .m-row-l { flex: 1; min-width: 0; }
+  .m-row :global(svg:last-child) { color: var(--fg-faint); flex: none; }
   .m-subj:active,
   .m-row:active,
   .m-add:active,

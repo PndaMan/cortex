@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
+  import { isMobile } from "../lib/platform";
   import Icon from "./Icon.svelte";
   import RichText from "./RichText.svelte";
   import Picker from "./Picker.svelte";
@@ -636,7 +637,7 @@
           ? "Open a subject first…"
           : app.mode === "INS"
           ? "Ask about " + scopeName + "…"
-          : "Press i to ask…"}
+          : isMobile ? "Ask…" : "Press i to ask…"}
         bind:value={draft}
         disabled={!app.activeSubject}
         onfocus={() => app.setMode("INS")}

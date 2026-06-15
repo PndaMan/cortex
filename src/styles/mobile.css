@@ -89,3 +89,42 @@ html[data-mobile] .cs-index {
 html[data-mobile] .cal-cell {
   min-height: 44px;
 }
+
+/* ── Mobile feedback round 1 (real iOS screenshots) ──────────────────────── */
+
+/* Keybinds are pointless on a phone — strip every key hint + badge. (The keyboard
+ * engine itself is disabled in App.svelte when isMobile.) */
+html[data-mobile] .kbd,
+html[data-mobile] .nav-k,
+html[data-mobile] .sb-key,
+html[data-mobile] .compose-hint,
+html[data-mobile] .ces-sub {
+  display: none !important;
+}
+
+/* Tab rows must scroll sideways, not clip, on a narrow screen. */
+html[data-mobile] .subj-tabs,
+html[data-mobile] .cs-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+html[data-mobile] .subj-tabs::-webkit-scrollbar,
+html[data-mobile] .cs-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Settings: the side-nav rail is replaced by a native dropdown (rendered in
+ * Settings.svelte when isMobile). Hide the rail; size the dropdown. */
+html[data-mobile] .set-nav {
+  display: none;
+}
+html[data-mobile] .set-mnav {
+  padding: 14px 16px 0;
+}
+html[data-mobile] .set-mnav-sel {
+  width: 100%;
+  min-height: 46px;
+}
