@@ -360,7 +360,8 @@
       </div>
 
       {#if showChatDock}
-        <div class="chatdock">
+        <button class="chatdock-backdrop" aria-label="Close chat" onclick={() => (app.chatOpen = false)}></button>
+        <div class="chatdock chatdock--float">
           {#if !compact}
             <ResizeHandle
               side="left"

@@ -1235,7 +1235,11 @@ pub async fn chat_answer(
         ⟦source-name · location⟧ whenever you use them. If the provided sources don't contain the answer, \
         say so plainly in one line (e.g. \"That isn't covered in the selected sources.\") and STOP — do not \
         fall back to general knowledge. Use light Markdown (bold key terms, short bullet lists; a `---` divider only when \
-        genuinely needed) and keep it scannable. \
+        genuinely needed) and keep it scannable. Put ALL code in fenced triple-backtick blocks with a \
+        language tag, and never put math, LaTeX, or backticks inside a code block. Write math as PLAIN \
+        text — NEVER use LaTeX or its delimiters ($…$, $$…$$, \\(…\\), \\[…\\]) or LaTeX commands; use \
+        Unicode and inline code instead (x², √x, ≤, ≥, π, Δ, →; write fractions as a/b), and wrap any \
+        expression containing `*` (e.g. `a * b`) in inline backticks so it isn't parsed as italics. \
         On the FINAL line, write 2–3 SPECIFIC next-step prompts the learner could tap, each a real \
         short phrase about THIS material (never placeholders like 'a' or 'b'), formatted exactly as: \
         `SUGGESTIONS: <first prompt> | <second prompt> | <third prompt>` — e.g. \

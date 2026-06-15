@@ -75,6 +75,18 @@
 
 /* ============ CHAT DOCK ============ */
 .chatdock { width: var(--chat-w, 396px); flex: none; border-left: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; min-height: 0; position: relative; }
+/* Float the chat as a right-edge overlay (opened from the "Ask c" menu) instead of an
+   in-flow column that squishes the workspace. Reuses the compact-mode slide treatment. */
+.chatdock.chatdock--float {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: min(var(--chat-w, 404px), 92%); flex: none; z-index: 60;
+  box-shadow: -14px 0 40px rgba(0, 0, 0, 0.5);
+  animation: chatSlide var(--dur-slow) var(--ease);
+}
+.chatdock-backdrop {
+  position: absolute; inset: 0; z-index: 58; border: none; padding: 0; cursor: default;
+  background: color-mix(in oklab, var(--bg-sunken) 45%, transparent);
+}
 .chatdock-inner { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .chat-head { display: flex; align-items: center; gap: 6px; height: 44px; padding: 0 10px 0 12px; border-bottom: 1px solid var(--border); flex: none; }
 /* Keep the action buttons fixed-size so a narrow (resized) dock shrinks the
@@ -1047,7 +1059,16 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
 
 @media (max-width: 900px) {
   .settings { grid-template-columns: 1fr; }
-  .set-nav { flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--border); }
+  /* Collapse the side rail into a single horizontal scrolling bar of chips — the
+     wrapped multi-row version got cramped/ugly when the window is narrow or scaled. */
+  .set-nav {
+    flex-direction: row; flex-wrap: nowrap; overflow-x: auto; gap: 4px;
+    border-right: none; border-bottom: 1px solid var(--border);
+    padding: 8px 12px; scrollbar-width: none;
+  }
+  .set-nav::-webkit-scrollbar { display: none; }
+  .set-nav-h { display: none; }
+  .set-nav-item { flex: none; white-space: nowrap; }
   .set-nav-foot { display: none; }
   .mt-head { display: none; }
   .mt-row { grid-template-columns: 1fr; gap: 8px; }

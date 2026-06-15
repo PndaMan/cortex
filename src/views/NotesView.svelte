@@ -288,9 +288,6 @@
               <Icon name="arrowR" size={13} /> Convert to source
             </button>
           </span>
-          <button class="btn btn--primary btn--sm" type="button" disabled={saved} onclick={save} title="Save note">
-            Save
-          </button>
         </div>
       {:else if !loading}
         <div class="notes-detail-empty">
@@ -352,9 +349,6 @@
           <Icon name="arrowR" size={13} /> Convert to source
         </button>
       </span>
-      <button class="btn btn--primary btn--sm" type="button" disabled={saved} onclick={save} title="Save note">
-        Save
-      </button>
     </div>
   </div>
 {/if}
