@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import type { CheatsheetData, CsSection as ApiCsSection, CheatsheetVersionMeta } from "../lib/api";
@@ -424,9 +425,23 @@
   }
 
   function enterInsert() {
-    if (!hasCheatsheet || mode !== "preview") return;
+    if (!hasCheatsheet || mode !== "preview" || app.chatOpen) return;
     inlineDraft = structuredClone($state.snapshot(sections)) as ApiCsSection[];
     insertMode = true;
+    // Claim the keyboard so global single-key shortcuts (t/r/c/i…) don't fire while
+    // editing, and focus the first field so the caret is ready to type immediately.
+    (window as any).__cortexViewKeys = true;
+    void tick().then(() => {
+      const first = document.querySelector(".cs-sections.is-insert .cs-ce") as HTMLElement | null;
+      if (!first) return;
+      first.focus();
+      const r = document.createRange();
+      r.selectNodeContents(first);
+      r.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(r);
+    });
   }
   function scheduleInlineSave() {
     inlineDirty = true;
@@ -450,6 +465,7 @@
   async function exitInsert() {
     if (!insertMode) return;
     insertMode = false;
+    (window as any).__cortexViewKeys = false;
     await inlineSave(true); // final save records ONE version
     const sub = app.activeSubject;
     if (sub) {
@@ -469,7 +485,7 @@
         if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); void exitInsert(); }
         return;
       }
-      if (e.key === "i" && !typing && !el?.isContentEditable && hasCheatsheet && mode === "preview") {
+      if (e.key === "i" && !typing && !el?.isContentEditable && !app.chatOpen && hasCheatsheet && mode === "preview") {
         e.preventDefault(); e.stopPropagation();
         enterInsert();
       }
@@ -483,6 +499,7 @@
     void app.activeSubjectId; void selectedTopicId;
     if (insertMode) {
       insertMode = false;
+      (window as any).__cortexViewKeys = false;
       inlineDraft = [];
       if (inlineTimer) { clearTimeout(inlineTimer); inlineTimer = null; }
     }
