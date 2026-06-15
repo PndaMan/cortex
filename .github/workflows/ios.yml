@@ -141,6 +141,34 @@ jobs:
           path: Cortex-unsigned.ipa
           if-no-files-found: ignore
 
+      - name: Publish IPA to the SideStore source repo
+        # Pushes the unsigned IPA to PndaMan/sidestore-source as a GitHub Release asset
+        # under a STABLE tag, so a SideStore / AltStore source manifest can point at a
+        # fixed downloadURL. Requires a PAT (fine-grained, Contents: read+write on that
+        # repo) in the SIDESTORE_TOKEN secret — the default GITHUB_TOKEN cannot write to
+        # another repo. If the secret is missing the step warns and skips (the artifact
+        # upload above still works).
+        if: ${{ hashFiles('Cortex-unsigned.ipa') != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.SIDESTORE_TOKEN }}
+        run: |
+          set -uo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::SIDESTORE_TOKEN not set — skipping upload to PndaMan/sidestore-source. Create a fine-grained PAT with Contents: read+write on that repo and add it as the SIDESTORE_TOKEN repo secret."
+            exit 0
+          fi
+          VER="$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')"
+          [ -z "$VER" ] && VER="dev"
+          cp "$GITHUB_WORKSPACE/Cortex-unsigned.ipa" "$GITHUB_WORKSPACE/Cortex.ipa"
+          REPO="PndaMan/sidestore-source"
+          # Stable tag + filename → a fixed downloadURL the source manifest can reference.
+          gh release create cortex-ios --repo "$REPO" \
+            --title "Cortex iOS (sideload)" \
+            --notes "Unsigned arm64 IPA for LiveContainer / SideStore. Auto-published by cortex CI." \
+            2>/dev/null || true
+          gh release upload cortex-ios "$GITHUB_WORKSPACE/Cortex.ipa" --repo "$REPO" --clobber
+          echo "✅ Published → https://github.com/$REPO/releases/download/cortex-ios/Cortex.ipa (cortex v$VER)"
+
   testflight:
     name: iOS TestFlight (signed)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.sign == true }}
