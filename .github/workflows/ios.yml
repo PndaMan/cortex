@@ -109,36 +109,37 @@ jobs:
       # compiles the aarch64-apple-ios staticlib), then zip it into an unsigned IPA.
       - name: Build unsigned device .app → .ipa
         run: |
-          set -euo pipefail
-          cd src-tauri/gen/apple
-          PROJ="$(ls -d *.xcodeproj | head -1)"
-          LIST="$(xcodebuild -list -project "$PROJ")"
-          SCHEME="$(printf '%s\n' "$LIST" | awk '/Schemes:/{f=1;next} f&&NF{gsub(/^[[:space:]]+/,"");print;exit}')"
-          CONFIG="$(printf '%s\n' "$LIST" | awk '/Build Configurations:/{f=1;next} /Schemes:|If no build/{f=0} f&&NF{gsub(/^[[:space:]]+/,"");print}' | grep -ix 'release' | head -1)"
-          CONFIG="${CONFIG:-release}"
-          echo "Project=$PROJ  Scheme=$SCHEME  Config=$CONFIG"
-          xcodebuild build \
-            -project "$PROJ" \
-            -scheme "$SCHEME" \
-            -configuration "$CONFIG" \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath build/dd \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="-"
-          APP="$(find build/dd/Build/Products -maxdepth 3 -name '*.app' | head -1)"
-          if [ -z "$APP" ]; then echo "::error::No .app was produced"; exit 1; fi
+          set -uo pipefail
+          # Tauri MUST drive the build: it writes the dev/build "server-addr" handshake
+          # file and runs the Rust xcode-script build phase. A raw `xcodebuild` can't —
+          # that phase panics on the missing addr file (and reports undefined_arch).
+          # Disable code signing for every target via a global xcconfig: it's honoured by
+          # Tauri's own xcodebuild invocation and survives project regeneration, so the
+          # archive needs no Apple account.
+          printf 'CODE_SIGNING_ALLOWED = NO\nCODE_SIGNING_REQUIRED = NO\nCODE_SIGN_IDENTITY =\nDEVELOPMENT_TEAM =\nPROVISIONING_PROFILE_SPECIFIER =\n' > /tmp/unsigned.xcconfig
+          export XCODE_XCCONFIG_FILE=/tmp/unsigned.xcconfig
+          # The unsigned archive succeeds; Tauri's signing/export step then fails — that's
+          # expected, we only need the unsigned .app to wrap into a Payload/ IPA.
+          cargo tauri ios build --target aarch64 --ci || true
+          APP="$(find src-tauri/gen/apple -name '*.app' \( -path '*.xcarchive/Products/Applications/*' -o -path '*[Rr]elease-iphoneos*' \) -print 2>/dev/null | head -1)"
+          [ -z "$APP" ] && APP="$(find src-tauri/gen/apple -name '*.app' -print 2>/dev/null | grep -iv simulator | head -1)"
+          if [ -z "$APP" ]; then
+            echo "::error::No .app was produced"
+            find src-tauri/gen/apple \( -name '*.app' -o -name '*.xcarchive' \) -print 2>/dev/null | head -20
+            exit 1
+          fi
           echo "Unsigned app: $APP"
-          rm -rf build/Payload && mkdir -p build/Payload
-          cp -R "$APP" build/Payload/
-          (cd build && zip -qry Cortex-unsigned.ipa Payload)
-          ls -lh build/Cortex-unsigned.ipa
+          rm -rf /tmp/payload && mkdir -p /tmp/payload/Payload
+          cp -R "$APP" /tmp/payload/Payload/
+          ( cd /tmp/payload && zip -qry "$GITHUB_WORKSPACE/Cortex-unsigned.ipa" Payload )
+          ls -lh "$GITHUB_WORKSPACE/Cortex-unsigned.ipa"
 
       - name: Upload sideloadable IPA
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cortex-ios-sideload-ipa
-          path: src-tauri/gen/apple/build/Cortex-unsigned.ipa
+          path: Cortex-unsigned.ipa
           if-no-files-found: ignore
 
   testflight:
