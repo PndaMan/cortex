@@ -2000,7 +2000,7 @@ pub async fn generate_cheatsheet(
         - **Bold** key terms, inline `code`, ordered lists for step-by-step worked \
         examples, and short bullet lists.\n\
         - LaTeX MATHS so equations actually render: write INLINE maths as \\(…\\) (e.g. \\(E=mc^2\\), \
-        \\(\\frac{dy}{dx}\\)) and DISPLAY equations as $$…$$ on their OWN line. Use this for EVERY \
+        \\(\\frac{{dy}}{{dx}}\\)) and DISPLAY equations as $$…$$ on their OWN line. Use this for EVERY \
         formula/equation instead of plain text; do not use bare single-dollar $…$.\n\
         - A simple BAR CHART for quantitative comparisons: a fenced block opened with \
         three backticks then the word barchart, then one `Label: number` per line, then closing \
