@@ -71,6 +71,19 @@ pub fn set_subject_archived(conn: &Connection, id: &str, archived: bool) -> Resu
     if n == 0 {
         return Err(Error::NotFound(format!("subject {id}")));
     }
+    // Archiving hides the subject from calendar matching, but its already-matched
+    // events still point at it — so it would keep "owning" them. Release this
+    // subject's events and re-file them, so they re-match to an ACTIVE subject (e.g.
+    // a same-named replacement with a different code) instead of the archived one,
+    // or become unassigned. Only the event→subject link is cleared; no event or
+    // subject data is deleted (the archived subject's sources/topics are untouched).
+    if archived {
+        conn.execute(
+            "UPDATE events SET subject_id=NULL, updated_at=?2 WHERE subject_id=?1",
+            params![id, now_ms()],
+        )?;
+        retag_calendar_events(conn)?;
+    }
     Ok(())
 }
 
