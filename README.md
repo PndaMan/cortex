@@ -19,9 +19,46 @@ Your data never leaves your machine, and you bring your own AI keys.
   <img alt="Status" src="https://img.shields.io/badge/status-v1.0-2dd5b7.svg" />
 </p>
 
-[Why Cortex?](#why-cortex) · [Features](#features) · [Download](#download--install) · [Build from source](#build-from-source) · [Configuration](#configuration) · [How it works](#how-it-works) · [Roadmap](#roadmap) · [Contributing](#contributing)
+[Why Cortex?](#why-cortex) · [Preview](#preview) · [Features](#features) · [Download](#download--install) · [Build from source](#build-from-source) · [Configuration](#configuration) · [How it works](#how-it-works) · [Roadmap](#roadmap) · [Contributing](#contributing)
 
 </div>
+
+---
+
+## Preview
+
+<div align="center">
+
+<img src="assets/screenshots/analytics.png" alt="Cortex study-analytics dashboard" width="900" />
+
+<em>A study-analytics dashboard that actually earns the name — accuracy, focus-by-hour, consistency streaks, and per-topic mastery.</em>
+
+</div>
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/cheatsheet.png" alt="Cheatsheet" /><br/><b>Auto-generated cheatsheets</b> — exam-focused, structured study notes synthesised per topic, with tables, callouts, formulas and charts.</td>
+    <td width="50%"><img src="assets/screenshots/chat.png" alt="Citation-grounded chat" /><br/><b>Citation-grounded chat</b> — ask questions across a subject and get answers backed by your own sources.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/flashcards.png" alt="Flashcards with spaced repetition" /><br/><b>Spaced-repetition flashcards</b> — FSRS scheduling with Again / Hard / Good / Easy and visible intervals.</td>
+    <td width="50%"><img src="assets/screenshots/materials.png" alt="Generated study materials" /><br/><b>Generated study material</b> — flashcards, quizzes, audio overviews, infographics and mind maps from your sources.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/calendar.png" alt="Calendar and deadlines" /><br/><b>Calendar & assignment tracking</b> — deadlines, exams and a kanban planner, colour-coded by subject.</td>
+    <td width="50%"><img src="assets/screenshots/sources.png" alt="Sources organised by topic" /><br/><b>Everything organised</b> — PDFs, slides, docs, web pages and YouTube ingested into Subjects → Topics → Sources.</td>
+  </tr>
+</table>
+
+<div align="center">
+
+<img src="assets/screenshots/recorder.png" alt="Live lecture recording and transcription" width="900" />
+
+<em>Record lectures with live transcription — straight into the right subject.</em>
+
+</div>
+
+> 🎨 **Every screenshot above is a different built-in theme.** Cortex ships a range of themes (Everforest, Gruvbox, Nord, Dracula, Rosé Pine, Kanagawa, Solarized…) and can even follow your Omarchy desktop theme automatically.
 
 ---
 
