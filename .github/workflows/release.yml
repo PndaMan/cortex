@@ -39,21 +39,15 @@ jobs:
     runs-on: ${{ matrix.platform }}
     # Signing secrets live in the "Production" environment.
     environment: Production
-    # Notarization creds are safe to expose to tauri-action; the cert itself is
-    # NOT (it's only given to the import step below, so tauri-action doesn't
-    # re-import it and fail on a cert/password issue).
-    env:
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
 
       # ── macOS code signing + notarization ──
-      # Imports the cert into a keychain and exports the signing identity for
-      # tauri-action. Best-effort: any failure logs a warning and the build
-      # continues UNSIGNED rather than failing the whole release.
+      # Imports the cert and exports the signing identity. Best-effort: any
+      # failure logs a warning and sets no `ok` output, so the build step below
+      # skips signing and produces an UNSIGNED .dmg rather than failing.
       - name: Import Apple Developer certificate
+        id: signcert
         if: matrix.platform == 'macos-latest'
         continue-on-error: true
         env:
@@ -65,6 +59,8 @@ jobs:
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
+          # Put the build keychain in codesign's SEARCH LIST (default alone isn't enough).
+          security list-keychains -d user -s build.keychain login.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
           security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
@@ -73,7 +69,9 @@ jobs:
           # Prefer a Developer ID Application identity (required for notarization).
           CERT_ID=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)".*/\1/')
           [ -z "$CERT_ID" ] && CERT_ID=$(security find-identity -v -p codesigning build.keychain | grep -o '"[^"]*"' | head -1 | tr -d '"')
+          [ -z "$CERT_ID" ] && { echo "No usable signing identity — building unsigned."; exit 1; }
           echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
+          echo "ok=true" >> "$GITHUB_OUTPUT"
           echo "Using signing identity: $CERT_ID"
 
       - name: Install Linux build dependencies
@@ -111,15 +109,13 @@ jobs:
           # Tells scripts/fetch-sidecars.mjs (run via beforeBuildCommand) which
           # triple to fetch binaries for; empty → the runner's host triple.
           SIDECAR_TARGET: ${{ matrix.sidecar-target }}
-          # macOS signing + notarization. The cert is imported into the keychain
-          # by the step above (which sets APPLE_SIGNING_IDENTITY only on success),
-          # so we DON'T pass APPLE_CERTIFICATE here — that keeps a bad-password
-          # cert from failing the build; signing simply no-ops when the identity
-          # is empty.
+          # macOS signing + notarization — only when the cert imported cleanly
+          # (steps.signcert.outputs.ok). Otherwise all of these are empty and
+          # tauri-action builds an UNSIGNED .dmg instead of failing.
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ steps.signcert.outputs.ok == 'true' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ steps.signcert.outputs.ok == 'true' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ steps.signcert.outputs.ok == 'true' && secrets.APPLE_TEAM_ID || '' }}
           # Auto-updater artifact signing (minisign). When set, tauri-action also
           # generates + uploads latest.json for the updater endpoint.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
