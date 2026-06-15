@@ -168,6 +168,12 @@ jobs:
             2>/dev/null || true
           gh release upload cortex-ios "$GITHUB_WORKSPACE/Cortex.ipa" --repo "$REPO" --clobber
           echo "✅ Published → https://github.com/$REPO/releases/download/cortex-ios/Cortex.ipa (cortex v$VER)"
+          # The source repo's Pages site is deployed by its update-source workflow (build
+          # type = workflow), so it won't redeploy on a push. Fire the repository_dispatch
+          # it listens for so apps.json refreshes + Pages redeploys automatically.
+          gh api "repos/$REPO/dispatches" -f event_type=ipa-updated >/dev/null 2>&1 \
+            && echo "Triggered sidestore-source Pages redeploy" \
+            || echo "::warning::Couldn't trigger the sidestore-source redeploy (SIDESTORE_TOKEN may lack permission)."
 
   testflight:
     name: iOS TestFlight (signed)
