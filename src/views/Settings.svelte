@@ -2143,7 +2143,7 @@ Notes: {about}</pre>
         <div class="set-card">
           <div class="set-row">
             <div class="set-row-l"><div class="set-row-t">Version</div></div>
-            <div class="set-row-r"><span class="mono faint">1.0.3</span></div>
+            <div class="set-row-r"><span class="mono faint">1.0.4</span></div>
           </div>
           <div class="set-row">
             <div class="set-row-l">
