@@ -227,14 +227,14 @@ jobs:
         if: ${{ hashFiles('Cortex-unsigned.ipa') != '' }}
         env:
           GH_TOKEN: ${{ secrets.SIDESTORE_TOKEN }}
+          BUILD_NUM: ${{ github.run_number }}
         run: |
           set -uo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "::warning::SIDESTORE_TOKEN not set — skipping upload to PndaMan/sidestore-source. Create a fine-grained PAT with Contents: read+write on that repo and add it as the SIDESTORE_TOKEN repo secret."
             exit 0
           fi
-          VER="$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')"
-          [ -z "$VER" ] && VER="dev"
+          VER="1.0.${BUILD_NUM}"   # matches the CFBundleShortVersionString stamped into the IPA
           cp "$GITHUB_WORKSPACE/Cortex-unsigned.ipa" "$GITHUB_WORKSPACE/Cortex.ipa"
           REPO="PndaMan/sidestore-source"
           # Stable tag + filename → a fixed downloadURL the source manifest can reference.
@@ -244,6 +244,22 @@ jobs:
             2>/dev/null || true
           gh release upload cortex-ios "$GITHUB_WORKSPACE/Cortex.ipa" --repo "$REPO" --clobber
           echo "✅ Published → https://github.com/$REPO/releases/download/cortex-ios/Cortex.ipa (cortex v$VER)"
+
+          # The source's update_source.py only manages its REPOS map (not Cortex), so bump
+          # Cortex's version in apps.json directly via the contents API, then the dispatch
+          # below redeploys Pages. Without this the manifest stays pinned and SideStore never
+          # offers the update.
+          SIZE=$(stat -f%z "$GITHUB_WORKSPACE/Cortex.ipa" 2>/dev/null || stat -c%s "$GITHUB_WORKSPACE/Cortex.ipa")
+          DLURL="https://github.com/$REPO/releases/download/cortex-ios/Cortex.ipa"
+          DATE="$(date +%F)"
+          SHA=$(gh api "repos/$REPO/contents/apps.json" --jq '.sha')
+          gh api "repos/$REPO/contents/apps.json" --jq '.content' | base64 -d > /tmp/apps.json
+          jq --arg v "$VER" --arg d "$DATE" --arg u "$DLURL" --argjson s "$SIZE" \
+            '(.apps[] | select(.bundleIdentifier=="study.cortex.app").versions) |= ([{version:$v,date:$d,downloadURL:$u,size:$s,localizedDescription:"Latest CI sideload build."}] + map(select(.version != $v)))[0:10]' \
+            /tmp/apps.json > /tmp/apps.new.json && mv /tmp/apps.new.json /tmp/apps.json
+          B64=$(base64 -i /tmp/apps.json | tr -d '\n')
+          gh api "repos/$REPO/contents/apps.json" -X PUT -f message="cortex: sideload v$VER" -f content="$B64" -f sha="$SHA" >/dev/null \
+            && echo "apps.json → v$VER" || echo "::warning::apps.json version bump failed"
           # The source repo's Pages site is deployed by its update-source workflow (build
           # type = workflow), so it won't redeploy on a push. Fire the repository_dispatch
           # it listens for so apps.json refreshes + Pages redeploys automatically.
