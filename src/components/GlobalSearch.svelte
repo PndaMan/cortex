@@ -108,10 +108,12 @@
     <div class="cmdk" style:margin-top="12vh" onmousedown={(e) => e.stopPropagation()}>
       <div class="cmdk-input">
         <span class="lead"><Icon name="search" size={13} /></span>
+        <!-- svelte-ignore a11y_autofocus -->
         <input
           bind:this={inputEl}
           bind:value={q}
           onkeydown={onKey}
+          autofocus
           placeholder="Search everything — notes, sources, transcripts, events…"
         />
         <span class="kbd">esc</span>

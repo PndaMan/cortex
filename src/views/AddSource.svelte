@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
+  import { isMobile } from "../lib/platform";
   import * as api from "../lib/api";
   import { jobs } from "../lib/jobs.svelte";
   import Icon from "../components/Icon.svelte";
@@ -12,13 +13,16 @@
   // Title for text pastes
   let textTitle = $state("");
 
-  const methods = [
+  const allMethods = [
     { id: "upload" as const, ico: "doc",    t: "Upload Files",   d: "PDF · PPTX · DOCX · TXT · MD", k: "u" },
     { id: "url"    as const, ico: "search", t: "Paste URL",       d: "web page · YouTube",            k: "p" },
     { id: "text"   as const, ico: "doc",    t: "Paste Text",      d: "markdown · plain text",         k: "t" },
     { id: "record" as const, ico: "record", t: "Record Lecture",  d: "live audio + transcript",       k: "r" },
     { id: "photo"  as const, ico: "grid",   t: "Snap Photo",      d: "OCR a whiteboard / page",       k: "o" },
   ] as const;
+  // Recording is available on mobile again: it captures audio and transcribes via the
+  // homelab Whisper endpoint (remote-first). MobileShell mounts the Recorder view.
+  const methods = allMethods;
 
   // Subject + topic selectors, seeded ONCE from the per-topic "+" token
   // (app.addSourceTopicId) or the active subject. A single guarded effect
@@ -84,6 +88,13 @@
     app.setTab("sources");
   }
 
+  // The iOS picker returns a percent-encoded file:// URL; derive a clean, decoded
+  // display name from it (the actual file is staged+decoded in Rust stage_upload).
+  function pickedName(p: string): string {
+    const n = p.split(/[\\/?#]/).filter(Boolean).pop() ?? p;
+    try { return decodeURIComponent(n); } catch { return n; }
+  }
+
   async function beginUpload() {
     if (!guardSubject()) return;
     try {
@@ -99,8 +110,21 @@
       // Queue every picked file (concurrent ingests are safe now that each
       // LibreOffice conversion gets its own profile), then navigate once.
       for (const path of paths) {
-        const name = path.split(/[\\/]/).pop() ?? path;
-        queueIngest({ subject_id: selectedSubjectId, topic_id: topicId, path, name, tags: [] }, name);
+        const name = pickedName(path);
+        // On mobile the picker returns a temp path the OS deletes before the
+        // background ingest runs — copy it into app storage first. Surface a real
+        // error (don't silently fall back to the doomed temp path) so a staging
+        // failure is visible instead of a later "no such file" deep in ingest.
+        let ingestPath = path;
+        if (isMobile) {
+          try {
+            ingestPath = await api.stageUpload(path);
+          } catch (e) {
+            app.pushToast({ kind: "error", title: "Couldn't read the file", body: String(e) });
+            continue;
+          }
+        }
+        queueIngest({ subject_id: selectedSubjectId, topic_id: topicId, path: ingestPath, name, tags: [] }, name);
       }
       if (paths.length > 1) {
         app.pushToast({ kind: "info", title: `Ingesting ${paths.length} files`, body: "Added to the queue." });
@@ -166,8 +190,17 @@
       const path = typeof picked === "string" ? picked : picked?.[0] ?? null;
       if (!path) return;
 
-      const name = path.split(/[\\/]/).pop() ?? path;
-      startIngest({ subject_id: selectedSubjectId, topic_id: topicId, path, kind: "image", name, tags: [] }, name);
+      const name = pickedName(path);
+      let ingestPath = path;
+      if (isMobile) {
+        try {
+          ingestPath = await api.stageUpload(path);
+        } catch (e) {
+          app.pushToast({ kind: "error", title: "Couldn't read the image", body: String(e) });
+          return;
+        }
+      }
+      startIngest({ subject_id: selectedSubjectId, topic_id: topicId, path: ingestPath, kind: "image", name, tags: [] }, name);
     } catch (e) {
       app.pushToast({ kind: "error", title: "Image pick failed", body: String(e) });
     }
@@ -248,9 +281,11 @@
 <div class="addsrc">
   <!-- Page header -->
   <div class="addsrc-head">
-    <button class="btn btn--icon btn--sm btn--ghost" onclick={() => app.setView("subject")} title="Back">
-      <span style:transform="rotate(180deg)" style:display="flex"><Icon name="chevron" size={14} /></span>
-    </button>
+    {#if !isMobile}
+      <button class="btn btn--icon btn--sm btn--ghost" onclick={() => app.setView("subject")} title="Back">
+        <span style:transform="rotate(180deg)" style:display="flex"><Icon name="chevron" size={14} /></span>
+      </button>
+    {/if}
     <div>
       <div class="eyebrow">Add source</div>
       <h1 class="addsrc-title">New source</h1>
@@ -265,6 +300,19 @@
   <div class="addsrc-grid">
     <!-- LEFT: method picker + target -->
     <div class="addsrc-left">
+      {#if isMobile}
+        <!-- Touch: a themed dropdown instead of clipping tiles. -->
+        <div class="field">
+          <span class="onb-label mono">SOURCE TYPE</span>
+          <Picker
+            value={method ?? ""}
+            onChange={(id) => selectMethod(id as typeof methods[number]["id"])}
+            options={methods.map((m) => ({ id: m.id, label: m.t }))}
+            icon={methods.find((m) => m.id === method)?.ico ?? "doc"}
+            placeholder="Choose a source type…"
+          />
+        </div>
+      {:else}
       <div class="add-methods">
         {#each methods as m (m.id)}
           <button
@@ -280,6 +328,7 @@
           </button>
         {/each}
       </div>
+      {/if}
 
       <div class="addsrc-target">
         <div class="field">
@@ -307,6 +356,8 @@
 
     <!-- RIGHT: input panel for the chosen method -->
     <div class="addsrc-right">
+      <!-- On mobile, don't render the big empty panel before a type is picked. -->
+      {#if !(isMobile && method === null)}
       <div class="addsrc-panel">
         {#if method === null}
           <div class="addsrc-empty">
@@ -377,6 +428,7 @@
           </button>
         {/if}
       </div>
+      {/if}
     </div>
   </div>
 </div>

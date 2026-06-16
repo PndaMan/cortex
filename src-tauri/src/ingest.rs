@@ -230,58 +230,53 @@ fn pdf_to_text(path: &str) -> Result<(String, Option<String>)> {
     if !src.exists() {
         return Err(Error::NotFound(format!("file not found: {path}")));
     }
+    const NO_TEXT: &str = "warning: no extractable text (scanned PDF?); preview still available";
 
-    let Some(pdftotext) = which("pdftotext") else {
-        return Ok((
-            String::new(),
-            Some("warning: no extractable text (scanned PDF?); preview still available".into()),
-        ));
-    };
-
-    let output = Command::new(&pdftotext)
-        .args(["-layout", "-enc", "UTF-8"])
-        .arg(src)
-        .arg("-")
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => {
-            let text = String::from_utf8_lossy(&o.stdout).into_owned();
-            if text.trim().is_empty() {
-                Ok((
-                    String::new(),
-                    Some(
-                        "warning: no extractable text (scanned PDF?); preview still available"
-                            .into(),
-                    ),
-                ))
-            } else {
-                Ok((text, None))
+    // Desktop: poppler's `pdftotext -layout` is fastest + highest fidelity. On a hard
+    // failure with a real message, surface it; an empty/soft result falls through to
+    // the pure-Rust pass below (some PDFs pdftotext can't read but pdf-extract can).
+    if which("pdftotext").is_some() {
+        match Command::new("pdftotext")
+            .args(["-layout", "-enc", "UTF-8"])
+            .arg(src)
+            .arg("-")
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                let text = String::from_utf8_lossy(&o.stdout).into_owned();
+                if !text.trim().is_empty() {
+                    return Ok((text, None));
+                }
             }
-        }
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
-            if stderr.is_empty() {
-                // non-zero exit but nothing to report → degrade gracefully
-                Ok((
-                    String::new(),
-                    Some(
-                        "warning: no extractable text (scanned PDF?); preview still available"
-                            .into(),
-                    ),
-                ))
-            } else {
-                Err(Error::Other(format!(
-                    "pdftotext failed for {path}: {stderr}"
-                )))
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                if !stderr.is_empty() {
+                    return Err(Error::Other(format!("pdftotext failed for {path}: {stderr}")));
+                }
             }
+            Err(_) => {} // binary vanished between which() and exec → try pure-Rust
         }
-        // binary vanished between the which() check and exec → degrade gracefully
-        Err(_) => Ok((
-            String::new(),
-            Some("warning: no extractable text (scanned PDF?); preview still available".into()),
-        )),
     }
+
+    // No poppler (iOS/Android, or a desktop without it) — extract the text layer in
+    // pure Rust, on-device. Text-layer PDFs (lecture slides, papers, exported notes)
+    // come through fully; a scanned/image-only PDF yields nothing here and degrades to
+    // the "scanned?" warning (OCR is the homelab ingest service's job).
+    match pdf_extract_text_layer(src) {
+        Some(t) if !t.trim().is_empty() => Ok((t, None)),
+        _ => Ok((String::new(), Some(NO_TEXT.into()))),
+    }
+}
+
+/// Extract a PDF's embedded text layer with the pure-Rust `pdf-extract` crate.
+/// Returns None on failure. `pdf-extract` can panic on some malformed PDFs, so it
+/// runs inside `catch_unwind` (the build keeps `panic = unwind`) — a bad PDF must
+/// degrade to a warning, never crash the ingest worker.
+fn pdf_extract_text_layer(path: &Path) -> Option<String> {
+    let owned = path.to_path_buf();
+    std::panic::catch_unwind(move || pdf_extract::extract_text(&owned).ok())
+        .ok()
+        .flatten()
 }
 
 /// Convert docx/pptx to text via `libreoffice --headless --convert-to txt`.
@@ -483,12 +478,10 @@ pub fn ooxml_to_text(path: &str) -> Result<String> {
 /// back to auto-generated captions.
 fn youtube_to_text(url: &str) -> Result<(String, Option<String>)> {
     use std::process::Command;
-    let bin = tool("yt-dlp").ok_or_else(|| {
-        Error::Other(
-            "yt-dlp not found — install it (e.g. `pipx install yt-dlp`) to ingest YouTube links"
-                .into(),
-        )
-    })?;
+    // No yt-dlp (e.g. on mobile)? Fall back to a pure-HTTP caption fetch — no binary.
+    let Some(bin) = tool("yt-dlp") else {
+        return youtube_via_http(url);
+    };
     let dir = std::env::temp_dir().join(format!("cortex-yt-{}", crate::db::new_id()));
     std::fs::create_dir_all(&dir)?;
     let out_tmpl = dir.join("%(id)s.%(ext)s");
@@ -535,6 +528,65 @@ fn youtube_to_text(url: &str) -> Result<(String, Option<String>)> {
     };
     let _ = std::fs::remove_dir_all(&dir);
     res
+}
+
+/// Pure-HTTP YouTube transcript fetch (no yt-dlp): pull the watch page, find a
+/// caption track URL in the player response, fetch the timedtext, strip to prose.
+/// Best-effort (YouTube can change this) — used as the mobile/binary-less fallback.
+fn youtube_via_http(url: &str) -> Result<(String, Option<String>)> {
+    let client = crate::commands::http_client(30);
+    let html = client
+        .get(url)
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .send()?
+        .text()?;
+    let tracks = regex::Regex::new(r#""captionTracks":(\[.*?\])"#)
+        .unwrap()
+        .captures(&html)
+        .map(|c| c[1].to_string())
+        .ok_or_else(|| Error::Other("no captions are available for this video".into()))?;
+    let burl_re = regex::Regex::new(r#""baseUrl":"(.*?)""#).unwrap();
+    let lang_re = regex::Regex::new(r#""languageCode":"(.*?)""#).unwrap();
+    // Prefer an English track; otherwise take the first.
+    let mut chosen: Option<String> = None;
+    for chunk in tracks.split("},{") {
+        let Some(burl) = burl_re.captures(chunk).map(|c| c[1].to_string()) else { continue };
+        let lang = lang_re.captures(chunk).map(|c| c[1].to_string()).unwrap_or_default();
+        if lang.starts_with("en") {
+            chosen = Some(burl);
+            break;
+        }
+        chosen.get_or_insert(burl);
+    }
+    let base = chosen
+        .ok_or_else(|| Error::Other("no caption track URL found".into()))?
+        .replace("\\u0026", "&")
+        .replace("\\/", "/");
+    let xml = client.get(&base).send()?.text()?;
+    let text = timedtext_to_text(&xml);
+    if text.trim().is_empty() {
+        Err(Error::Other("the video's transcript was empty".into()))
+    } else {
+        Ok((text, None))
+    }
+}
+
+/// Strip YouTube timedtext XML (`<text start=… dur=…>…</text>`) to plain prose.
+fn timedtext_to_text(xml: &str) -> String {
+    let text_re = regex::Regex::new(r"(?s)<text[^>]*>(.*?)</text>").unwrap();
+    let tag_re = regex::Regex::new(r"<[^>]+>").unwrap();
+    let mut parts: Vec<String> = Vec::new();
+    for c in text_re.captures_iter(xml) {
+        let inner = tag_re.replace_all(&c[1], " ").into_owned();
+        let t = decode_entities(&inner)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !t.is_empty() {
+            parts.push(t);
+        }
+    }
+    parts.join(" ")
 }
 
 /// Strip a WebVTT subtitle file to plain deduped prose.

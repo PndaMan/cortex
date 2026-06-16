@@ -3,6 +3,7 @@
   import * as api from "../lib/api";
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
+  import { isMobile } from "../lib/platform";
   import type { UnlistenFn } from "@tauri-apps/api/event";
 
   // ---- state ----
@@ -479,9 +480,10 @@
     } else {
       switchToWavCapture();
     }
-    // Live transcript alongside the recording when the toggle is on:
-    // SpeechRecognition where available, otherwise backend chunked Whisper.
-    if (liveTranscriptOn) {
+    // Live transcript alongside the recording when the toggle is on (desktop only —
+    // mobile has no live transcript; the saved audio is transcribed by homelab Whisper
+    // on stop).
+    if (liveTranscriptOn && !isMobile) {
       startRecognition();
       startBackendPoll();
     }
@@ -815,9 +817,15 @@
         {/each}
       </div>
     {/if}
+
+    {#if isMobile}
+      <button class="btn btn--ghost btn--sm" style:margin-top="18px" onclick={cancel}>Cancel</button>
+    {/if}
   </div>
 
-  <!-- Right: live transcript / status panel -->
+  <!-- Right: live transcript / status panel (desktop only — mobile transcribes the
+       saved audio via homelab Whisper on stop; no live transcript). -->
+  {#if !isMobile}
   <aside class="rec-transcript">
     <div class="rt-head">
       <span class="rt-eyebrow mono">LIVE TRANSCRIPT</span>
@@ -881,6 +889,7 @@
       <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={13} /></span>
       <span class="kbd rt-kbd">t</span>
     </button>
+  {/if}
   {/if}
 </div>
 {/if}

@@ -1,0 +1,404 @@
+name: iOS
+
+# Builds the Cortex iOS app. Two paths:
+#   • simulator  — compiles the port for the iOS Simulator UNSIGNED. Needs NO Apple
+#                  account; this is the free "does the port build for iOS?" check.
+#   • testflight — signed App Store / TestFlight build. MANUAL only (run from the
+#                  Actions tab with sign = true). Reuses the Production-environment
+#                  secrets, BUT iOS signing needs more than the macOS notarization set:
+#                    - APPLE_CERTIFICATE must be an Apple **Distribution** (iOS) cert.
+#                      The macOS "Developer ID Application" cert will NOT sign for the
+#                      App Store — if that's what's stored, add an iOS distribution
+#                      cert (swap the secret, or add APPLE_IOS_CERTIFICATE and wire it).
+#                    - IOS_PROVISIONING_PROFILE_BASE64 — NEW secret: a base64 of a
+#                      .mobileprovision for the App ID `study.cortex.app`.
+#                    - `study.cortex.app` registered as an App ID in App Store Connect.
+#                    - APPLE_ID + APPLE_PASSWORD (an app-specific password) for upload.
+#                  Missing any of those → the testflight job fails at signing/upload;
+#                  the simulator job still proves the code compiles for iOS.
+#
+# Never runs on `main` — only a mobile branch or a manual dispatch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: "Also run the signed TestFlight build (needs iOS cert + provisioning profile)"
+        type: boolean
+        default: false
+  push:
+    branches: [mobile, mobile-ios]
+
+jobs:
+  simulator:
+    name: iOS Simulator (unsigned compile check)
+    # Runs on every mobile-branch push and on a manual dispatch unless sign==true.
+    if: ${{ github.event_name == 'push' || inputs.sign != true }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Install Rust (iOS simulator target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Initialise the iOS project
+        run: cargo tauri ios init --ci
+
+      - name: Patch iOS Info.plist (ATS + mic + per-build version)
+        # (1) ATS: iOS blocks plain-HTTP LAN/Tailscale by default → the homelab test +
+        #     sync/whisper/searx/ingest calls fail. Allow them (narrow to NSExceptionDomains
+        #     before any App Store submission).
+        # (2) Mic: lecture recording needs NSMicrophoneUsageDescription or iOS kills capture.
+        # (3) Per-build version: tauri.conf.json stays 1.0.7 (shared with desktop), so every
+        #     sideload IPA had the SAME version and LiveContainer/SideStore wouldn't offer the
+        #     update. Stamp a unique, monotonic CFBundleShortVersionString (1.0.<run#>) into the
+        #     iOS bundle ONLY, so each build shows up as a new version to sideload.
+        env:
+          BUILD_NUM: ${{ github.run_number }}
+        run: |
+          set -uo pipefail
+          VER="1.0.${BUILD_NUM}"
+          for plist in $(find src-tauri/gen/apple -name 'Info.plist'); do
+            /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Cortex records lectures and uploads the audio to your homelab for transcription." "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VER" "$plist"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILD_NUM}" "$plist"
+            echo "patched (v$VER): $plist"
+          done
+          # The AUTHORITATIVE version source: `cargo tauri ios build` re-syncs the bundle
+          # version from the merged Tauri config at build time (verified — it overwrites the
+          # plist/pbxproj patches above back to tauri.conf.json's value, while preserving
+          # custom plist keys like ATS/mic). So set the version in the iOS-ONLY config; the
+          # desktop tauri.conf.json is left untouched.
+          cfg=src-tauri/tauri.ios.conf.json
+          tmp=$(mktemp); jq --arg v "$VER" '.version = $v' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
+          echo "tauri.ios.conf.json version → $VER"; cat "$cfg"
+
+      - name: Build for the iOS Simulator (unsigned)
+        run: cargo tauri ios build --target aarch64-sim --ci
+
+      - name: Upload app artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cortex-ios-simulator
+          path: src-tauri/gen/apple/build/**
+          if-no-files-found: ignore
+
+  device-ipa:
+    name: iOS unsigned IPA (sideload — LiveContainer / iLoader)
+    # Builds an UNSIGNED arm64 device .app and wraps it as a Payload/-structured .ipa.
+    # Needs NO Apple account: LiveContainer JIT-bypasses code signing and iLoader signs
+    # the LiveContainer host, so the guest IPA can ship unsigned. Download the
+    # `cortex-ios-sideload-ipa` artifact and sideload it via iLoader → LiveContainer.
+    if: ${{ github.event_name == 'push' || inputs.sign != true }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+      - name: Install frontend dependencies
+        run: bun install
+
+      # Raw xcodebuild does NOT run Tauri's beforeBuildCommand, so build the web dist
+      # ourselves — the Rust build phase embeds it into the app bundle.
+      - name: Build frontend (web dist)
+        run: bun run build
+
+      - name: Install Rust (iOS device target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Initialise the iOS project
+        run: cargo tauri ios init --ci
+
+      - name: Patch iOS Info.plist (ATS + mic + per-build version)
+        # (1) ATS: iOS blocks plain-HTTP LAN/Tailscale by default → the homelab test +
+        #     sync/whisper/searx/ingest calls fail. Allow them (narrow to NSExceptionDomains
+        #     before any App Store submission).
+        # (2) Mic: lecture recording needs NSMicrophoneUsageDescription or iOS kills capture.
+        # (3) Per-build version: tauri.conf.json stays 1.0.7 (shared with desktop), so every
+        #     sideload IPA had the SAME version and LiveContainer/SideStore wouldn't offer the
+        #     update. Stamp a unique, monotonic CFBundleShortVersionString (1.0.<run#>) into the
+        #     iOS bundle ONLY, so each build shows up as a new version to sideload.
+        env:
+          BUILD_NUM: ${{ github.run_number }}
+        run: |
+          set -uo pipefail
+          VER="1.0.${BUILD_NUM}"
+          for plist in $(find src-tauri/gen/apple -name 'Info.plist'); do
+            /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Cortex records lectures and uploads the audio to your homelab for transcription." "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VER" "$plist"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILD_NUM}" "$plist"
+            echo "patched (v$VER): $plist"
+          done
+          # The AUTHORITATIVE version source: `cargo tauri ios build` re-syncs the bundle
+          # version from the merged Tauri config at build time (verified — it overwrites the
+          # plist/pbxproj patches above back to tauri.conf.json's value, while preserving
+          # custom plist keys like ATS/mic). So set the version in the iOS-ONLY config; the
+          # desktop tauri.conf.json is left untouched.
+          cfg=src-tauri/tauri.ios.conf.json
+          tmp=$(mktemp); jq --arg v "$VER" '.version = $v' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
+          echo "tauri.ios.conf.json version → $VER"; cat "$cfg"
+
+      - name: Apply the Cortex app icon (override tauri-ios-init's default Tauri icon)
+        # `cargo tauri ios init` generates the AppIcon.appiconset with Tauri's DEFAULT swirl
+        # icon and does NOT pull in src-tauri/icons/ios — verified by decoding the shipped
+        # IPA (the installed icon was the Tauri logo, not the Cortex brain). Overwrite the
+        # generated PNGs with ours; the filenames match the Contents.json the template
+        # already references, so actool compiles the brain into Assets.car + the loose
+        # AppIcon*.png that LiveContainer/SpringBoard read.
+        run: |
+          set -euo pipefail
+          found=0
+          for set in $(find src-tauri/gen/apple -type d -name 'AppIcon.appiconset'); do
+            found=1
+            echo "── $set (before)"; ls "$set"
+            cp -f src-tauri/icons/ios/*.png "$set"/
+            echo "── $set (after)";  ls "$set"
+          done
+          [ "$found" = 1 ] || { echo "::error::no AppIcon.appiconset under src-tauri/gen/apple"; exit 1; }
+
+      # Build the device app with signing disabled (the Xcode Rust build phase still
+      # compiles the aarch64-apple-ios staticlib), then zip it into an unsigned IPA.
+      - name: Build unsigned device .app → .ipa
+        env:
+          BUILD_NUM: ${{ github.run_number }}
+        run: |
+          set -uo pipefail
+          VER="1.0.${BUILD_NUM}"
+          # The device build demanded a development team because the generated project uses
+          # AUTOMATIC signing, and an XCODE_XCCONFIG_FILE is too low-priority to override a
+          # target's signing settings. Write them straight into the pbxproj — crucially
+          # CODE_SIGN_STYLE = Manual so xcodebuild stops trying to provision — so the build
+          # needs no Apple team.
+          for pbx in src-tauri/gen/apple/*.xcodeproj/project.pbxproj; do
+            perl -0pi -e 's/(buildSettings = \{)/$1\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;\n\t\t\t\tCODE_SIGNING_REQUIRED = NO;\n\t\t\t\tCODE_SIGN_IDENTITY = "";\n\t\t\t\tCODE_SIGN_STYLE = Manual;\n\t\t\t\tDEVELOPMENT_TEAM = "";\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "";/g' "$pbx"
+            # Xcode injects CFBundleShortVersionString / CFBundleVersion from these build
+            # settings AT BUILD TIME (verified: patching the Info.plist literal didn't stick),
+            # so override them here — iOS bundle only, desktop tauri.conf.json untouched — to
+            # give every sideload build a unique, monotonic version LiveContainer will update to.
+            perl -0pi -e "s/MARKETING_VERSION = [^;]+;/MARKETING_VERSION = $VER;/g" "$pbx"
+            perl -0pi -e "s/CURRENT_PROJECT_VERSION = [^;]+;/CURRENT_PROJECT_VERSION = $BUILD_NUM;/g" "$pbx"
+            echo "pbxproj version → $VER ($pbx)"
+          done
+          # Tauri drives the build so its Rust xcode-script runs correctly (a raw xcodebuild
+          # panics on the missing server-addr handshake file). The unsigned build succeeds;
+          # Tauri's later signing/export step still fails — expected, we only need the .app.
+          cargo tauri ios build --target aarch64 --ci || true
+          echo "── candidate .app / .xcarchive paths ──"
+          find src-tauri/gen/apple "$HOME/Library/Developer/Xcode/DerivedData" \( -name '*.app' -o -name '*.xcarchive' \) -print 2>/dev/null | grep -iv simulator | head -20
+          APP="$(find src-tauri/gen/apple "$HOME/Library/Developer/Xcode/DerivedData" -name '*.app' \( -path '*.xcarchive/Products/Applications/*' -o -path '*[Rr]elease-iphoneos*' \) -print 2>/dev/null | grep -iv simulator | head -1)"
+          [ -z "$APP" ] && APP="$(find src-tauri/gen/apple "$HOME/Library/Developer/Xcode/DerivedData" -name '*.app' -print 2>/dev/null | grep -iv simulator | head -1)"
+          if [ -z "$APP" ]; then echo "::error::No .app was produced"; exit 1; fi
+          echo "Unsigned app: $APP"
+          rm -rf /tmp/payload && mkdir -p /tmp/payload/Payload
+          cp -R "$APP" /tmp/payload/Payload/
+          ( cd /tmp/payload && zip -qry "$GITHUB_WORKSPACE/Cortex-unsigned.ipa" Payload )
+          ls -lh "$GITHUB_WORKSPACE/Cortex-unsigned.ipa"
+
+      - name: Upload sideloadable IPA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cortex-ios-sideload-ipa
+          path: Cortex-unsigned.ipa
+          if-no-files-found: ignore
+
+      - name: Publish IPA to the SideStore source repo
+        # Pushes the unsigned IPA to PndaMan/sidestore-source as a GitHub Release asset
+        # under a STABLE tag, so a SideStore / AltStore source manifest can point at a
+        # fixed downloadURL. Requires a PAT (fine-grained, Contents: read+write on that
+        # repo) in the SIDESTORE_TOKEN secret — the default GITHUB_TOKEN cannot write to
+        # another repo. If the secret is missing the step warns and skips (the artifact
+        # upload above still works).
+        if: ${{ hashFiles('Cortex-unsigned.ipa') != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.SIDESTORE_TOKEN }}
+          BUILD_NUM: ${{ github.run_number }}
+        run: |
+          set -uo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::SIDESTORE_TOKEN not set — skipping upload to PndaMan/sidestore-source. Create a fine-grained PAT with Contents: read+write on that repo and add it as the SIDESTORE_TOKEN repo secret."
+            exit 0
+          fi
+          VER="1.0.${BUILD_NUM}"   # matches the CFBundleShortVersionString stamped into the IPA
+          cp "$GITHUB_WORKSPACE/Cortex-unsigned.ipa" "$GITHUB_WORKSPACE/Cortex.ipa"
+          REPO="PndaMan/sidestore-source"
+          # Stable tag + filename → a fixed downloadURL the source manifest can reference.
+          gh release create cortex-ios --repo "$REPO" \
+            --title "Cortex iOS (sideload)" \
+            --notes "Unsigned arm64 IPA for LiveContainer / SideStore. Auto-published by cortex CI." \
+            2>/dev/null || true
+          gh release upload cortex-ios "$GITHUB_WORKSPACE/Cortex.ipa" --repo "$REPO" --clobber
+          echo "✅ Published → https://github.com/$REPO/releases/download/cortex-ios/Cortex.ipa (cortex v$VER)"
+
+          # The source's update_source.py only manages its REPOS map (not Cortex), so bump
+          # Cortex's version in apps.json directly via the contents API, then the dispatch
+          # below redeploys Pages. Without this the manifest stays pinned and SideStore never
+          # offers the update.
+          SIZE=$(stat -f%z "$GITHUB_WORKSPACE/Cortex.ipa" 2>/dev/null || stat -c%s "$GITHUB_WORKSPACE/Cortex.ipa")
+          DLURL="https://github.com/$REPO/releases/download/cortex-ios/Cortex.ipa"
+          DATE="$(date +%F)"
+          SHA=$(gh api "repos/$REPO/contents/apps.json" --jq '.sha')
+          gh api "repos/$REPO/contents/apps.json" --jq '.content' | base64 -d > /tmp/apps.json
+          jq --arg v "$VER" --arg d "$DATE" --arg u "$DLURL" --argjson s "$SIZE" \
+            '(.apps[] | select(.bundleIdentifier=="study.cortex.app").versions) |= ([{version:$v,date:$d,downloadURL:$u,size:$s,localizedDescription:"Latest CI sideload build."}] + map(select(.version != $v)))[0:10]' \
+            /tmp/apps.json > /tmp/apps.new.json && mv /tmp/apps.new.json /tmp/apps.json
+          B64=$(base64 -i /tmp/apps.json | tr -d '\n')
+          gh api "repos/$REPO/contents/apps.json" -X PUT -f message="cortex: sideload v$VER" -f content="$B64" -f sha="$SHA" >/dev/null \
+            && echo "apps.json → v$VER" || echo "::warning::apps.json version bump failed"
+          # The source repo's Pages site is deployed by its update-source workflow (build
+          # type = workflow), so it won't redeploy on a push. Fire the repository_dispatch
+          # it listens for so apps.json refreshes + Pages redeploys automatically.
+          gh api "repos/$REPO/dispatches" -f event_type=ipa-updated >/dev/null 2>&1 \
+            && echo "Triggered sidestore-source Pages redeploy" \
+            || echo "::warning::Couldn't trigger the sidestore-source redeploy (SIDESTORE_TOKEN may lack permission)."
+
+  testflight:
+    name: iOS TestFlight (signed)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.sign == true }}
+    runs-on: macos-15
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+
+      - name: Install Rust (iOS device target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      # Import the iOS signing certificate. This MUST be an Apple Distribution /
+      # iOS Distribution cert — the macOS "Developer ID" cert will not sign for the
+      # App Store. Fails loudly so a wrong cert is obvious.
+      - name: Import signing certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -e
+          echo "$APPLE_CERTIFICATE" | base64 --decode > cert.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security default-keychain -s build.keychain
+          security list-keychains -d user -s build.keychain login.keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          echo "Signing identities available:"
+          security find-identity -v -p codesigning build.keychain
+
+      # Install the provisioning profile (NEW secret: base64 of a .mobileprovision
+      # for study.cortex.app). Required for an App Store / TestFlight export.
+      - name: Install provisioning profile
+        env:
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          if [ -z "$IOS_PROVISIONING_PROFILE_BASE64" ]; then
+            echo "::error::IOS_PROVISIONING_PROFILE_BASE64 is not set. Add a base64-encoded .mobileprovision for study.cortex.app (Apple Developer → Profiles)."
+            exit 1
+          fi
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/cortex.mobileprovision"
+
+      - name: Initialise the iOS project
+        run: cargo tauri ios init --ci
+
+      - name: Patch iOS Info.plist (ATS + mic + per-build version)
+        # (1) ATS: iOS blocks plain-HTTP LAN/Tailscale by default → the homelab test +
+        #     sync/whisper/searx/ingest calls fail. Allow them (narrow to NSExceptionDomains
+        #     before any App Store submission).
+        # (2) Mic: lecture recording needs NSMicrophoneUsageDescription or iOS kills capture.
+        # (3) Per-build version: tauri.conf.json stays 1.0.7 (shared with desktop), so every
+        #     sideload IPA had the SAME version and LiveContainer/SideStore wouldn't offer the
+        #     update. Stamp a unique, monotonic CFBundleShortVersionString (1.0.<run#>) into the
+        #     iOS bundle ONLY, so each build shows up as a new version to sideload.
+        env:
+          BUILD_NUM: ${{ github.run_number }}
+        run: |
+          set -uo pipefail
+          VER="1.0.${BUILD_NUM}"
+          for plist in $(find src-tauri/gen/apple -name 'Info.plist'); do
+            /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Cortex records lectures and uploads the audio to your homelab for transcription." "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VER" "$plist"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILD_NUM}" "$plist"
+            echo "patched (v$VER): $plist"
+          done
+          # The AUTHORITATIVE version source: `cargo tauri ios build` re-syncs the bundle
+          # version from the merged Tauri config at build time (verified — it overwrites the
+          # plist/pbxproj patches above back to tauri.conf.json's value, while preserving
+          # custom plist keys like ATS/mic). So set the version in the iOS-ONLY config; the
+          # desktop tauri.conf.json is left untouched.
+          cfg=src-tauri/tauri.ios.conf.json
+          tmp=$(mktemp); jq --arg v "$VER" '.version = $v' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
+          echo "tauri.ios.conf.json version → $VER"; cat "$cfg"
+
+      - name: Build signed IPA (App Store)
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: cargo tauri ios build --export-method app-store-connect --ci
+
+      - name: Upload to App Store Connect (TestFlight)
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: |
+          set -e
+          IPA="$(find src-tauri/gen/apple/build -name '*.ipa' | head -1)"
+          if [ -z "$IPA" ]; then echo "::error::No .ipa produced"; exit 1; fi
+          echo "Uploading $IPA to App Store Connect…"
+          xcrun altool --upload-app -t ios -f "$IPA" -u "$APPLE_ID" -p "$APPLE_PASSWORD"
+
+      - name: Upload IPA artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cortex-ios-ipa
+          path: src-tauri/gen/apple/build/**/*.ipa
+          if-no-files-found: ignore

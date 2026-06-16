@@ -19,7 +19,10 @@
 
 <div class="toast-stack">
   {#each app.toasts as t (t.id)}
-    <div class="toast toast--{t.kind}" role="status">
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div class="toast toast--{t.kind}" role="status" style:cursor="pointer" onclick={() => app.dismissToast(t.id)} title="Dismiss">
       <span class="toast-ico" style:color={colorFor(t.kind)}>
         <Icon name={icoFor[t.kind] ?? "diamond"} size={14} />
       </span>

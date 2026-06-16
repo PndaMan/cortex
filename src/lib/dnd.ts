@@ -25,6 +25,9 @@ export interface ReorderOpts {
   onReorder: (from: number, to: number) => void;
   /** Pixels of movement before a press becomes a drag (lets clicks through). */
   threshold?: number;
+  /** Touch only: hold this long (ms) before a drag arms, so scrolling a list
+   *  never accidentally reorders. Mouse drags arm immediately (threshold). */
+  holdMs?: number;
 }
 
 const ATTR_GROUP = "data-reorder-group";
@@ -33,16 +36,19 @@ const ATTR_INDEX = "data-reorder-index";
 /**
  * Svelte action: `use:reorderable={{ index, group, onReorder }}`.
  *
- * Press-and-drag to reorder. A press that never moves past the threshold is
- * left alone so the element's own click handler still fires (cards open on
- * click). A real drag shows a dimmed source, a drop indicator on the hovered
- * sibling, and a small floating preview that tracks the pointer.
+ * Mouse: press-and-drag past a small threshold to reorder (clicks still pass
+ * through). Touch: native scrolling works normally, and a drag only arms after a
+ * long-press (hold) — if the finger moves first it's treated as a scroll, so you
+ * can't accidentally reorder while scrolling. A real drag shows a dimmed source,
+ * a drop indicator on the hovered sibling, and a floating preview.
  */
 export function reorderable(node: HTMLElement, opts: ReorderOpts) {
-  let { index, group, onReorder, threshold = 6 } = opts;
+  let { index, group, onReorder, threshold = 6, holdMs = 380 } = opts;
   node.setAttribute(ATTR_GROUP, group);
   node.setAttribute(ATTR_INDEX, String(index));
-  node.style.touchAction = node.style.touchAction || "none";
+  // Native scrolling stays enabled (no touch-action:none). On touch we block the
+  // scroll ourselves — via the non-passive touchmove below — only once a drag is
+  // actually armed by a long-press, so normal list scrolling is never hijacked.
 
   let startX = 0;
   let startY = 0;
@@ -50,9 +56,16 @@ export function reorderable(node: HTMLElement, opts: ReorderOpts) {
   let lastTestY = -999;
   let pressing = false;
   let dragging = false;
+  let armed = false; // true once a drag is allowed (immediately for mouse, after hold for touch)
+  let isTouch = false;
+  let holdTimer: ReturnType<typeof setTimeout> | null = null;
   let preview: HTMLElement | null = null;
   let overEl: HTMLElement | null = null;
   let overIndex = -1;
+
+  function cancelHold() {
+    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+  }
 
   function clearOver() {
     overEl?.classList.remove("reorder-over");
@@ -61,12 +74,14 @@ export function reorderable(node: HTMLElement, opts: ReorderOpts) {
   }
 
   function teardown() {
+    cancelHold();
     if (preview) { preview.remove(); preview = null; }
     node.classList.remove("reorder-dragging");
     clearOver();
     document.body.classList.remove("reorder-active");
     pressing = false;
     dragging = false;
+    armed = false;
   }
 
   function startDrag() {
@@ -85,11 +100,15 @@ export function reorderable(node: HTMLElement, opts: ReorderOpts) {
     preview.style.margin = "0";
     preview.style.pointerEvents = "none";
     preview.style.zIndex = "9999";
+    // The clone inherits the card's `transition: transform` — which makes the preview
+    // ease toward the finger (visible lag). Snap it to the pointer instead.
+    preview.style.transition = "none";
     document.body.appendChild(preview);
   }
 
   function onPointerDown(e: PointerEvent) {
-    if (e.button !== 0 || !e.isPrimary) return;
+    if (!e.isPrimary) return;
+    if (e.pointerType !== "touch" && e.button !== 0) return;
     // Don't hijack presses that land on an interactive control INSIDE the row
     // (edit/add/delete buttons, the expand twisty). Capturing the pointer there
     // makes WebKitGTK retarget the synthesized click to the capturing row, so
@@ -100,20 +119,47 @@ export function reorderable(node: HTMLElement, opts: ReorderOpts) {
       const interactive = el.closest("button, [role='button'], a, input, select, textarea");
       if (interactive && interactive !== node && node.contains(interactive)) return;
     }
+    isTouch = e.pointerType === "touch";
     pressing = true;
+    armed = !isTouch; // mouse arms immediately; touch arms only after the hold below
     startX = e.clientX;
     startY = e.clientY;
-    try { node.setPointerCapture(e.pointerId); } catch { /* non-fatal */ }
+    lastTestX = -999;
+    lastTestY = -999;
+    if (isTouch) {
+      cancelHold();
+      const pid = e.pointerId;
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        if (!pressing) return;
+        armed = true;
+        try { node.setPointerCapture(pid); } catch { /* non-fatal */ }
+        startDrag(); // lift the card so the long-press is felt
+      }, holdMs);
+    } else {
+      try { node.setPointerCapture(e.pointerId); } catch { /* non-fatal */ }
+    }
   }
 
   function onPointerMove(e: PointerEvent) {
     if (!pressing) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (!armed) {
+      // Touch, before the long-press completes: real movement = the user is
+      // scrolling, not reordering — abort the press and let the page scroll.
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+        cancelHold();
+        pressing = false;
+      }
+      return;
+    }
     if (!dragging) {
-      if (Math.abs(e.clientX - startX) < threshold && Math.abs(e.clientY - startY) < threshold) return;
+      if (Math.abs(dx) < threshold && Math.abs(dy) < threshold) return;
       startDrag();
     }
     if (preview) {
-      preview.style.transform = `translate(${e.clientX - startX}px, ${e.clientY - startY}px)`;
+      preview.style.transform = `translate(${dx}px, ${dy}px)`;
     }
     // Hit-testing (elementFromPoint + closest) forces layout, so skip it until
     // the pointer has actually moved a few px since the last test.
@@ -131,6 +177,24 @@ export function reorderable(node: HTMLElement, opts: ReorderOpts) {
         overEl.classList.add("reorder-over");
       }
     }
+  }
+
+  // touchmove fires reliably during a native scroll (pointermove often does NOT —
+  // iOS captures the gesture for scrolling and stops dispatching it to the element),
+  // so this is the AUTHORITATIVE place to (a) cancel a pending long-press the moment
+  // the finger moves = the user is scrolling, not reordering, and (b) block the
+  // scroll once a drag is actually armed.
+  function onTouchMove(e: TouchEvent) {
+    if (!pressing || !isTouch) return;
+    const t = e.touches[0];
+    if (!armed) {
+      if (t && (Math.abs(t.clientX - startX) > 8 || Math.abs(t.clientY - startY) > 8)) {
+        cancelHold();
+        pressing = false; // let the page scroll; this gesture will never become a drag
+      }
+      return;
+    }
+    if (dragging && e.cancelable) e.preventDefault();
   }
 
   function onPointerUp() {
@@ -151,6 +215,7 @@ export function reorderable(node: HTMLElement, opts: ReorderOpts) {
   node.addEventListener("pointermove", onPointerMove);
   node.addEventListener("pointerup", onPointerUp);
   node.addEventListener("pointercancel", onPointerCancel);
+  node.addEventListener("touchmove", onTouchMove, { passive: false });
 
   return {
     update(next: ReorderOpts) {
@@ -158,6 +223,7 @@ export function reorderable(node: HTMLElement, opts: ReorderOpts) {
       group = next.group;
       onReorder = next.onReorder;
       threshold = next.threshold ?? 6;
+      holdMs = next.holdMs ?? 380;
       node.setAttribute(ATTR_GROUP, group);
       node.setAttribute(ATTR_INDEX, String(index));
     },
@@ -166,6 +232,7 @@ export function reorderable(node: HTMLElement, opts: ReorderOpts) {
       node.removeEventListener("pointermove", onPointerMove);
       node.removeEventListener("pointerup", onPointerUp);
       node.removeEventListener("pointercancel", onPointerCancel);
+      node.removeEventListener("touchmove", onTouchMove);
       teardown();
     },
   };

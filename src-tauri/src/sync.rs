@@ -107,6 +107,16 @@ fn read_cfg_inner(c: &Connection, require_enabled: bool) -> Option<SyncCfg> {
     .into_iter()
     .flatten()
     .collect();
+    // On mobile the per-tier sync URL fields are hidden, so sync ALWAYS follows the
+    // single Homelab URL (→ its /sync WebDAV, with the homelab's own local→Tailscale→
+    // public reachability pick). This avoids a stale explicit sync_url pointing at the
+    // proxy root without /sync, or at a Tailscale host the phone can't reach.
+    #[cfg(mobile)]
+    {
+        candidates = homelab::resolved_setting(c, "sync_url")
+            .map(|u| vec![u.trim_end_matches('/').to_string()])
+            .unwrap_or_default();
+    }
     // No explicit sync URL set? Derive it from the unified homelab base (base + /sync),
     // so configuring the single Homelab URL is all that's needed — resolved_setting
     // already does the local→Tailscale→public reachability pick.
@@ -134,7 +144,11 @@ fn read_cfg_inner(c: &Connection, require_enabled: bool) -> Option<SyncCfg> {
 
 fn client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        // Bounded so a non-responsive or non-WebDAV target fails with a clear error
+        // instead of leaving the UI on "Syncing…" for minutes. LAN/Tailscale targets
+        // answer in well under this, and a multi-MB DB/file push still fits comfortably.
+        .connect_timeout(std::time::Duration::from_secs(8))
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .unwrap_or_default()
 }
@@ -251,6 +265,21 @@ pub async fn sync_pull(app: AppHandle) -> Result<bool> {
 /// an allowlist with a hard credential guard — API keys, tokens and URLs never
 /// sync, even if a future key sneaks into an allowlisted group.
 fn is_syncable_setting(key: &str) -> bool {
+    // Opt-in exception (user-requested): the Moodle connection IS synced so a linked
+    // phone is authed and shares course matching without re-logging in. Subject↔course
+    // links + the courses themselves already sync (they're DB rows); this adds the
+    // token/site so the phone can fetch fresh data. It rides the user's own homelab
+    // WebDAV, so the token never leaves their control.
+    //
+    // Provider API keys are deliberately NOT synced (security): a billable OpenRouter/
+    // Claude/OpenAI/Gemini key — and the custom endpoint — is a real secret, and syncing
+    // it would copy it to every linked device + the WebDAV store. Each device holds its
+    // own; the keys tab promises "never synced". The `_key` substring guard below also
+    // backstops this if a future key sneaks into a group.
+    const SYNCED_CREDS: &[&str] = &["moodle_url", "moodle_token", "moodle_userid"];
+    if SYNCED_CREDS.contains(&key) {
+        return true;
+    }
     // Hard exclusions first (credentials, device endpoints, device-local state).
     const BLOCK_SUBSTR: &[&str] = &["_key", "token", "secret", "password", "_url"];
     if BLOCK_SUBSTR.iter().any(|b| key.contains(b)) {
@@ -645,14 +674,19 @@ mod tests {
 
     #[test]
     fn syncable_settings_never_include_credentials() {
-        // Credentials & device endpoints must NEVER sync across devices.
+        // Provider API keys & device endpoints must NEVER sync across devices.
         for k in [
             "gemini_api_key", "openrouter_api_key", "openai_api_key", "claude_api_key",
-            "moodle_token", "moodle_userid", "moodle_url", "ollama_url", "searxng_url",
+            "custom_endpoint", "ollama_url", "searxng_url",
             "whisper_url", "sync_url", "sync_enabled", "google_calendar_token",
             "last_subject_id", "offline_mode",
         ] {
             assert!(!is_syncable_setting(k), "{k} must not sync");
+        }
+        // The Moodle connection is the one deliberate credential exception (opt-in, rides
+        // the user's own homelab WebDAV) so a linked phone shares course matching.
+        for k in ["moodle_url", "moodle_token", "moodle_userid"] {
+            assert!(is_syncable_setting(k), "{k} should sync (Moodle opt-in)");
         }
         // Preferences SHOULD sync.
         for k in [

@@ -1,0 +1,371 @@
+/* Mobile touch-adaptation layer — Phase 1 (docs/MOBILE_PORT.md §4).
+ *
+ * Applies ONLY under html[data-mobile] (set in main.ts when isMobile), so it
+ * cannot affect the desktop app. Built entirely from existing design tokens — no
+ * new colours (continuity rule, §3.4). This pass is ADDITIVE: it enlarges touch
+ * targets and fixes touch ergonomics without restyling the look. Per-view mobile
+ * passes build on top of this hook. */
+
+html[data-mobile] {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Kill the grey tap-flash everywhere. */
+html[data-mobile] * {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Momentum scrolling on the main scroll surfaces. */
+html[data-mobile] .m-main,
+html[data-mobile] .workspace-scroll,
+html[data-mobile] .chat-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* iOS auto-zooms when you focus an input under 16px — force >=16px so the page
+ * doesn't jump. Keeps the visual size via the token where it's already >=16px. */
+html[data-mobile] input,
+html[data-mobile] textarea,
+html[data-mobile] select,
+html[data-mobile] .input {
+  font-size: max(16px, var(--t-sm));
+}
+
+/* Comfortable tap targets on the shared controls. Additive min-height only — it
+ * never shrinks anything, and the bottom-tab/header chrome use their own scoped
+ * classes (.m-tab/.m-iconbtn) so they're untouched. */
+html[data-mobile] .btn,
+html[data-mobile] .input,
+html[data-mobile] .field input,
+html[data-mobile] .field select,
+html[data-mobile] .subj-tab {
+  min-height: 44px;
+}
+
+/* Subject segmented tabs: scroll sideways instead of cramping when they overflow
+ * a narrow screen (the row itself stays a single line). */
+html[data-mobile] .subj-tab {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ── Per-view touch passes (Phase 1, increment 2) ─────────────────────────── */
+
+/* Settings: the 220px nav + content two-pane (app.css .settings) has no mobile
+ * breakpoint, so it stays cramped on a phone. Stack it into one scrolling column
+ * (nav list on top, pane below). A horizontal segmented nav is a later polish. */
+html[data-mobile] .settings {
+  display: block;
+  overflow: visible;
+}
+html[data-mobile] .set-nav {
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+}
+html[data-mobile] .set-body {
+  overflow: visible;
+}
+html[data-mobile] .set-pane {
+  padding: var(--sp-5) var(--sp-4) var(--sp-8);
+}
+
+/* Materials: per-card actions are hover-revealed (.mat-act opacity:0) — there's no
+ * hover on touch, so always show them. */
+html[data-mobile] .mat-act {
+  opacity: 1 !important;
+}
+
+/* Cheatsheet: the floating section index (.cs-index, position:fixed) opens on
+ * hover and overlaps content — no touch equivalent, so hide it on mobile. Topics
+ * stay reachable via the .cs-tabs row; the cheatsheet-layout rail already
+ * collapses below 720px (app.css). */
+html[data-mobile] .cs-index {
+  display: none;
+}
+
+/* Calendar: a true agenda-first view is a later increment; for now keep the month
+ * day-cells tappable. */
+html[data-mobile] .cal-cell {
+  min-height: 44px;
+}
+
+/* ── Mobile feedback round 1 (real iOS screenshots) ──────────────────────── */
+
+/* Keybinds are pointless on a phone — strip every key hint + badge. (The keyboard
+ * engine itself is disabled in App.svelte when isMobile.) */
+html[data-mobile] .kbd,
+html[data-mobile] .nav-k,
+html[data-mobile] .sb-key,
+html[data-mobile] .compose-hint,
+html[data-mobile] .ces-sub {
+  display: none !important;
+}
+
+/* Cheatsheet topic chips still scroll sideways on a narrow screen. The subject
+   section tabs instead COLLAPSE into .subj-tabmenu (below) so they never clip. */
+html[data-mobile] .cs-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+html[data-mobile] .cs-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Subject section tabs → collapsed popover menu on touch (mirrors the <=680px
+   responsive rule in app.css, but keyed on touch so it also covers tablets). */
+html[data-mobile] .subj-tabs-row { display: none; }
+html[data-mobile] .subj-tabmenu { display: block; }
+html[data-mobile] .subj-tabs { overflow: visible; }
+html[data-mobile] .subj-tabs > .grow { display: none; }
+html[data-mobile] .st-id { max-width: none; flex: 1; }
+html[data-mobile] .subj-tabmenu-btn { min-height: 44px; }
+
+/* Settings: the side-nav rail is replaced by the design-system Picker (rendered in
+ * Settings.svelte when isMobile). Hide the rail; give the Picker room + a tap target. */
+html[data-mobile] .set-nav {
+  display: none;
+}
+html[data-mobile] .set-mnav {
+  padding: 14px 16px 0;
+}
+html[data-mobile] .set-mnav .picker-btn {
+  min-height: 46px;
+}
+
+/* ── Mobile feedback round 2 — full sweep (real iOS screenshots) ───────────── */
+
+/* Home/Dashboard: desktop .dash is a 1120px centred column with large padding, so
+   on a phone the cards float in whitespace. Use the full width + tight padding,
+   and stack the subject grid to one column. */
+html[data-mobile] .dash {
+  max-width: none;
+  padding: var(--sp-4) var(--sp-4) var(--sp-7);
+}
+html[data-mobile] .subj-grid {
+  grid-template-columns: 1fr;
+}
+
+/* Add source / Generate material: both already collapse to one column, but the
+   clamp() side padding wastes space at 390px and the inner grids can still try a
+   second column on wider phones/tablets — force one column + a tighter, scrollable
+   page so nothing overlaps. */
+/* Both views lock to the viewport (height:100% + overflow:hidden) and nest their
+   own scrollers — inside .m-main's scroll that collapses to an unusable double-
+   scroll. On mobile: drop the height lock, single column, let the PAGE scroll. */
+html[data-mobile] .addsrc,
+html[data-mobile] .genmat2 {
+  height: auto;
+  padding: 14px 14px 20px;
+  overflow: visible;
+}
+html[data-mobile] .addsrc-grid,
+html[data-mobile] .gm2-grid {
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+/* ── AddSource: the method picker is a themed dropdown on mobile (see AddSource.svelte),
+   so just give the selected input panel real room. ──────────────────────────── */
+html[data-mobile] .addsrc-left { flex: 0 0 auto; gap: 12px; }
+html[data-mobile] .addsrc-target { margin-top: 0; }
+html[data-mobile] .addsrc-panel { min-height: 42vh; overflow: visible; }
+html[data-mobile] .addsrc-textarea { min-height: 220px; }
+html[data-mobile] .addsrc-drop { min-height: 170px; }
+
+/* ── GenerateMaterial: kill the inner scrollers, flow + sticky footer ───────── */
+html[data-mobile] .gm2-left { overflow: visible; min-height: auto; padding-right: 0; }
+html[data-mobile] .gm2-right { min-height: auto; }
+html[data-mobile] .gm2-panel { max-height: none; min-height: auto; overflow: visible; }
+html[data-mobile] .gm2-count-presets { margin-left: 0; }
+html[data-mobile] .gm2-foot {
+  position: sticky;
+  bottom: 0;
+  margin-top: 14px;
+  padding: 10px 0 calc(6px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg);
+}
+
+/* ── Notes: the master/detail flex chain collapses to 0 height in .m-main and
+   renders blank. Give it a real height; when the list is expanded, stack it
+   above the editor instead of a cramped 260px side column. ─────────────────── */
+html[data-mobile] .notes-workspace-scroll { display: block; }
+html[data-mobile] .notes-page { padding: 14px 14px 0; flex: none; min-height: auto; }
+html[data-mobile] .notes { min-height: 74vh; flex: none; margin-bottom: 16px; }
+html[data-mobile] .notes:not(.notes--collapsed) { grid-template-columns: 1fr; }
+
+/* ── Mobile feedback round 4 ──────────────────────────────────────────────── */
+
+/* Calendar month: Google-Calendar style — keep the title chips (they truncate),
+   just tighten them for the narrow 7-across phone cells and drop the time / checkbox
+   clutter so the title gets the room. Tapping a day opens the day view. */
+html[data-mobile] .cal { padding: 12px 10px; }
+html[data-mobile] .cal-cell { padding: 3px 3px 4px; gap: 2px; }
+html[data-mobile] .chip { font-size: 10.5px; line-height: 1.3; padding: 1px 4px; gap: 3px; }
+html[data-mobile] .chip-time,
+html[data-mobile] .chip-check,
+html[data-mobile] .chip-dot { display: none; }
+html[data-mobile] .cal-daynum { font-size: 10px; height: 16px; min-width: 16px; }
+html[data-mobile] .chip-more { font-size: 9px; padding: 0 4px; }
+
+/* ── Mobile feedback round 6 ──────────────────────────────────────────────── */
+
+/* Materials grid (flashcards / quizzes / etc.) clipped off-screen as 2 columns. */
+html[data-mobile] .mat-grid { grid-template-columns: 1fr; }
+
+/* Cheatsheet version-history was a cramped 240px + diff two-pane → full-screen sheet,
+   single column (version list above, diff below). */
+html[data-mobile] .cs-hist-overlay { align-items: stretch; }
+html[data-mobile] .cs-hist {
+  width: 100vw; height: 100%; max-height: 100%; border: none; border-radius: 0;
+}
+html[data-mobile] .cs-hist-body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+html[data-mobile] .cs-hist-list { max-height: 34vh; border-right: none; border-bottom: 1px solid var(--border); }
+
+/* Sources bulk-action bar (N selected / Move / Re-ingest / Delete) overflowed → wrap. */
+html[data-mobile] .src-bulkbar { flex-wrap: wrap; gap: 8px; }
+
+/* The accent Ask pill floats over the bottom of the content — give the main content
+   scrollers clearance so list ends / Next buttons aren't covered by it. */
+html[data-mobile] .workspace-scroll { padding-bottom: 76px; }
+
+/* Bigger "In your words" bio box. */
+html[data-mobile] .set-bio { min-height: 150px; }
+
+/* Exam mode: topic chips overflowed off-screen. A long topic name (e.g. "The
+   Permanently Online and Permanently Connected Mind") is a nowrap chip wider than the
+   phone → horizontal overflow, chips clipped both edges. Wrap the row AND let each chip
+   wrap its own text so none can exceed the viewport. */
+html[data-mobile] .tag-suggest { flex-wrap: wrap; max-width: 100%; }
+html[data-mobile] .tag-chip-add {
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+/* ── Mobile feedback round 7 (autonomous sweep) ───────────────────────────── */
+
+/* Source viewer: was a desktop two-pane split squashed to ~58% + a height-less PDF
+   iframe (rendered as a sliver, horizontally scrollable). One full-width pane, hide
+   the side chat/splitter, give the PDF/image real size, no horizontal scroll. */
+html[data-mobile] .source-viewer { flex-direction: column; }
+html[data-mobile] .sv-pane { width: 100% !important; }
+html[data-mobile] .sv-pane.sv-source { flex: 1; min-height: 0; }
+html[data-mobile] .sv-pane.sv-chat,
+html[data-mobile] .sv-splitter { display: none; }
+html[data-mobile] .sv-doc { padding: 10px; min-height: 0; overflow-x: hidden; }
+html[data-mobile] .sv-doc--flush { padding: 0; }
+html[data-mobile] .sv-frame { width: 100%; height: 80vh; min-height: 420px; }
+html[data-mobile] .sv-img { max-width: 100%; max-height: 76vh; }
+/* PDF.js page column (canvases injected by SourceViewer; global — not Svelte-scoped). */
+html[data-mobile] .sv-pdf-pages { display: flex; flex-direction: column; gap: 8px; width: 100%; padding: 8px; box-sizing: border-box; }
+.sv-pdf-page { display: block; width: 100%; height: auto; background: #fff; border-radius: 4px; box-shadow: 0 1px 5px rgba(0, 0, 0, 0.35); }
+html[data-mobile] .pdf-page { scroll-margin-top: 64px; max-width: 100%; }
+
+/* Generate material: kill the last horizontal-overflow sources — stack the count
+   stepper + quick-pick pills, wrap the format rows + the action footer buttons. */
+html[data-mobile] .gm2-count { flex-direction: column; align-items: stretch; gap: 8px; }
+html[data-mobile] .gm2-count-presets { width: 100%; justify-content: flex-start; margin-left: 0; }
+html[data-mobile] .gm2-format { flex-wrap: wrap; }
+html[data-mobile] .add-foot { flex-wrap: wrap; gap: 8px; }
+html[data-mobile] .add-foot .btn { flex: 1 1 auto; min-width: 0; white-space: normal; }
+
+/* Generated study materials (flashcards / quiz / slideshow): cards were fixed-width
+   (520–560px) → clipped at 390px; rate/next buttons sat under the Ask pill. */
+/* The faces are position:absolute (inset:0) for the flip crossfade, so with height:auto
+   the card collapses to min-height and .fc-text (max-height:188px) clips long answers.
+   Grid-stack both faces in one cell instead: the card grows to fit the taller face's
+   text (no clip, no hidden scroll) while the opacity crossfade still works. */
+html[data-mobile] .flashcard { max-width: calc(100vw - 28px); display: grid; height: auto; min-height: 200px; }
+html[data-mobile] .flashcard .fc-face { position: relative; inset: auto; grid-area: 1 / 1; }
+html[data-mobile] .fc-text { max-height: none; overflow: visible; }
+html[data-mobile] .quiz-card { max-width: calc(100vw - 28px); }
+html[data-mobile] .fc-bar-row { flex-wrap: wrap; gap: 6px; max-width: calc(100vw - 28px); }
+html[data-mobile] .fc-rate { flex-wrap: wrap; }
+html[data-mobile] .fc-rate .btn { min-width: 0; flex: 1 1 calc(50% - 4px); }
+/* Top-align + scroll so a tall card (long definition) is fully reachable above the
+   rate buttons, instead of being centred and clipped at the viewport edges. */
+html[data-mobile] .fc-wrap { justify-content: flex-start; overflow-y: auto; padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+html[data-mobile] .ss-nav { padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+/* Notes fullscreen overlay sits at top:0 over everything — without safe-area padding the
+   "Exit fullscreen" button hid under the iOS status bar/notch and couldn't be tapped. */
+html[data-mobile] .notes-fs-head { padding-top: max(14px, env(safe-area-inset-top)); }
+
+/* Kanban / Planner board: 3 equal columns are unreadable at 390px → swipeable
+   horizontally-scrolling columns (~80vw each) with snap. */
+html[data-mobile] .cit-board-wrap { height: auto; min-height: 0; max-height: 72vh; }
+html[data-mobile] .board {
+  display: flex;
+  grid-template-columns: none;
+  gap: 12px;
+  padding: 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x mandatory;
+}
+html[data-mobile] .bcol { flex: 0 0 80vw; scroll-snap-align: start; }
+
+/* Recorder: the live-transcript panel is removed on mobile → single full-width stage. */
+html[data-mobile] .recorder { display: flex; flex-direction: column; }
+html[data-mobile] .rec-stage { width: 100%; }
+
+/* Notes: show ONE pane at a time on a phone (list, then full-width editor + a back
+   chevron) instead of the cramped desktop master/detail. */
+html[data-mobile] .notes--m { grid-template-columns: 1fr; }
+html[data-mobile] .notes--m-list .notes-detail { display: none; }
+html[data-mobile] .notes--m-detail .notes-list { display: none; }
+html[data-mobile] .notes--m .notes-list { min-height: 0; }
+
+/* Subject detail / university-portal (Moodle) panel: a centred desktop modal is
+   cramped on a phone — make it a near-full-screen sheet and stack its grids. */
+html[data-mobile] .sp {
+  width: 100vw;
+  height: 100%;
+  max-height: 100%;
+  border: none;
+  border-radius: 0;
+}
+html[data-mobile] .sp-back {
+  align-items: stretch;
+  backdrop-filter: none;
+}
+html[data-mobile] .sp-grid {
+  grid-template-columns: 1fr;
+}
+/* Long Moodle grade/deadline/announcement lines overflowed the phone width and
+   clipped off-screen — constrain the flex chain so they truncate (min-width:0 lets
+   the inner ellipsis kick in) and nothing escapes the sheet. NOTE: no card-level
+   overflow:hidden — that clipped the Grades/Deadlines grid and the disclosure inside
+   the portal card. The inner text spans (.sp-li-name/.sp-ann-subj) already ellipsis. */
+html[data-mobile] .sp-card,
+html[data-mobile] .sp-sub-card {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+/* The body is the scroll surface for the full-screen sheet — must scroll vertically
+   (a previous overflow:hidden here made the whole Moodle page un-scrollable). */
+html[data-mobile] .sp-body {
+  min-width: 0;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+html[data-mobile] .sp-list li,
+html[data-mobile] .sp-li-name,
+html[data-mobile] .sp-ann-subj,
+html[data-mobile] .sp-row-link,
+html[data-mobile] .sp-ann-btn { min-width: 0; }
+html[data-mobile] .sp-course { flex-wrap: wrap; }
+/* Topic rows are cramped at name 42% + tags 48% + delete on one phone-width line.
+   Wrap so emoji + name + delete share the top line and the tags input drops full-width
+   below. .input is width:100%, so the name MUST use flex-basis:0 (not auto) — otherwise
+   it inherits that 100% width and every field wraps onto its own line (delete stranded). */
+html[data-mobile] .tr { flex-wrap: wrap; row-gap: 6px; }
+html[data-mobile] .tr-name { flex: 1 1 0; }
+html[data-mobile] .tr-tags { flex: 1 1 100%; order: 3; }

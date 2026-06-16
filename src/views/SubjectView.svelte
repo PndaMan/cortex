@@ -19,6 +19,11 @@
     { id: "citations", label: "Planner", icon: "cards" },
   ] as const;
 
+  // Collapsed tab menu (narrow widths / touch): one trigger opens a popover of all
+  // sections instead of the inline row, which clips on a phone. Same look as Picker.
+  let tabMenuOpen = $state(false);
+  const activeTab = $derived(TABS.find((t) => t.id === app.subjectTab) ?? TABS[0]);
+
   function kindLabel(kind: string): string {
     const map: Record<string, string> = {
       pdf: "PDF", pptx: "PPTX", docx: "DOCX", txt: "TXT",
@@ -220,14 +225,53 @@
         </button>
       </div>
       <div class="grow"></div>
-      {#each TABS as tab (tab.id)}
+
+      <!-- Wide desktop: the full inline tab row (unchanged). -->
+      <div class="subj-tabs-row">
+        {#each TABS as tab (tab.id)}
+          <button
+            class="subj-tab{app.subjectTab === tab.id ? ' on' : ''}"
+            onclick={() => (app.subjectTab = tab.id)}
+          >
+            <Icon name={tab.icon} size={13} />{tab.label}
+          </button>
+        {/each}
+      </div>
+
+      <!-- Narrow / touch: collapse the row into one trigger + popover menu. -->
+      <div class="subj-tabmenu picker">
         <button
-          class="subj-tab{app.subjectTab === tab.id ? ' on' : ''}"
-          onclick={() => (app.subjectTab = tab.id)}
+          type="button"
+          class={"picker-btn subj-tabmenu-btn" + (tabMenuOpen ? " open" : "")}
+          onclick={() => (tabMenuOpen = !tabMenuOpen)}
+          aria-haspopup="menu"
+          aria-expanded={tabMenuOpen}
         >
-          <Icon name={tab.icon} size={13} />{tab.label}
+          <Icon name={activeTab.icon} size={13} color="var(--accent)" />
+          <span class="picker-val">{activeTab.label}</span>
+          <Icon name="chevron" size={11} style="transform:rotate(90deg);color:var(--fg-faint)" />
         </button>
-      {/each}
+        {#if tabMenuOpen}
+          <div class="picker-back" role="presentation" onclick={() => (tabMenuOpen = false)}></div>
+          <div class="picker-menu subj-tabmenu-list" role="menu">
+            {#each TABS as tab (tab.id)}
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={app.subjectTab === tab.id}
+                class={"picker-item" + (app.subjectTab === tab.id ? " on" : "")}
+                onclick={() => { app.subjectTab = tab.id; tabMenuOpen = false; }}
+              >
+                <Icon name={tab.icon} size={13} color={app.subjectTab === tab.id ? "var(--accent)" : "var(--fg-muted)"} />
+                <span class="grow" style="text-align:left">{tab.label}</span>
+                {#if app.subjectTab === tab.id}
+                  <Icon name="check" size={12} color="var(--accent)" />
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
     </div>
 
     <!-- Tab body -->

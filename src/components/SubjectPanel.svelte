@@ -9,6 +9,7 @@
   import Picker from "./Picker.svelte";
   import TopicRow from "./TopicRow.svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
+  import { isMobile } from "../lib/platform";
 
   const subj = $derived(app.activeSubject);
 
@@ -17,6 +18,8 @@
   let mdData = $state<api.MoodleData>({ courses: [], grades: [], deadlines: [], announcements: [] });
   let syncing = $state(false);
   let linking = $state(false);
+  // Moodle base URL (setting) → used to deep-link "Open in Moodle".
+  let moodleUrl = $state("");
 
   async function loadMoodle() {
     try {
@@ -24,6 +27,7 @@
       mdData = mdStatus.configured
         ? await api.moodleData()
         : { courses: [], grades: [], deadlines: [], announcements: [] };
+      moodleUrl = (await api.getSetting("moodle_url")) ?? "";
     } catch {
       /* leave defaults — surfaced as "not connected" */
     }
@@ -33,6 +37,18 @@
   const linkedCourse = $derived(
     linkedCourseId ? mdData.courses.find((c) => c.id === linkedCourseId) ?? null : null
   );
+  // Moodle course permalink: {base}/course/view.php?id={courseId}.
+  const courseUrl = $derived(
+    moodleUrl && linkedCourseId
+      ? `${moodleUrl.replace(/\/+$/, "")}/course/view.php?id=${linkedCourseId}`
+      : null
+  );
+  // On a phone, deep-link into the Moodle mobile app (custom scheme) instead of a
+  // browser tab; desktop opens the web URL.
+  function openCourse() {
+    if (!courseUrl) return;
+    api.openExternal(isMobile ? `moodlemobile://link=${encodeURIComponent(courseUrl)}` : courseUrl);
+  }
   const courseGrades = $derived(
     linkedCourseId ? mdData.grades.filter((g) => g.course_id === linkedCourseId) : []
   );
@@ -312,6 +328,12 @@
           {:else}
             <div class="sp-course mono">
               <Icon name="check" size={12} /> {linkedCourse.fullname || linkedCourse.shortname}
+              <div class="grow"></div>
+              {#if courseUrl}
+                <button class="btn btn--sm" onclick={openCourse} title="Open this course in Moodle">
+                  <Icon name="external" size={12} /> Open in Moodle
+                </button>
+              {/if}
               <button class="sp-unlink" onclick={unlinkCourse} title="Unlink course">unlink</button>
             </div>
             <div class="sp-grid">

@@ -195,6 +195,20 @@
 .subj-tabs { display: flex; align-items: center; gap: 3px; height: 50px; padding: 0 14px; border-bottom: 1px solid var(--border); flex: none; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
 .subj-tabs::-webkit-scrollbar { height: 0; width: 0; display: none; }
 .subj-tab { flex: none; }
+
+/* Collapsed subject-tab menu — replaces the inline row on narrow widths (or touch,
+   via html[data-mobile] in mobile.css) so the section tabs never clip. Shares the
+   .picker visual language; hidden on a wide desktop window. */
+.subj-tabmenu { display: none; position: relative; flex: none; min-width: 0; }
+.subj-tabmenu-btn { width: auto; height: 32px; gap: 7px; }
+.subj-tabmenu-list { left: auto; right: 0; min-width: 210px; }
+@media (max-width: 680px) {
+  .subj-tabs-row { display: none; }
+  .subj-tabmenu { display: block; }
+  .subj-tabs { overflow: visible; }
+  .subj-tabs > .grow { display: none; }
+  .st-id { max-width: none; flex: 1; }
+}
 .st-id { display: flex; align-items: center; gap: 10px; padding-right: 14px; margin-right: 6px; border-right: 1px solid var(--border); flex: none; min-width: 0; max-width: 46vw; }
 .st-id--clickable { cursor: pointer; border-radius: var(--rad-2); transition: background 0.12s; }
 .st-id--clickable:hover { background: var(--surface-2); }

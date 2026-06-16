@@ -3,6 +3,10 @@
 import "./styles/cortex.css";
 import "./styles/app.css";
 import "./app.css";
+// Touch-adaptation layer — only takes effect under html[data-mobile] (set below).
+import "./styles/mobile.css";
+
+import { isMobile } from "./lib/platform";
 
 // Apply the last-used theme BEFORE anything renders. The persisted theme lives
 // in the settings table (async — too late for first paint), so applyTheme also
@@ -22,6 +26,10 @@ try {
   const sc = localStorage.getItem("cortex-ui-scale");
   if (sc && /^\d{2,3}$/.test(sc)) document.documentElement.style.zoom = String(Number(sc) / 100);
 } catch { /* storage unavailable */ }
+
+// Tag the root on phones (and when the dev force-mobile flag is on) so the mobile
+// shell + mobile.css touch layer apply. Done before mount for a correct first paint.
+if (isMobile) document.documentElement.setAttribute("data-mobile", "");
 
 import { mount } from "svelte";
 import App from "./App.svelte";

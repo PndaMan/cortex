@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app, THEMES, THEME_LABELS } from "../lib/store.svelte";
   import type { Theme } from "../lib/store.svelte";
+  import { isMobile } from "../lib/platform";
   import * as api from "../lib/api";
   import { getVersion } from "@tauri-apps/api/app";
   import type { Memory } from "../lib/api";
@@ -52,6 +53,13 @@
     { id: "data",       label: "Data & privacy",icon: "doc" },
     { id: "about",      label: "About",         icon: "diamond" },
   ] as const;
+
+  // Mobile is a homelab-first portable view: drop the desktop-only Keybinds tab
+  // and lead with Integrations (homelab). Desktop order/contents are unchanged.
+  const MOBILE_TABS = ["homelab", "keys", "models", "appearance", "calendar", "experimental", "audio", "data", "profile", "about"];
+  const navTabs = isMobile
+    ? MOBILE_TABS.map((id) => TABS.find((t) => t.id === id)).filter((t): t is (typeof TABS)[number] => !!t)
+    : TABS;
 
   let tab = $state<string>("profile");
   // Honour a deep-link from elsewhere (e.g. the subject Overview → Moodle setup).
@@ -327,16 +335,25 @@
   let hlPublic    = $state("");
   let hlState     = $state<"idle" | "testing" | "ok" | "fail">("idle");
   let hlReach     = $state<Record<string, "ok" | "fail">>({});
+  let hlSaveTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Real app version for the footer (the Tauri build version), loaded once.
   let appVersion = $state("");
   $effect(() => { void getVersion().then((v) => (appVersion = v)).catch(() => {}); });
   function saveHomelabBases() {
+    clearTimeout(hlSaveTimer);
     api.setSettings({
       homelab_base: hlBase.trim(),
       homelab_tailscale_base: hlTailscale.trim(),
       homelab_public_base: hlPublic.trim(),
     }).catch(() => {});
+  }
+  // iOS WKWebView fires change/blur unreliably (and "Sync now" lives in another
+  // section), so the base could stay unpersisted → sync reports "target not set".
+  // Persist shortly after each keystroke so the URL is always in the DB by sync time.
+  function saveHomelabBasesSoon() {
+    clearTimeout(hlSaveTimer);
+    hlSaveTimer = setTimeout(saveHomelabBases, 400);
   }
   async function testHomelab() {
     const tiers: [string, string][] = [["local", hlBase], ["tailscale", hlTailscale], ["public", hlPublic]];
@@ -365,8 +382,14 @@
   let syncReach = $state<Record<string, boolean>>({});
 
   const anySyncUrl = $derived(!!(syncUrl.trim() || syncUrlTs.trim() || syncUrlPub.trim()));
+  // On mobile the per-tier sync URL fields are hidden — live sync rides the single
+  // Homelab base URL (→ its /sync WebDAV). So the base alone must be enough to enable
+  // the toggle; gating only on anySyncUrl left mobile stuck on "live sync off".
+  const canSync = $derived(anySyncUrl || !!hlBase.trim());
 
+  let syncSaveTimer: ReturnType<typeof setTimeout> | undefined;
   function saveSync() {
+    clearTimeout(syncSaveTimer);
     api.setSettings({
       sync_url: syncUrl.trim(),
       sync_url_tailscale: syncUrlTs.trim(),
@@ -377,9 +400,14 @@
       sync_enabled: syncOn ? "true" : "false",
     }).then(() => app.loadSyncStatus()).catch(() => {});
   }
+  // Same iOS blur/change unreliability as the homelab bases — persist creds as typed.
+  function saveSyncSoon() {
+    clearTimeout(syncSaveTimer);
+    syncSaveTimer = setTimeout(saveSync, 400);
+  }
   function toggleSync() {
     syncOn = !syncOn;
-    if (syncOn && !anySyncUrl && !hlBase.trim()) { syncOn = false; return; }
+    if (syncOn && !canSync) { syncOn = false; return; }
     saveSync();
   }
   function setSyncMode(m: "auto" | "local" | "tailscale" | "public") {
@@ -551,10 +579,16 @@
     return new Date(ms).toLocaleString();
   }
 
+  // Last transport error from a failed reachability test, so the homelab card can
+  // explain WHY (e.g. iOS blocking cleartext LAN, DNS, timeout) instead of "fail".
+  let lastTestError = $state("");
   async function testEndpoint(url: string): Promise<"ok" | "fail"> {
     try {
-      return (await api.pingUrl(url)) ? "ok" : "fail";
-    } catch {
+      const ok = await api.pingUrl(url);
+      lastTestError = ok ? "" : "Reached the server, but it didn't return a success status.";
+      return ok ? "ok" : "fail";
+    } catch (e) {
+      lastTestError = String(e);
       return "fail";
     }
   }
@@ -1018,7 +1052,7 @@
       <span class="mono" style="color:var(--fg-bright);font-weight:600">Settings</span>
     </div>
 
-    {#each TABS as t}
+    {#each navTabs as t}
       <button
         class={"set-nav-item" + (tab === t.id ? " on" : "")}
         onclick={() => (tab = t.id)}
@@ -1032,6 +1066,17 @@
 
   <!-- MAIN BODY -->
   <div class="set-body">
+
+    {#if isMobile}
+      <div class="set-mnav">
+        <Picker
+          value={tab}
+          onChange={(id) => (tab = id)}
+          options={navTabs.map((t) => ({ id: t.id, label: t.label }))}
+          icon={navTabs.find((t) => t.id === tab)?.icon}
+        />
+      </div>
+    {/if}
 
     <!-- ===== PROFILE ===== -->
     {#if tab === "profile"}
@@ -1082,10 +1127,8 @@
           </div>
           <div class="set-card">
             <div class="set-row stacked">
-              <div class="set-row-l"><div class="set-row-t">In your words</div></div>
-              <div class="set-row-r">
-                <textarea class="input set-textarea" bind:value={about} rows={4}></textarea>
-              </div>
+              <div class="set-row-t">In your words</div>
+              <textarea class="input set-textarea set-bio" bind:value={about} rows={6}></textarea>
             </div>
             <div class="set-row">
               <div class="set-row-l">
@@ -1310,6 +1353,8 @@ Notes: {about}</pre>
           <p class="set-sub">Cortex re-skins live from your Omarchy theme, or pick one manually.</p>
         </header>
 
+        <!-- Follow-Omarchy mirrors the desktop's Omarchy palette — meaningless on a phone. -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Display</h3></div>
           <div class="set-card">
@@ -1354,6 +1399,7 @@ Notes: {about}</pre>
             </div>
           </div>
         </section>
+        {/if}
 
         <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Manual theme</h3></div>
@@ -1397,6 +1443,8 @@ Notes: {about}</pre>
                 </div>
               </div>
             </div>
+            <!-- Density is a desktop spacing affordance; touch uses one comfortable scale. -->
+            {#if !isMobile}
             <div class="set-row">
               <div class="set-row-l">
                 <div class="set-row-t">Density</div>
@@ -1410,9 +1458,12 @@ Notes: {about}</pre>
                 </div>
               </div>
             </div>
+            {/if}
           </div>
         </section>
 
+        <!-- Window / tray is a desktop-only concept — hidden on mobile. -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Window</h3></div>
           <div class="set-card">
@@ -1427,6 +1478,7 @@ Notes: {about}</pre>
             </div>
           </div>
         </section>
+        {/if}
       </div>
 
     <!-- ===== KEYBINDS ===== -->
@@ -1586,17 +1638,17 @@ Notes: {about}</pre>
           <div class="set-card">
             <div class="set-row stacked">
               <div class="set-row-t">Local URL</div>
-              <input class="input mono" bind:value={hlBase} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="http://192.168.1.10:8080" />
+              <input class="input mono" bind:value={hlBase} oninput={saveHomelabBasesSoon} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="http://192.168.1.10:8080" />
               <div class="set-row-d">Your homelab's LAN address (the Caddy proxy port, default <span class="mono">8080</span>).</div>
             </div>
             <div class="set-row stacked">
               <div class="set-row-t">Tailscale URL <span class="faint">optional</span></div>
-              <input class="input mono" bind:value={hlTailscale} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://homelab.tailnet-xxxx.ts.net" />
+              <input class="input mono" bind:value={hlTailscale} oninput={saveHomelabBasesSoon} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://homelab.tailnet-xxxx.ts.net" />
               <div class="set-row-d">Used when the local URL isn't reachable. Cortex swaps just the host (and port if you give one), keeping the service paths.</div>
             </div>
             <div class="set-row stacked">
               <div class="set-row-t">Public URL <span class="faint">optional</span></div>
-              <input class="input mono" bind:value={hlPublic} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://lab.example.com" />
+              <input class="input mono" bind:value={hlPublic} oninput={saveHomelabBasesSoon} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://lab.example.com" />
             </div>
             <div class="set-row stacked">
               <div class="row-inline" style="flex-wrap:wrap; gap:8px 12px; align-items:center">
@@ -1611,6 +1663,8 @@ Notes: {about}</pre>
           </div>
         </section>
 
+        <!-- Local CLI dependencies (pdftotext/libreoffice/age/…) never exist on a phone. -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h svc-h">
             <div>
@@ -1651,7 +1705,11 @@ Notes: {about}</pre>
             {/if}
           </div>
         </section>
+        {/if}
 
+        <!-- Per-service URL overrides are a desktop power-user feature; on mobile the
+             single Homelab URL drives every service (search/whisper/ollama/sync/ingest). -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h">
             <h3 class="set-group-t">Diagrams</h3>
@@ -1662,6 +1720,7 @@ Notes: {about}</pre>
           </div>
         </section>
 
+        {/if}
         <section class="set-group">
           <div class="set-group-h svc-h">
             <div>
@@ -1677,7 +1736,7 @@ Notes: {about}</pre>
                 <div class="set-row-d">Merges the remote vault in on launch (in the background — never blocks startup), then pushes your changes (debounced).</div>
               </div>
               <div class="set-row-r">
-                <button type="button" class={"st-toggle" + (syncOn ? " on" : "")} onclick={toggleSync} disabled={!(anySyncUrl || hlBase.trim())} role="switch" aria-checked={syncOn} aria-label="live sync"><span class="st-knob"></span></button>
+                <button type="button" class={"st-toggle" + (syncOn ? " on" : "")} onclick={toggleSync} disabled={!canSync} role="switch" aria-checked={syncOn} aria-label="live sync"><span class="st-knob"></span></button>
               </div>
             </div>
 
@@ -1686,12 +1745,12 @@ Notes: {about}</pre>
             </div>
             <div class="set-row stacked">
               <div class="set-row-t">Username <span class="faint">optional</span></div>
-              <input class="input mono" bind:value={syncUser} onchange={saveSync} onblur={saveSync} placeholder="cortex" />
+              <input class="input mono" bind:value={syncUser} oninput={saveSyncSoon} onchange={saveSync} onblur={saveSync} placeholder="cortex" />
             </div>
             <div class="set-row stacked">
               <div class="set-row-t">Password <span class="faint">optional</span></div>
               <div class="row-inline">
-                <input class="input mono" type="password" bind:value={syncPass} onchange={saveSync} onblur={saveSync} placeholder="••••••••" />
+                <input class="input mono" type="password" bind:value={syncPass} oninput={saveSyncSoon} onchange={saveSync} onblur={saveSync} placeholder="••••••••" />
                 <button class="btn btn--primary" disabled={app.syncState === "syncing" || !(anySyncUrl || hlBase.trim())} onclick={() => app.syncManual()}>
                   <Icon name="upload" size={12} /> {app.syncState === "syncing" ? "Syncing…" : "Sync now"}
                 </button>
@@ -1701,6 +1760,8 @@ Notes: {about}</pre>
           </div>
         </section>
 
+        <!-- Encrypted backups use the age + rclone sidecars — desktop-only. -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h svc-h">
             <div>
@@ -1735,6 +1796,7 @@ Notes: {about}</pre>
             </div>
           </div>
         </section>
+        {/if}
 
       </div>
 
@@ -1747,6 +1809,8 @@ Notes: {about}</pre>
           <p class="set-sub">Defaults for the music player and generated audio overviews.</p>
         </header>
 
+        <!-- Music is cut on mobile (no mpv/yt-dlp sidecars) — hide its settings. -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Study music</h3></div>
           <div class="set-card">
@@ -1768,7 +1832,11 @@ Notes: {about}</pre>
             </div>
           </div>
         </section>
+        {/if}
 
+        <!-- YouTube streaming needs the mpv + yt-dlp sidecars, which don't ship on
+             mobile — hide the whole section there. -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h">
             <h3 class="set-group-t">YouTube streaming</h3>
@@ -1804,6 +1872,7 @@ Notes: {about}</pre>
             {/if}
           </div>
         </section>
+        {/if}
 
         <section class="set-group">
           <div class="set-group-h">

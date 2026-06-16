@@ -531,6 +531,41 @@ fn ocr_via_vision(state: &State<AppState>, kind: &str, path: Option<&str>) -> Re
     Ok(out)
 }
 
+/// Offload document parsing to the homelab ingest/parse service (Apache Tika) when a
+/// homelab ingest URL is configured. iOS can't run poppler/libreoffice, so scanned
+/// PDFs and legacy `.doc/.ppt` have no on-device path — Tika handles PDF/DOCX/PPTX/
+/// legacy and OCRs scanned pages (the `-full` image bundles Tesseract). PUTs the raw
+/// file to `{ingest_url}/tika` and returns the extracted plain text.
+///
+/// `Ok(None)` when no homelab ingest URL is set (desktop, or mobile without a homelab)
+/// — the caller then keeps whatever text it already had. `Err` only on a real failure.
+fn ingest_remote(state: &State<AppState>, path: &str) -> Result<Option<String>> {
+    let base = {
+        let c = state.db.lock().unwrap();
+        if offline_mode(&c) {
+            return Ok(None); // offline mode blocks all network offload
+        }
+        crate::homelab::resolved_setting(&c, "ingest_url")
+    };
+    let Some(base) = base else {
+        return Ok(None);
+    };
+    let url = format!("{}/tika", base.trim_end_matches('/'));
+    let bytes = std::fs::read(path)?;
+    // Parsing + OCR of a big scan is slow — give it room (Tika streams nothing back
+    // until done). `Accept: text/plain` makes Tika return the extracted text directly.
+    let resp = http_client(180)
+        .put(&url)
+        .header("Accept", "text/plain; charset=UTF-8")
+        .body(bytes)
+        .send()
+        .map_err(|e| Error::Other(format!("ingest request failed: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(Error::Other(format!("ingest service HTTP {}", resp.status())));
+    }
+    Ok(Some(resp.text().map_err(|e| Error::Other(e.to_string()))?))
+}
+
 /// Re-run ingestion for an EXISTING source in place: re-parse (re-OCR / re-
 /// transcribe), re-chunk, re-embed, replacing its old chunks. Used to retry a
 /// failed source or refresh one. Reuses the stored original file (or origin
@@ -650,6 +685,57 @@ pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult>
     .map_err(|e| Error::Other(format!("re-ingest task failed: {e}")))?
 }
 
+/// Copy a just-picked file into app storage and return the stable path.
+///
+/// On mobile (esp. iOS) the file picker hands back a path in a temporary inbox
+/// (`…/tmp/<bundle>-Inbox/…`) that the OS deletes shortly after — so by the time
+/// the background ingest job reads it, it's gone ("file not found"). The frontend
+/// calls this synchronously at pick time, while the temp file still exists, then
+/// ingests from the returned persistent path.
+#[tauri::command]
+pub async fn stage_upload(app: AppHandle, path: String) -> Result<String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String> {
+        // iOS hands back a percent-encoded file:// URL (e.g.
+        // `file:///…/Inbox/NEW%20Student%20Guide.pdf`), not a plain path — taking it
+        // literally makes `.exists()` false ("file not found"). Decode it to a real
+        // filesystem path (scheme stripped, %20→space) before touching the file.
+        let real = if path.starts_with("file://") {
+            reqwest::Url::parse(&path)
+                .ok()
+                .and_then(|u| u.to_file_path().ok())
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.clone())
+        } else {
+            path.clone()
+        };
+        let src = std::path::Path::new(&real);
+        if !src.exists() {
+            return Err(Error::NotFound(format!("file not found: {real}")));
+        }
+        let dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| Error::Other(e.to_string()))?
+            .join("staged");
+        std::fs::create_dir_all(&dir)?;
+        let name = src
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("upload.bin");
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dest = dir.join(format!("{stamp}-{name}"));
+        std::fs::copy(src, &dest).map_err(Error::Io)?;
+        dest.to_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| Error::Other("staged path is not valid UTF-8".into()))
+    })
+    .await
+    .map_err(|e| Error::Other(format!("stage task failed: {e}")))?
+}
+
 /// Full pipeline: detect → parse → chunk → embed → store, emitting progress.
 #[tauri::command]
 pub async fn add_source(
@@ -730,7 +816,29 @@ pub async fn add_source(
         }
     };
 
-    // 2a. Enrich kinds `parse` can't read on its own:
+    // 2a. Documents the on-device parser couldn't read (scanned PDFs, legacy .doc/.ppt,
+    // or — on mobile — anything needing poppler/libreoffice) → offload to the homelab
+    // ingest/parse service (Apache Tika) when one is configured. No-op (Ok(None)) on
+    // desktop / when no homelab ingest URL is set, so existing setups are unaffected.
+    let (text, warning) = {
+        let is_doc = matches!(kind.as_str(), "pdf" | "docx" | "pptx");
+        if is_doc && text.trim().is_empty() {
+            if let Some(p) = input.path.as_deref() {
+                emit_progress(&app, &source_id, "parsing", "parsing on homelab (ingest service)", 35);
+                match ingest_remote(&state, p) {
+                    Ok(Some(t)) if !t.trim().is_empty() => (t, None),
+                    Ok(_) => (text, warning), // no homelab ingest, or it found nothing
+                    Err(e) => (text, Some(format!("homelab ingest failed: {e}"))),
+                }
+            } else {
+                (text, warning)
+            }
+        } else {
+            (text, warning)
+        }
+    };
+
+    // 2b. Enrich kinds `parse` + homelab still can't read:
     //   • images and scanned (text-less) PDFs → OCR via the configured vision model
     //   • audio files → local Whisper transcription
     let (text, warning) = {
@@ -3782,8 +3890,13 @@ pub async fn ping_url(url: String) -> Result<bool> {
     tauri::async_runtime::spawn_blocking(move || -> Result<bool> {
         let client = http_client(5);
         match client.get(&url).send() {
-            Ok(resp) => Ok(resp.status().is_success()),
-            Err(_) => Ok(false),
+            // ANY HTTP response means the server is reachable — a reverse-proxy root
+            // commonly answers 404/401/403, which is still "connected". (Matches
+            // homelab::reachable(); the old is_success() check reported those as failures.)
+            Ok(_) => Ok(true),
+            // Only a transport failure (DNS/timeout/TLS/connection refused) is unreachable —
+            // surface its message so the "Test connection" button explains WHY it failed.
+            Err(e) => Err(Error::Other(format!("{e}"))),
         }
     })
     .await

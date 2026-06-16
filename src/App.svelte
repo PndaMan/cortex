@@ -24,6 +24,8 @@
   import PomodoroPanel from "./components/PomodoroPanel.svelte";
   import LiveActivity from "./components/LiveActivity.svelte";
   import { keybinds } from "./lib/keybinds.svelte";
+  import { isMobile } from "./lib/platform";
+  import MobileShell from "./shell/MobileShell.svelte";
 
   import Dashboard from "./views/Dashboard.svelte";
   import SubjectView from "./views/SubjectView.svelte";
@@ -197,6 +199,7 @@
   // to claim the keyboard; we stay out of their way then.
   let gPrefix = false;
   $effect(() => {
+    if (isMobile) return; // phones have no hardware-keyboard engine — disable it
     function onKey(e: KeyboardEvent) {
       const el = document.activeElement as HTMLElement | null;
       const typing =
@@ -301,6 +304,10 @@
   <div class="boot">Cortex — loading…</div>
 {:else if app.onboarding}
   <Onboarding onFinish={() => (app.onboarding = false)} />
+{:else if isMobile}
+  <!-- Phone/tablet: touch shell (bottom tabs + sheets). Renders only when isMobile,
+       so the desktop shell below is completely unaffected. See docs/MOBILE_PORT.md. -->
+  <MobileShell />
 {:else}
   <div
     class="app-shell"

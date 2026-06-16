@@ -6,6 +6,7 @@
   import Icon from "./Icon.svelte";
   import { tick } from "svelte";
   import { menuPosition, menuStyle, type MenuPos } from "../lib/dropdown";
+  import { isMobile } from "../lib/platform";
 
   let {
     value,
@@ -53,9 +54,11 @@
     open = !open;
   }
 
-  // A fixed menu doesn't follow the page — close it if the user scrolls.
+  // A fixed menu doesn't follow the page — close it if the user scrolls. On mobile the
+  // backdrop tap dismisses it instead: focusing the search input scrolls the body as the
+  // keyboard animates in, which would otherwise slam the menu shut the instant it opens.
   $effect(() => {
-    if (!open) return;
+    if (!open || isMobile) return;
     const close = () => (open = false);
     window.addEventListener("scroll", close, true);
     return () => window.removeEventListener("scroll", close, true);
@@ -83,9 +86,12 @@
     </span>
     <Icon name="chevron" size={11} style="transform:rotate(90deg);color:var(--fg-faint)" />
   </button>
-  {#if open && menuPos}
-    <div class="picker-back" role="presentation" onclick={() => (open = false)}></div>
-    <div class="picker-menu ms-menu" style={menuStyle(menuPos)}>
+  {#if open && (isMobile || menuPos)}
+    <div class={"picker-back" + (isMobile ? " ms-back" : "")} role="presentation" onclick={() => (open = false)}></div>
+    <div
+      class={"picker-menu ms-menu" + (isMobile ? " ms-sheet" : "")}
+      style={!isMobile && menuPos ? menuStyle(menuPos) : ""}
+    >
       <div class="ms-search">
         <Icon name="search" size={12} color="var(--fg-faint)" />
         <!-- svelte-ignore a11y_autofocus -->
@@ -163,4 +169,19 @@
   .ms-sub { font-size: var(--t-2xs); color: var(--fg-faint); }
   .ms-empty,
   .ms-more { padding: 12px 10px; text-align: center; color: var(--fg-faint); font-size: var(--t-2xs); }
+
+  /* Mobile: a top-anchored sheet, not a button-anchored dropdown — the keyboard
+     slides up from the bottom and would cover a dropdown, but never the search box
+     pinned at the top here. Sits above the mobile header (its z-index < .picker-menu). */
+  .ms-back { background: rgba(0, 0, 0, 0.45); }
+  .ms-sheet {
+    position: fixed;
+    /* Clear the fixed mobile header (52px) + the notch, or the search box at the
+       sheet's top renders under the header and looks like it's missing. */
+    top: calc(env(safe-area-inset-top, 0px) + 58px);
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: 68vh;
+  }
 </style>
