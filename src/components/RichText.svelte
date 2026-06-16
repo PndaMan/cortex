@@ -4,6 +4,7 @@
   // chips that are clickable (open the cited source). Rendered as real elements
   // (no innerHTML) so it's safe and the citations stay interactive.
   import { app } from "../lib/store.svelte";
+  import { safeImgSrc } from "../lib/url";
   import katex from "katex";
   import "katex/dist/katex.min.css";
 
@@ -239,7 +240,7 @@
     {:else if b.type === "h3"}
       <h3 class="rt-h3">{@render inline(b.text)}</h3>
     {:else if b.type === "image"}
-      <img class="rt-img" src={b.src} alt={b.alt} loading="lazy" />
+      <img class="rt-img" src={safeImgSrc(b.src)} alt={b.alt} loading="lazy" />
     {:else if b.type === "code"}
       <pre class="rt-pre"><code>{b.text}</code></pre>
     {:else if b.type === "math"}

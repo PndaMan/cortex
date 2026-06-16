@@ -10,6 +10,7 @@
   import MarkdownEditor from "../components/MarkdownEditor.svelte";
   import { savePdf } from "../lib/pdf";
   import { isMobile } from "../lib/platform";
+  import { safeUrl, safeImgSrc } from "../lib/url";
 
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -800,7 +801,7 @@
                 </div>
 
                 {#if sec.image}
-                  <span class="cs-sec-img"><img src={sec.image} alt={sec.title} /></span>
+                  <span class="cs-sec-img"><img src={safeImgSrc(sec.image)} alt={sec.title} /></span>
                 {/if}
 
                 {#each sec.items as item, ii (ii)}
@@ -855,8 +856,8 @@
                 </header>
 
                 {#if sec.image}
-                  <a class="cs-sec-img" href={sec.image} target="_blank" rel="noreferrer" title="Open image">
-                    <img src={sec.image} alt={sec.title} loading="lazy" />
+                  <a class="cs-sec-img" href={safeUrl(sec.image)} target="_blank" rel="noreferrer" title="Open image">
+                    <img src={safeImgSrc(sec.image)} alt={sec.title} loading="lazy" />
                   </a>
                 {/if}
 

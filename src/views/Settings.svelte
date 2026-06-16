@@ -451,8 +451,8 @@
     api.setSetting("exp_moodle", expMoodle ? "true" : "false").catch(() => {});
   }
 
-  // ---- Moodle (SUNLearn) integration ----
-  let mdUrl   = $state("https://learn.sun.ac.za");
+  // ---- Moodle integration ----
+  let mdUrl   = $state("");
   let mdUser  = $state("");
   let mdPass  = $state("");
   let mdToken = $state("");
@@ -2051,7 +2051,7 @@ Notes: {about}</pre>
 
               <div class="set-row stacked">
                 <div class="set-row-t">Moodle site URL</div>
-                <input class="input mono" bind:value={mdUrl} placeholder="https://learn.sun.ac.za" />
+                <input class="input mono" bind:value={mdUrl} placeholder="https://moodle.your-school.edu" />
               </div>
 
               <div class="set-row">

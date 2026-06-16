@@ -2,7 +2,7 @@
 // outlives every view, so playback never stops/restarts on navigation.
 //
 // Every station — the built-ins below and any user-added one — is a YouTube
-// video or livestream, streamed ad-free by the Rust mpv sidecar (see
+// video or livestream, played by the Rust mpv sidecar (see
 // src-tauri/src/mpv.rs, which also auto-downloads mpv + yt-dlp). The controller
 // just drives play/pause/volume over Tauri commands; there is no local
 // HTML5/<audio> or Web Audio playback anymore.

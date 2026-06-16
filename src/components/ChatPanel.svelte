@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import { isMobile } from "../lib/platform";
+  import { safeUrl, safeImgSrc } from "../lib/url";
   import Icon from "./Icon.svelte";
   import RichText from "./RichText.svelte";
   import Picker from "./Picker.svelte";
@@ -587,8 +588,8 @@
             {#if m.images && m.images.length}
               <div class="chat-images">
                 {#each m.images as img (img.img)}
-                  <a class="chat-img" href={img.source || img.img} target="_blank" rel="noreferrer" title={img.title}>
-                    <img src={img.thumb} alt={img.title} loading="lazy" />
+                  <a class="chat-img" href={safeUrl(img.source || img.img)} target="_blank" rel="noreferrer" title={img.title}>
+                    <img src={safeImgSrc(img.thumb)} alt={img.title} loading="lazy" />
                   </a>
                 {/each}
               </div>

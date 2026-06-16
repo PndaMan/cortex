@@ -1,0 +1,15 @@
+Cortex
+Copyright 2026 Aidan McConnon
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this product except in compliance with the License. A copy is in the LICENSE file.
+
+------------------------------------------------------------------------------
+Bundled fonts — SIL Open Font License, Version 1.1
+(full license text: src/assets/fonts/OFL.txt)
+
+  - IBM Plex Sans   — Copyright © 2017 IBM Corp. (https://github.com/IBM/plex)
+  - JetBrains Mono  — Copyright 2020 The JetBrains Mono Project Authors
+                      (https://github.com/JetBrains/JetBrainsMono)
+  - Newsreader      — Copyright 2019 The Newsreader Project Authors
+                      (https://github.com/productiontype/Newsreader)

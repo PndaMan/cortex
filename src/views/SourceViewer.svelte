@@ -64,7 +64,9 @@
         const pdfjs = await import("pdfjs-dist");
         const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
         pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
-        const doc = await pdfjs.getDocument({ url }).promise;
+        // isEvalSupported/enableScripting harden the renderer (no eval, no in-PDF JS);
+        // real runtime options in pdfjs v6 but absent from its public types — hence the cast.
+        const doc = await pdfjs.getDocument({ url, isEvalSupported: false, enableScripting: false } as any).promise;
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         for (let n = 1; n <= doc.numPages; n++) {
           if (cancelled) return;

@@ -23,7 +23,30 @@
   );
   const takeaway = $derived(typeof data?.takeaway === "string" ? data!.takeaway!.trim() : "");
   const hasPoster = $derived(sections.length > 0 || timeline.length > 0 || !!takeaway);
-  const legacySvg = $derived(typeof data?.svg === "string" ? data!.svg! : "");
+  // AI-generated SVG is untrusted — strip scripts, foreignObject (HTML embed),
+  // event-handler attributes, and javascript:/html-data: URLs before {@html}.
+  // (The app CSP's script-src 'self' is the second line of defence.)
+  function sanitizeSvg(svg: string): string {
+    if (!svg.trim()) return "";
+    try {
+      const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+      if (doc.querySelector("parsererror")) return "";
+      doc.querySelectorAll("script, foreignObject, iframe, object, embed").forEach((n) => n.remove());
+      doc.querySelectorAll("*").forEach((el) => {
+        for (const attr of [...el.attributes]) {
+          const name = attr.name.toLowerCase();
+          const val = attr.value.replace(/\s+/g, "").toLowerCase();
+          if (name.startsWith("on")) el.removeAttribute(attr.name);
+          else if (/^(href|xlink:href|src)$/.test(name) && (val.startsWith("javascript:") || val.startsWith("data:text/html"))) el.removeAttribute(attr.name);
+        }
+      });
+      const root = doc.documentElement;
+      return root?.tagName?.toLowerCase() === "svg" ? root.outerHTML : "";
+    } catch {
+      return "";
+    }
+  }
+  const legacySvg = $derived(sanitizeSvg(typeof data?.svg === "string" ? data!.svg! : ""));
 </script>
 
 <div class="workspace-scroll">
