@@ -1010,7 +1010,8 @@ class AppStore {
     this.#syncTimer = setTimeout(() => void this.syncNow(), 5000);
   }
 
-  /** Push immediately (used by the debounce and the Settings "Sync now" button). */
+  /** Debounced background push — the "auto store" half of live sync. No-op when
+   *  live sync is off (that's intentional: background pushes only run when enabled). */
   async syncNow() {
     if (this.syncState === "off") return;
     if (this.#syncTimer) { clearTimeout(this.#syncTimer); this.#syncTimer = null; }
@@ -1018,6 +1019,24 @@ class AppStore {
     try {
       this.syncLastAt = await api.syncPush();
       this.syncState = "synced";
+    } catch (e) {
+      this.syncState = "error";
+      this.pushToast({ kind: "error", title: "Sync failed", body: String(e) });
+    }
+  }
+
+  /** Manual "Sync now" from Settings — runs regardless of the background auto-sync
+   *  toggle (an explicit action should always try) and ALWAYS reports the outcome,
+   *  so the button never just silently does nothing. */
+  async syncManual() {
+    if (this.#syncTimer) { clearTimeout(this.#syncTimer); this.#syncTimer = null; }
+    this.syncState = "syncing";
+    try {
+      const merged = await api.syncPull().catch(() => false); // best-effort merge first
+      if (merged) await this.refresh();
+      this.syncLastAt = await api.syncPush();
+      this.syncState = "synced";
+      this.pushToast({ kind: "success", title: "Synced", body: "Your vault was pushed to the homelab." });
     } catch (e) {
       this.syncState = "error";
       this.pushToast({ kind: "error", title: "Sync failed", body: String(e) });
