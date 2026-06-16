@@ -5,6 +5,8 @@
   import type { Memory } from "../lib/api";
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
+  import ModelSearch from "../components/ModelSearch.svelte";
+  import { loadOpenRouterModels, type OrModel } from "../lib/openrouter";
   import { stations } from "../lib/mock";
   import { keybinds, ACTION_LABELS, ACTION_ORDER, LEADER_ACTIONS } from "../lib/keybinds.svelte";
   import type { Action } from "../lib/keybinds.svelte";
@@ -943,6 +945,24 @@
       .catch(() => app.pushToast({ kind: "error", title: "Save failed" }));
   }
 
+  // Live OpenRouter catalog for the searchable model picker — fetched once, on the
+  // first time an OpenRouter model dropdown is opened.
+  let orModels = $state<OrModel[]>([]);
+  let orLoading = $state(false);
+  let orLoaded = false;
+  async function ensureOrModels() {
+    if (orLoaded || orLoading) return;
+    orLoading = true;
+    try {
+      orModels = await loadOpenRouterModels();
+      orLoaded = true;
+    } catch {
+      app.pushToast({ kind: "error", title: "OpenRouter models", body: "Couldn’t load the model list — check your connection." });
+    } finally {
+      orLoading = false;
+    }
+  }
+
   function onModelProviderChange(taskId: TaskId, p: string) {
     const provList = taskId === "embedding" ? EMBED_PROVIDERS : PROVIDERS;
     const np = provList.find((x) => x.id === p) ?? provList[0];
@@ -1162,6 +1182,7 @@ Notes: {about}</pre>
             {@const a = assign[t.id]}
             {@const provList = t.id === "embedding" ? EMBED_PROVIDERS : PROVIDERS}
             {@const prov = provList.find((p) => p.id === a.provider) ?? provList[0]}
+            {@const isOr = a.provider === "openrouter"}
             <div class="mt-row">
               <div class="mt-task">
                 <div class="mt-task-t">{t.label}</div>
@@ -1172,10 +1193,15 @@ Notes: {about}</pre>
                 onChange={(p) => onModelProviderChange(t.id, p)}
                 options={provList.map((p) => ({ id: p.id, label: p.label }))}
               />
-              <Picker
+              <!-- OpenRouter → live searchable catalog (curated list as offline/pre-fetch
+                   fallback); every other provider → its own curated list, still searchable. -->
+              <ModelSearch
                 value={a.model}
                 onChange={(m) => onModelChange(t.id, m)}
-                options={prov.models.map((m) => ({ id: m.id, label: m.label }))}
+                options={isOr && orModels.length ? orModels : prov.models.map((m) => ({ id: m.id, label: m.label }))}
+                loading={isOr && orLoading}
+                onOpen={isOr ? ensureOrModels : undefined}
+                placeholder={isOr ? "Search OpenRouter…" : undefined}
               />
               {#if t.id === "embedding"}
                 <span class="mono faint mt-budget-na">n/a</span>
