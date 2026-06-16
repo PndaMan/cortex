@@ -158,8 +158,11 @@ jobs:
       # Build the device app with signing disabled (the Xcode Rust build phase still
       # compiles the aarch64-apple-ios staticlib), then zip it into an unsigned IPA.
       - name: Build unsigned device .app → .ipa
+        env:
+          BUILD_NUM: ${{ github.run_number }}
         run: |
           set -uo pipefail
+          VER="1.0.${BUILD_NUM}"
           # The device build demanded a development team because the generated project uses
           # AUTOMATIC signing, and an XCODE_XCCONFIG_FILE is too low-priority to override a
           # target's signing settings. Write them straight into the pbxproj — crucially
@@ -167,6 +170,13 @@ jobs:
           # needs no Apple team.
           for pbx in src-tauri/gen/apple/*.xcodeproj/project.pbxproj; do
             perl -0pi -e 's/(buildSettings = \{)/$1\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;\n\t\t\t\tCODE_SIGNING_REQUIRED = NO;\n\t\t\t\tCODE_SIGN_IDENTITY = "";\n\t\t\t\tCODE_SIGN_STYLE = Manual;\n\t\t\t\tDEVELOPMENT_TEAM = "";\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "";/g' "$pbx"
+            # Xcode injects CFBundleShortVersionString / CFBundleVersion from these build
+            # settings AT BUILD TIME (verified: patching the Info.plist literal didn't stick),
+            # so override them here — iOS bundle only, desktop tauri.conf.json untouched — to
+            # give every sideload build a unique, monotonic version LiveContainer will update to.
+            perl -0pi -e "s/MARKETING_VERSION = [^;]+;/MARKETING_VERSION = $VER;/g" "$pbx"
+            perl -0pi -e "s/CURRENT_PROJECT_VERSION = [^;]+;/CURRENT_PROJECT_VERSION = $BUILD_NUM;/g" "$pbx"
+            echo "pbxproj version → $VER ($pbx)"
           done
           # Tauri drives the build so its Rust xcode-script runs correctly (a raw xcodebuild
           # panics on the missing server-addr handshake file). The unsigned build succeeds;
