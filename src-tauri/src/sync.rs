@@ -257,6 +257,15 @@ pub async fn sync_pull(app: AppHandle) -> Result<bool> {
 /// an allowlist with a hard credential guard — API keys, tokens and URLs never
 /// sync, even if a future key sneaks into an allowlisted group.
 fn is_syncable_setting(key: &str) -> bool {
+    // Opt-in exception (user-requested): the Moodle connection IS synced so a linked
+    // phone is authed and shares course matching without re-logging in. Subject↔course
+    // links + the courses themselves already sync (they're DB rows); this adds the
+    // token/site so the phone can fetch fresh data. It rides the user's own homelab
+    // WebDAV, so the token never leaves their control.
+    const MOODLE_SYNC: &[&str] = &["moodle_url", "moodle_token", "moodle_userid"];
+    if MOODLE_SYNC.contains(&key) {
+        return true;
+    }
     // Hard exclusions first (credentials, device endpoints, device-local state).
     const BLOCK_SUBSTR: &[&str] = &["_key", "token", "secret", "password", "_url"];
     if BLOCK_SUBSTR.iter().any(|b| key.contains(b)) {

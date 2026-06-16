@@ -1642,6 +1642,9 @@ Notes: {about}</pre>
               </div>
             </div>
 
+            <!-- The 3-tier sync URL config is desktop power-user territory; on mobile
+                 sync rides the single Homelab URL above (→ its /sync WebDAV). -->
+            {#if !isMobile}
             <div class="set-row">
               <div class="set-row-l">
                 <div class="set-row-t">Endpoint</div>
@@ -1681,6 +1684,10 @@ Notes: {about}</pre>
                 <div class="set-row-d" style="color:var(--ok)">At least one endpoint reachable.</div>
               {/if}
             </div>
+            {/if}
+            {#if isMobile}
+              <div class="set-row stacked"><div class="set-row-d">Syncs via the <strong>Homelab URL</strong> above (its <span class="mono">/sync</span> WebDAV). Enter the username/password your homelab expects, then tap <strong>Sync now</strong>.</div></div>
+            {/if}
             <div class="set-row stacked">
               <div class="set-row-t">Username <span class="faint">optional</span></div>
               <input class="input mono" bind:value={syncUser} onchange={saveSync} onblur={saveSync} placeholder="cortex" />

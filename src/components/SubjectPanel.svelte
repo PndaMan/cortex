@@ -9,6 +9,7 @@
   import Picker from "./Picker.svelte";
   import TopicRow from "./TopicRow.svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
+  import { isMobile } from "../lib/platform";
 
   const subj = $derived(app.activeSubject);
 
@@ -42,6 +43,12 @@
       ? `${moodleUrl.replace(/\/+$/, "")}/course/view.php?id=${linkedCourseId}`
       : null
   );
+  // On a phone, deep-link into the Moodle mobile app (custom scheme) instead of a
+  // browser tab; desktop opens the web URL.
+  function openCourse() {
+    if (!courseUrl) return;
+    api.openExternal(isMobile ? `moodlemobile://link=${encodeURIComponent(courseUrl)}` : courseUrl);
+  }
   const courseGrades = $derived(
     linkedCourseId ? mdData.grades.filter((g) => g.course_id === linkedCourseId) : []
   );
@@ -323,7 +330,7 @@
               <Icon name="check" size={12} /> {linkedCourse.fullname || linkedCourse.shortname}
               <div class="grow"></div>
               {#if courseUrl}
-                <button class="btn btn--sm" onclick={() => api.openExternal(courseUrl)} title="Open this course in Moodle">
+                <button class="btn btn--sm" onclick={openCourse} title="Open this course in Moodle">
                   <Icon name="external" size={12} /> Open in Moodle
                 </button>
               {/if}

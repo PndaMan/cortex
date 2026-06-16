@@ -252,3 +252,20 @@ html[data-mobile] .sp-back {
 html[data-mobile] .sp-grid {
   grid-template-columns: 1fr;
 }
+/* Long Moodle grade/deadline/announcement lines overflowed the phone width and
+   clipped off-screen — constrain the flex chain so they truncate (min-width:0 lets
+   the ellipsis kick in) and nothing escapes the sheet. */
+html[data-mobile] .sp-body,
+html[data-mobile] .sp-card,
+html[data-mobile] .sp-sub-card {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+html[data-mobile] .sp-list li,
+html[data-mobile] .sp-li-name,
+html[data-mobile] .sp-ann-subj,
+html[data-mobile] .sp-row-link,
+html[data-mobile] .sp-ann-btn { min-width: 0; }
+html[data-mobile] .sp-course { flex-wrap: wrap; }
