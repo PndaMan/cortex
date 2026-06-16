@@ -9,6 +9,7 @@
   import RichText from "../components/RichText.svelte";
   import MarkdownEditor from "../components/MarkdownEditor.svelte";
   import { savePdf } from "../lib/pdf";
+  import { isMobile } from "../lib/platform";
 
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -747,9 +748,11 @@
               <button class="btn btn--sm" onclick={openHistory} title="Browse versions and diff changes">
                 <Icon name="refresh" size={13} /> History
               </button>
-              <button class="btn btn--sm" onclick={enterInsert} title="Edit inline — just type, it autosaves; Esc to finish (i)">
-                <Icon name="pencil" size={13} /> Inline edit <span class="kbd">i</span>
-              </button>
+              {#if !isMobile}
+                <button class="btn btn--sm" onclick={enterInsert} title="Edit inline — just type, it autosaves; Esc to finish (i)">
+                  <Icon name="pencil" size={13} /> Inline edit <span class="kbd">i</span>
+                </button>
+              {/if}
               <button class="btn btn--sm" onclick={enterEdit} title="Structured editor — add/remove sections + images">
                 <Icon name="grid" size={13} /> Restructure
               </button>
@@ -946,6 +949,15 @@
     {/if}
   </div>
 
+  <!-- Mobile: a floating accent Edit/Done pill (like Ask) replaces the toolbar's
+       "Inline edit" button, which is hidden on mobile. -->
+  {#if isMobile && hasCheatsheet && mode === "preview"}
+    {#if insertMode}
+      <button class="cs-fab-edit" onclick={exitInsert} aria-label="Done editing" title="Finish editing (Esc)"><Icon name="check" size={16} /> Done</button>
+    {:else}
+      <button class="cs-fab-edit" onclick={enterInsert} aria-label="Edit cheatsheet" title="Edit inline"><Icon name="pencil" size={16} /> Edit</button>
+    {/if}
+  {/if}
 </div>
 
 <!-- ── VERSION HISTORY / DIFF (git-like) ───────────────────────── -->
@@ -1378,4 +1390,25 @@
       color: #000 !important;
     }
   }
+
+  /* Floating Edit/Done pill (mobile) — mirrors the shell's accent Ask pill. */
+  .cs-fab-edit {
+    position: fixed;
+    right: 14px;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px;
+    border: 1px solid var(--accent);
+    border-radius: var(--rad-pill, 999px);
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-weight: 600;
+    font-size: var(--t-sm);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    z-index: 30;
+  }
+  .cs-fab-edit:active { transform: scale(0.96); }
 </style>

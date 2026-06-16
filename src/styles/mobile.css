@@ -238,6 +238,54 @@ html[data-mobile] .set-bio { min-height: 150px; }
 /* Exam mode: the topic chips overflowed off-screen with many topics → wrap them. */
 html[data-mobile] .tag-suggest { flex-wrap: wrap; }
 
+/* ── Mobile feedback round 7 (autonomous sweep) ───────────────────────────── */
+
+/* Source viewer: was a desktop two-pane split squashed to ~58% + a height-less PDF
+   iframe (rendered as a sliver, horizontally scrollable). One full-width pane, hide
+   the side chat/splitter, give the PDF/image real size, no horizontal scroll. */
+html[data-mobile] .source-viewer { flex-direction: column; }
+html[data-mobile] .sv-pane { width: 100% !important; }
+html[data-mobile] .sv-pane.sv-source { flex: 1; min-height: 0; }
+html[data-mobile] .sv-pane.sv-chat,
+html[data-mobile] .sv-splitter { display: none; }
+html[data-mobile] .sv-doc { padding: 10px; min-height: 0; overflow-x: hidden; }
+html[data-mobile] .sv-doc--flush { padding: 0; }
+html[data-mobile] .sv-frame { width: 100%; height: 80vh; min-height: 420px; }
+html[data-mobile] .sv-img { max-width: 100%; max-height: 76vh; }
+html[data-mobile] .pdf-page { scroll-margin-top: 64px; max-width: 100%; }
+
+/* Generate material: kill the last horizontal-overflow sources — stack the count
+   stepper + quick-pick pills, wrap the format rows + the action footer buttons. */
+html[data-mobile] .gm2-count { flex-direction: column; align-items: stretch; gap: 8px; }
+html[data-mobile] .gm2-count-presets { width: 100%; justify-content: flex-start; margin-left: 0; }
+html[data-mobile] .gm2-format { flex-wrap: wrap; }
+html[data-mobile] .add-foot { flex-wrap: wrap; gap: 8px; }
+html[data-mobile] .add-foot .btn { flex: 1 1 auto; min-width: 0; white-space: normal; }
+
+/* Generated study materials (flashcards / quiz / slideshow): cards were fixed-width
+   (520–560px) → clipped at 390px; rate/next buttons sat under the Ask pill. */
+html[data-mobile] .flashcard { max-width: calc(100vw - 28px); height: auto; min-height: 200px; }
+html[data-mobile] .quiz-card { max-width: calc(100vw - 28px); }
+html[data-mobile] .fc-bar-row { flex-wrap: wrap; gap: 6px; max-width: calc(100vw - 28px); }
+html[data-mobile] .fc-rate { flex-wrap: wrap; }
+html[data-mobile] .fc-rate .btn { min-width: 0; flex: 1 1 calc(50% - 4px); }
+html[data-mobile] .fc-wrap { padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+html[data-mobile] .ss-nav { padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+
+/* Kanban / Planner board: 3 equal columns are unreadable at 390px → swipeable
+   horizontally-scrolling columns (~80vw each) with snap. */
+html[data-mobile] .cit-board-wrap { height: auto; min-height: 0; max-height: 72vh; }
+html[data-mobile] .board {
+  display: flex;
+  grid-template-columns: none;
+  gap: 12px;
+  padding: 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x mandatory;
+}
+html[data-mobile] .bcol { flex: 0 0 80vw; scroll-snap-align: start; }
+
 /* Recorder: the live-transcript panel is removed on mobile → single full-width stage. */
 html[data-mobile] .recorder { display: flex; flex-direction: column; }
 html[data-mobile] .rec-stage { width: 100%; }
