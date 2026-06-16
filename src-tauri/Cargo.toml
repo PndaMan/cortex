@@ -35,6 +35,10 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # export path hand-rolls a STORED zip writer; reading needs real unzip, hence
 # this crate (default features off keeps bzip2/zstd/AES out of the build).
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Pure-Rust PDF text extraction — the on-device fallback when poppler's `pdftotext`
+# CLI isn't present (iOS/Android, or a desktop without poppler). Handles text-layer
+# PDFs entirely in-process; scanned PDFs still need OCR (homelab ingest service).
+pdf-extract = "0.10"
 
 # Desktop-only deps. The system tray, single-instance guard and auto-updater don't
 # exist on iOS/Android, so they're gated to desktop targets and the mobile build

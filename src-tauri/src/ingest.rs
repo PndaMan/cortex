@@ -230,58 +230,53 @@ fn pdf_to_text(path: &str) -> Result<(String, Option<String>)> {
     if !src.exists() {
         return Err(Error::NotFound(format!("file not found: {path}")));
     }
+    const NO_TEXT: &str = "warning: no extractable text (scanned PDF?); preview still available";
 
-    if which("pdftotext").is_none() {
-        return Ok((
-            String::new(),
-            Some("warning: no extractable text (scanned PDF?); preview still available".into()),
-        ));
+    // Desktop: poppler's `pdftotext -layout` is fastest + highest fidelity. On a hard
+    // failure with a real message, surface it; an empty/soft result falls through to
+    // the pure-Rust pass below (some PDFs pdftotext can't read but pdf-extract can).
+    if which("pdftotext").is_some() {
+        match Command::new("pdftotext")
+            .args(["-layout", "-enc", "UTF-8"])
+            .arg(src)
+            .arg("-")
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                let text = String::from_utf8_lossy(&o.stdout).into_owned();
+                if !text.trim().is_empty() {
+                    return Ok((text, None));
+                }
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                if !stderr.is_empty() {
+                    return Err(Error::Other(format!("pdftotext failed for {path}: {stderr}")));
+                }
+            }
+            Err(_) => {} // binary vanished between which() and exec → try pure-Rust
+        }
     }
 
-    let output = Command::new("pdftotext")
-        .args(["-layout", "-enc", "UTF-8"])
-        .arg(src)
-        .arg("-")
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => {
-            let text = String::from_utf8_lossy(&o.stdout).into_owned();
-            if text.trim().is_empty() {
-                Ok((
-                    String::new(),
-                    Some(
-                        "warning: no extractable text (scanned PDF?); preview still available"
-                            .into(),
-                    ),
-                ))
-            } else {
-                Ok((text, None))
-            }
-        }
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
-            if stderr.is_empty() {
-                // non-zero exit but nothing to report → degrade gracefully
-                Ok((
-                    String::new(),
-                    Some(
-                        "warning: no extractable text (scanned PDF?); preview still available"
-                            .into(),
-                    ),
-                ))
-            } else {
-                Err(Error::Other(format!(
-                    "pdftotext failed for {path}: {stderr}"
-                )))
-            }
-        }
-        // binary vanished between the which() check and exec → degrade gracefully
-        Err(_) => Ok((
-            String::new(),
-            Some("warning: no extractable text (scanned PDF?); preview still available".into()),
-        )),
+    // No poppler (iOS/Android, or a desktop without it) — extract the text layer in
+    // pure Rust, on-device. Text-layer PDFs (lecture slides, papers, exported notes)
+    // come through fully; a scanned/image-only PDF yields nothing here and degrades to
+    // the "scanned?" warning (OCR is the homelab ingest service's job).
+    match pdf_extract_text_layer(src) {
+        Some(t) if !t.trim().is_empty() => Ok((t, None)),
+        _ => Ok((String::new(), Some(NO_TEXT.into()))),
     }
+}
+
+/// Extract a PDF's embedded text layer with the pure-Rust `pdf-extract` crate.
+/// Returns None on failure. `pdf-extract` can panic on some malformed PDFs, so it
+/// runs inside `catch_unwind` (the build keeps `panic = unwind`) — a bad PDF must
+/// degrade to a warning, never crash the ingest worker.
+fn pdf_extract_text_layer(path: &Path) -> Option<String> {
+    let owned = path.to_path_buf();
+    std::panic::catch_unwind(move || pdf_extract::extract_text(&owned).ok())
+        .ok()
+        .flatten()
 }
 
 /// Convert docx/pptx to text via `libreoffice --headless --convert-to txt`.
