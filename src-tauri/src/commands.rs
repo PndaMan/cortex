@@ -650,6 +650,44 @@ pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult>
     .map_err(|e| Error::Other(format!("re-ingest task failed: {e}")))?
 }
 
+/// Copy a just-picked file into app storage and return the stable path.
+///
+/// On mobile (esp. iOS) the file picker hands back a path in a temporary inbox
+/// (`…/tmp/<bundle>-Inbox/…`) that the OS deletes shortly after — so by the time
+/// the background ingest job reads it, it's gone ("file not found"). The frontend
+/// calls this synchronously at pick time, while the temp file still exists, then
+/// ingests from the returned persistent path.
+#[tauri::command]
+pub async fn stage_upload(app: AppHandle, path: String) -> Result<String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String> {
+        let src = std::path::Path::new(&path);
+        if !src.exists() {
+            return Err(Error::NotFound(format!("file not found: {path}")));
+        }
+        let dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| Error::Other(e.to_string()))?
+            .join("staged");
+        std::fs::create_dir_all(&dir)?;
+        let name = src
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("upload.bin");
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dest = dir.join(format!("{stamp}-{name}"));
+        std::fs::copy(src, &dest).map_err(Error::Io)?;
+        dest.to_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| Error::Other("staged path is not valid UTF-8".into()))
+    })
+    .await
+    .map_err(|e| Error::Other(format!("stage task failed: {e}")))?
+}
+
 /// Full pipeline: detect → parse → chunk → embed → store, emitting progress.
 #[tauri::command]
 pub async fn add_source(

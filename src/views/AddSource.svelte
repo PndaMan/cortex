@@ -104,7 +104,10 @@
       // LibreOffice conversion gets its own profile), then navigate once.
       for (const path of paths) {
         const name = path.split(/[\\/]/).pop() ?? path;
-        queueIngest({ subject_id: selectedSubjectId, topic_id: topicId, path, name, tags: [] }, name);
+        // On mobile the picker returns a temp path the OS deletes before the
+        // background ingest runs — copy it into app storage first.
+        const ingestPath = isMobile ? await api.stageUpload(path).catch(() => path) : path;
+        queueIngest({ subject_id: selectedSubjectId, topic_id: topicId, path: ingestPath, name, tags: [] }, name);
       }
       if (paths.length > 1) {
         app.pushToast({ kind: "info", title: `Ingesting ${paths.length} files`, body: "Added to the queue." });
@@ -143,7 +146,8 @@
       if (!path) return;
 
       const name = path.split(/[\\/]/).pop() ?? path;
-      startIngest({ subject_id: selectedSubjectId, topic_id: topicId, path, kind: "image", name, tags: [] }, name);
+      const ingestPath = isMobile ? await api.stageUpload(path).catch(() => path) : path;
+      startIngest({ subject_id: selectedSubjectId, topic_id: topicId, path: ingestPath, kind: "image", name, tags: [] }, name);
     } catch (e) {
       app.pushToast({ kind: "error", title: "Image pick failed", body: String(e) });
     }

@@ -264,6 +264,10 @@ export const listChunks = (sourceId: string) =>
   invoke<ChunkInfo[]>("list_chunks", { sourceId });
 export const addSource = (input: AddSourceInput) =>
   invoke<IngestResult>("add_source", { input });
+/** Copy a just-picked file into app storage and return the stable path. On mobile the
+ *  picker's temp path is deleted before the background ingest runs — stage it first. */
+export const stageUpload = (path: string) =>
+  invoke<string>("stage_upload", { path });
 
 // ---- search / settings / demo ----
 export const searchChunks = (query: string, subjectId?: string, k?: number) =>

@@ -246,6 +246,7 @@ pub fn run() {
             commands::get_setting,
             commands::set_setting,
             commands::add_source,
+            commands::stage_upload,
             commands::reingest_source,
             commands::search_chunks,
             commands::global_search,
