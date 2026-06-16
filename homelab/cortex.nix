@@ -9,6 +9,15 @@
 #   * one `nixos-rebuild switch` reproduces the whole stack,
 #   * secrets come from sops-nix instead of being typed into env/compose.
 #
+# REACHABILITY: served on BOTH the LAN (http://<host>:8080 on the LAN interface)
+# and the tailnet (https://<magicdns>.ts.net via `tailscale serve`). Nothing is
+# exposed to the public internet. Cortex auto-picks local -> Tailscale.
+#
+# DATA: all state lives in named podman volumes (cortex-*-{models,data}) which
+# persist across rebuilds. Moving off the OLD rootless deploy is a one-time copy
+# (homelab/migrate-cortex-data.sh). The WebDAV sync library (your data) is also
+# backed up nightly to /var/backups/cortex.
+#
 # WIRING (on aether):
 #   1. import ./cortex.nix from configuration.nix (or the relevant host module).
 #   2. Add two sops secrets (declared below):
@@ -17,19 +26,16 @@
 #                                 Cortex clients keep syncing without re-auth.
 #        cortex/searxng-secret  – any `openssl rand -hex 32`.
 #   3. nixos-rebuild switch.
-#
-# DATA NOTE: the current stack runs as ROOTLESS podman under user `aidan`
-# (volumes under ~/.local/share/containers). These system units use ROOTFUL
-# podman (/var/lib/containers), so the old volumes are NOT reused — Whisper/Ollama
-# models re-download and the WebDAV sync DB re-pushes on the next client sync
-# (last-write-wins). Migrate with `podman volume export/import` if you want to
-# avoid the re-download.
+#   4. `sudo tailscale up` once (auth), then `tailscale serve status` to confirm.
+#   5. If carrying data over from the old stack: run homelab/migrate-cortex-data.sh.
 
 { config, pkgs, lib, ... }:
 
 let
-  enableOllama = true;                       # compose `--profile ollama`
-  lanInterface = "eno2";                     # interface to expose :8080 on
+  enableOllama  = true;                      # compose `--profile ollama`
+  enableBackups = true;                      # nightly export of the WebDAV sync library
+  tailscaleServe = true;                     # expose :8080 over the tailnet as HTTPS
+  lanInterface  = "eno2";                    # interface to expose :8080 on (LAN)
   net = "cortex";                            # shared podman network for service DNS
   whisperModel = "Systran/faster-whisper-base.en";
 
@@ -81,12 +87,15 @@ in
   '';
 
   #### Container stack ########################################################
+  # Data lives in NAMED volumes (podman manages ownership and they survive
+  # `nixos-rebuild switch` and container recreation). See migrate-cortex-data.sh
+  # to bring data over from the old rootless deploy.
   virtualisation.oci-containers = {
     backend = "podman";
     containers = {
       cortex-proxy = {
         image = "caddy:2-alpine";
-        ports = [ "8080:8080" ];             # the ONLY published port
+        ports = [ "8080:8080" ];             # the ONLY published port (LAN + loopback)
         volumes = [
           "${caddyfile}:/etc/caddy/Caddyfile:ro"
           "cortex-caddy-data:/data"
@@ -150,8 +159,58 @@ in
     '';
   };
 
+  #### Tailscale exposure ####################################################
+  services.tailscale.enable = true;          # `sudo tailscale up` once to authenticate
+
+  # Publish the proxy on the tailnet as HTTPS (https://<magicdns>.ts.net). serve
+  # proxies from loopback, so NO port needs opening on tailscale0. Requires the
+  # node up and HTTPS/MagicDNS enabled in the tailnet admin console. Idempotent.
+  # (CLI syntax has varied across versions; confirm with `tailscale serve status`.)
+  systemd.services.cortex-tailscale-serve = lib.mkIf tailscaleServe {
+    description = "Serve Cortex homelab (:8080) over Tailscale as HTTPS";
+    after = [ "tailscaled.service" "podman-cortex-proxy.service" ];
+    wants = [ "tailscaled.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      ${pkgs.tailscale}/bin/tailscale serve --bg --https=443 http://127.0.0.1:8080 || true
+    '';
+  };
+
+  #### Nightly backup of the WebDAV sync library #############################
+  systemd.tmpfiles.rules = lib.mkIf enableBackups [
+    "d /var/backups/cortex 0750 root root -"
+  ];
+  systemd.services.cortex-backup = lib.mkIf enableBackups {
+    description = "Back up the Cortex WebDAV sync library (cortex-sync-data)";
+    after = [ "podman-cortex-sync.service" ];
+    path = [ pkgs.podman pkgs.coreutils pkgs.findutils ];
+    serviceConfig = { Type = "oneshot"; };
+    script = ''
+      set -euo pipefail
+      stamp=$(date +%Y%m%d-%H%M%S)
+      podman volume export cortex-sync-data -o "/var/backups/cortex/sync-data-$stamp.tar"
+      # keep the 14 most recent exports
+      ls -1t /var/backups/cortex/sync-data-*.tar | tail -n +15 | xargs -r rm -f
+    '';
+  };
+  systemd.timers.cortex-backup = lib.mkIf enableBackups {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "daily";
+      Persistent = true;
+      RandomizedDelaySec = "30m";
+    };
+  };
+
   #### Firewall ##############################################################
-  # Only the proxy port, and only on the LAN interface. Nothing is public:
-  # reach it over Tailscale/NetBird or a TLS reverse proxy.
+  # LAN: only the proxy port, only on the LAN interface (HTTP). Tailscale is
+  # served as HTTPS by the unit above (no tailscale0 port needed).
   networking.firewall.interfaces.${lanInterface}.allowedTCPPorts = [ 8080 ];
+  # Prefer plain HTTP over the tailnet instead of `tailscale serve`? Set
+  # tailscaleServe = false and uncomment:
+  #   networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ 8080 ];
 }
