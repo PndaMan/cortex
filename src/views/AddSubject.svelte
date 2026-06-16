@@ -3,6 +3,7 @@
   import * as api from "../lib/api";
   import Icon from "../components/Icon.svelte";
   import EmojiPicker from "../components/EmojiPicker.svelte";
+  import { isMobile } from "../lib/platform";
 
   let name = $state("");
   let code = $state("");
@@ -45,9 +46,11 @@
 <div class="workspace-scroll">
   <div class="addpage addpage--subject">
     <div class="addpage-head">
-      <button class="btn btn--icon btn--sm btn--ghost" onclick={() => app.setView("dashboard")} title="Back">
-        <Icon name="chevron" size={14} style="transform:rotate(180deg)" />
-      </button>
+      {#if !isMobile}
+        <button class="btn btn--icon btn--sm btn--ghost" onclick={() => app.setView("dashboard")} title="Back">
+          <Icon name="chevron" size={14} style="transform:rotate(180deg)" />
+        </button>
+      {/if}
       <div>
         <div class="eyebrow">New subject</div>
         <h1 class="addpage-title">Create a subject</h1>

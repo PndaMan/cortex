@@ -76,11 +76,17 @@
   // A "deep" view sits under a subject/source — show a back chevron for it.
   // Add source is a bottom-tab destination, so it gets no back chevron.
   const isDeep = $derived(
-    ["source", "add-subject", "gen-material", "exam", "recorder"].includes(app.view)
+    ["source", "add-subject", "gen-material", "exam", "recorder", "notes", "analytics", "settings"].includes(app.view)
   );
   function back() {
     if (app.view === "source") {
       app.closeSource();
+      return;
+    }
+    // "More" destinations return to the More list; subject-scoped views go up to
+    // the subject (or Home).
+    if (["notes", "analytics", "settings"].includes(app.view)) {
+      screen = "more";
       return;
     }
     app.setView(app.activeSubject ? "subject" : "dashboard");
@@ -168,7 +174,7 @@
   <header class="m-header">
     {#if isDeep}
       <button class="m-iconbtn m-back" onclick={back} aria-label="Back">
-        <Icon name="chevron" size={18} />
+        <Icon name="chevron" size={18} style="transform:rotate(180deg)" />
       </button>
     {/if}
     <h1 class="page-title m-title">{titleText}</h1>
@@ -426,10 +432,11 @@
     align-items: center;
     gap: 6px;
     padding: 10px 16px;
-    border: 1px solid var(--border-strong);
+    border: 1px solid var(--accent);
     border-radius: var(--rad-pill, 999px);
-    background: var(--surface-2);
-    color: var(--fg-bright);
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-weight: 600;
     font-size: var(--t-sm);
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
     cursor: pointer;

@@ -1024,10 +1024,8 @@
           </div>
           <div class="set-card">
             <div class="set-row stacked">
-              <div class="set-row-l"><div class="set-row-t">In your words</div></div>
-              <div class="set-row-r">
-                <textarea class="input set-textarea" bind:value={about} rows={4}></textarea>
-              </div>
+              <div class="set-row-t">In your words</div>
+              <textarea class="input set-textarea set-bio" bind:value={about} rows={6}></textarea>
             </div>
             <div class="set-row">
               <div class="set-row-l">
