@@ -345,6 +345,10 @@
   let syncReach = $state<Record<string, boolean>>({});
 
   const anySyncUrl = $derived(!!(syncUrl.trim() || syncUrlTs.trim() || syncUrlPub.trim()));
+  // On mobile the per-tier sync URL fields are hidden — live sync rides the single
+  // Homelab base URL (→ its /sync WebDAV). So the base alone must be enough to enable
+  // the toggle; gating only on anySyncUrl left mobile stuck on "live sync off".
+  const canSync = $derived(anySyncUrl || !!hlBase.trim());
 
   let syncSaveTimer: ReturnType<typeof setTimeout> | undefined;
   function saveSync() {
@@ -366,7 +370,7 @@
   }
   function toggleSync() {
     syncOn = !syncOn;
-    if (syncOn && !anySyncUrl) { syncOn = false; return; }
+    if (syncOn && !canSync) { syncOn = false; return; }
     saveSync();
   }
   function setSyncMode(m: "auto" | "local" | "tailscale" | "public") {
@@ -1670,7 +1674,7 @@ Notes: {about}</pre>
                 <div class="set-row-d">Merges the remote vault in on launch (in the background — never blocks startup), then pushes your changes (debounced).</div>
               </div>
               <div class="set-row-r">
-                <button type="button" class={"st-toggle" + (syncOn ? " on" : "")} onclick={toggleSync} disabled={!anySyncUrl} role="switch" aria-checked={syncOn} aria-label="live sync"><span class="st-knob"></span></button>
+                <button type="button" class={"st-toggle" + (syncOn ? " on" : "")} onclick={toggleSync} disabled={!canSync} role="switch" aria-checked={syncOn} aria-label="live sync"><span class="st-knob"></span></button>
               </div>
             </div>
 

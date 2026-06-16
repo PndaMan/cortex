@@ -360,7 +360,9 @@ html[data-mobile] .sp-row-link,
 html[data-mobile] .sp-ann-btn { min-width: 0; }
 html[data-mobile] .sp-course { flex-wrap: wrap; }
 /* Topic rows are cramped at name 42% + tags 48% + delete on one phone-width line.
-   Wrap: emoji + name + delete share the top line, the tags input drops full-width below. */
-html[data-mobile] .tr { flex-wrap: wrap; }
-html[data-mobile] .tr-name { flex: 1 1 auto; }
+   Wrap so emoji + name + delete share the top line and the tags input drops full-width
+   below. .input is width:100%, so the name MUST use flex-basis:0 (not auto) — otherwise
+   it inherits that 100% width and every field wraps onto its own line (delete stranded). */
+html[data-mobile] .tr { flex-wrap: wrap; row-gap: 6px; }
+html[data-mobile] .tr-name { flex: 1 1 0; }
 html[data-mobile] .tr-tags { flex: 1 1 100%; order: 3; }

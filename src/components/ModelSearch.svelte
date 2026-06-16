@@ -176,10 +176,12 @@
   .ms-back { background: rgba(0, 0, 0, 0.45); }
   .ms-sheet {
     position: fixed;
-    top: max(14px, env(safe-area-inset-top));
+    /* Clear the fixed mobile header (52px) + the notch, or the search box at the
+       sheet's top renders under the header and looks like it's missing. */
+    top: calc(env(safe-area-inset-top, 0px) + 58px);
     left: 10px;
     right: 10px;
     width: auto;
-    max-height: min(64vh, 460px);
+    max-height: 68vh;
   }
 </style>
