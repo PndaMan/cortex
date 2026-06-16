@@ -19,8 +19,13 @@
 	handle_path /sync/* {
 		reverse_proxy sync:80
 	}
+	handle_path /ingest/* {
+		# Apache Tika: document → text (PDF/DOCX/PPTX/legacy + OCR). Cortex mobile
+		# PUTs files to /ingest/tika when a phone can't parse them locally.
+		reverse_proxy ingest:9998
+	}
 	# A bare hit on the base URL is a friendly liveness check.
 	handle / {
-		respond "Cortex homelab is up. Services: /searxng /whisper /ollama /sync" 200
+		respond "Cortex homelab is up. Services: /searxng /whisper /ollama /sync /ingest" 200
 	}
 }

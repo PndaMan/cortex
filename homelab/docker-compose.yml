@@ -4,6 +4,7 @@
 # just ONE address. Services are reached by path prefix off that address:
 #   <url>/searxng  → web search          <url>/whisper → lecture transcription
 #   <url>/ollama   → local LLM/embeddings <url>/sync    → WebDAV live-sync
+#   <url>/ingest   → document parsing (PDF/DOCX/PPTX → text, for mobile)
 # Only Caddy publishes a host port (8080); everything else is internal.
 #
 #   docker compose up -d                    # search + whisper + sync + proxy
@@ -30,6 +31,7 @@ services:
       - searxng
       - whisper
       - sync
+      - ingest
 
   searxng:
     image: searxng/searxng:latest
@@ -75,6 +77,17 @@ services:
       - PASSWORD=change-me-sync-password
     volumes:
       - sync-data:/var/lib/dav
+
+  ingest:
+    # Apache Tika — document parsing for mobile. A phone can't run poppler/
+    # libreoffice, so Cortex offloads PDF/DOCX/PPTX/legacy parsing (and OCR of
+    # scanned pages, via the `-full` tag's bundled Tesseract) here. Served under
+    # the proxy's /ingest prefix; the app PUTs files to /ingest/tika.
+    image: apache/tika:latest-full
+    container_name: cortex-ingest
+    restart: unless-stopped
+    expose:
+      - "9998"
 
   ollama:
     image: ollama/ollama:latest

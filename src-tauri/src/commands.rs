@@ -531,6 +531,41 @@ fn ocr_via_vision(state: &State<AppState>, kind: &str, path: Option<&str>) -> Re
     Ok(out)
 }
 
+/// Offload document parsing to the homelab ingest/parse service (Apache Tika) when a
+/// homelab ingest URL is configured. iOS can't run poppler/libreoffice, so scanned
+/// PDFs and legacy `.doc/.ppt` have no on-device path — Tika handles PDF/DOCX/PPTX/
+/// legacy and OCRs scanned pages (the `-full` image bundles Tesseract). PUTs the raw
+/// file to `{ingest_url}/tika` and returns the extracted plain text.
+///
+/// `Ok(None)` when no homelab ingest URL is set (desktop, or mobile without a homelab)
+/// — the caller then keeps whatever text it already had. `Err` only on a real failure.
+fn ingest_remote(state: &State<AppState>, path: &str) -> Result<Option<String>> {
+    let base = {
+        let c = state.db.lock().unwrap();
+        if offline_mode(&c) {
+            return Ok(None); // offline mode blocks all network offload
+        }
+        crate::homelab::resolved_setting(&c, "ingest_url")
+    };
+    let Some(base) = base else {
+        return Ok(None);
+    };
+    let url = format!("{}/tika", base.trim_end_matches('/'));
+    let bytes = std::fs::read(path)?;
+    // Parsing + OCR of a big scan is slow — give it room (Tika streams nothing back
+    // until done). `Accept: text/plain` makes Tika return the extracted text directly.
+    let resp = http_client(180)
+        .put(&url)
+        .header("Accept", "text/plain; charset=UTF-8")
+        .body(bytes)
+        .send()
+        .map_err(|e| Error::Other(format!("ingest request failed: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(Error::Other(format!("ingest service HTTP {}", resp.status())));
+    }
+    Ok(Some(resp.text().map_err(|e| Error::Other(e.to_string()))?))
+}
+
 /// Re-run ingestion for an EXISTING source in place: re-parse (re-OCR / re-
 /// transcribe), re-chunk, re-embed, replacing its old chunks. Used to retry a
 /// failed source or refresh one. Reuses the stored original file (or origin
@@ -781,7 +816,29 @@ pub async fn add_source(
         }
     };
 
-    // 2a. Enrich kinds `parse` can't read on its own:
+    // 2a. Documents the on-device parser couldn't read (scanned PDFs, legacy .doc/.ppt,
+    // or — on mobile — anything needing poppler/libreoffice) → offload to the homelab
+    // ingest/parse service (Apache Tika) when one is configured. No-op (Ok(None)) on
+    // desktop / when no homelab ingest URL is set, so existing setups are unaffected.
+    let (text, warning) = {
+        let is_doc = matches!(kind.as_str(), "pdf" | "docx" | "pptx");
+        if is_doc && text.trim().is_empty() {
+            if let Some(p) = input.path.as_deref() {
+                emit_progress(&app, &source_id, "parsing", "parsing on homelab (ingest service)", 35);
+                match ingest_remote(&state, p) {
+                    Ok(Some(t)) if !t.trim().is_empty() => (t, None),
+                    Ok(_) => (text, warning), // no homelab ingest, or it found nothing
+                    Err(e) => (text, Some(format!("homelab ingest failed: {e}"))),
+                }
+            } else {
+                (text, warning)
+            }
+        } else {
+            (text, warning)
+        }
+    };
+
+    // 2b. Enrich kinds `parse` + homelab still can't read:
     //   • images and scanned (text-less) PDFs → OCR via the configured vision model
     //   • audio files → local Whisper transcription
     let (text, warning) = {

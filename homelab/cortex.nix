@@ -55,15 +55,18 @@ let
       handle_path /sync/* {
         reverse_proxy localhost:80
       }
+      handle_path /ingest/* {
+        reverse_proxy localhost:9998
+      }
       handle / {
-        respond "Cortex homelab is up. Services: /searxng /whisper /ollama /sync" 200
+        respond "Cortex homelab is up. Services: /searxng /whisper /ollama /sync /ingest" 200
       }
     }
   '';
 
   podmanBin = "${config.virtualisation.podman.package}/bin/podman";
   containerNames =
-    [ "cortex-proxy" "cortex-searxng" "cortex-whisper" "cortex-sync" ]
+    [ "cortex-proxy" "cortex-searxng" "cortex-whisper" "cortex-sync" "cortex-ingest" ]
     ++ lib.optional enableOllama "cortex-ollama";
   inPod = [ "--pod=cortex" ];
 in
@@ -113,7 +116,7 @@ in
           "${caddyfile}:/etc/caddy/Caddyfile:ro"
           "cortex-caddy-data:/data"
         ];
-        dependsOn = [ "cortex-searxng" "cortex-whisper" "cortex-sync" ];
+        dependsOn = [ "cortex-searxng" "cortex-whisper" "cortex-sync" "cortex-ingest" ];
         extraOptions = inPod;
       };
 
@@ -141,6 +144,14 @@ in
         image = "docker.io/bytemark/webdav:latest";
         environmentFiles = [ config.sops.templates."cortex-sync.env".path ];
         volumes = [ "cortex-sync-data:/var/lib/dav" ];
+        extraOptions = inPod;
+      };
+
+      cortex-ingest = {
+        # Apache Tika — document → text (PDF/DOCX/PPTX/legacy + OCR of scanned
+        # pages via the `-full` tag's Tesseract). Cortex mobile offloads parsing
+        # here (a phone can't run poppler/libreoffice). Reached at /ingest/tika.
+        image = "docker.io/apache/tika:latest-full";
         extraOptions = inPod;
       };
     } // lib.optionalAttrs enableOllama {

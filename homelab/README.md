@@ -13,6 +13,7 @@ appends the rest.
 | **SearXNG** | `<url>/searxng` | Diagrams/images in cheatsheets + web-enriched chat |
 | **Whisper** (Speaches) | `<url>/whisper` | Lecture transcription, OpenAI-compatible |
 | **Sync** (WebDAV) | `<url>/sync` | Live sync — auto-store your library, fetch it on launch |
+| **Ingest** (Apache Tika) | `<url>/ingest` | Document → text for **mobile** (PDF/DOCX/PPTX/legacy + OCR of scanned pages) — a phone can't run poppler/libreoffice |
 | **Ollama** *(optional)* | `<url>/ollama` | Local LLM + embeddings, no API key |
 
 Only the proxy is exposed (default port `8080`); the services themselves are
