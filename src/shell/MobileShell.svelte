@@ -6,6 +6,7 @@
   // destination lives there), an Ask→chat full sheet, and the shared overlays.
   import { app } from "../lib/store.svelte";
   import Icon from "../components/Icon.svelte";
+  import logo from "../assets/cortex-logo.png";
 
   // Views (reused as-is). Heavy ones are lazy-loaded on first visit, like App.svelte.
   import Dashboard from "../views/Dashboard.svelte";
@@ -172,7 +173,7 @@
       </button>
     {/if}
     <!-- Static brand: the user knows which screen they're on, so we don't repeat it. -->
-    <h1 class="page-title m-title">Cortex</h1>
+    <h1 class="page-title m-title"><img class="m-logo" src={logo} alt="" />Cortex</h1>
     <span class="m-spacer"></span>
     <button class="m-iconbtn m-bell" onclick={() => app.toggleNotifications()} aria-label="Notifications">
       <Icon name="bell" size={18} />
@@ -225,7 +226,7 @@
   <button class="m-drawer-back" aria-label="Close menu" onclick={() => (drawerOpen = false)}></button>
   <nav class="m-drawer" aria-label="Menu">
     <div class="m-drawer-head">
-      <span class="page-title m-drawer-brand">Cortex</span>
+      <span class="page-title m-drawer-brand"><img class="m-logo" src={logo} alt="" />Cortex</span>
       <button class="m-iconbtn" onclick={() => (drawerOpen = false)} aria-label="Close menu"><Icon name="x" size={16} /></button>
     </div>
     <button class="m-row m-nav{activeNav === 'home' ? ' on' : ''}" onclick={() => go("dashboard")}>
@@ -378,6 +379,8 @@
     border-bottom: 1px solid var(--border);
   }
   .m-drawer-brand { font-size: var(--t-lg, 18px); }
+  .m-title, .m-drawer-brand { display: inline-flex; align-items: center; gap: 7px; }
+  .m-logo { height: 1.15em; width: auto; flex: none; }
 
   .m-row {
     display: flex;

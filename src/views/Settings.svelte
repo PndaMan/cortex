@@ -312,6 +312,7 @@
   let endpoint   = $state("http://localhost:11434");
   let searxng    = $state("");
   let whisperUrl = $state("");
+  let whisperModel = $state("");
   let webImages  = $state(false);
   let testState  = $state<null | "testing" | "ok" | "fail">(null);
   let searxState = $state<null | "testing" | "ok" | "fail">(null);
@@ -319,6 +320,9 @@
 
   function saveWhisper() {
     api.setSetting("whisper_url", whisperUrl.trim()).catch(() => {});
+  }
+  function saveWhisperModel() {
+    api.setSetting("whisper_model", whisperModel.trim()).catch(() => {});
   }
   async function testWhisper() {
     if (!whisperUrl.trim()) return;
@@ -915,6 +919,7 @@
       if (s.ollama_url)                    endpoint = s.ollama_url;
       if (s.searxng_url)                   searxng  = s.searxng_url;
       if (s.whisper_url)                   whisperUrl = s.whisper_url;
+      if (s.whisper_model)                 whisperModel = s.whisper_model;
       // Live sync
       if (s.homelab_base)           hlBase = s.homelab_base;
       if (s.homelab_tailscale_base) hlTailscale = s.homelab_tailscale_base;
@@ -1612,7 +1617,7 @@ Notes: {about}</pre>
             <div class="set-row-d">A relevant diagram per cheatsheet section + images in chat. On by default once SearXNG is connected.</div>
           </div>
           <div class="set-row-r">
-            <button type="button" class={"st-toggle" + (webImages ? " on" : "")} onclick={() => setWebImages(!webImages)} disabled={!(searxng.trim() || hlBase.trim())} role="switch" aria-checked={webImages} aria-label="diagrams"><span class="st-knob"></span></button>
+            <button type="button" class={"st-toggle" + (webImages ? " on" : "")} onclick={() => setWebImages(!webImages)} disabled={!(searxng.trim() || hlBase.trim() || hlTailscale.trim() || hlPublic.trim())} role="switch" aria-checked={webImages} aria-label="diagrams"><span class="st-knob"></span></button>
           </div>
         </div>
       {/snippet}
@@ -1707,20 +1712,22 @@ Notes: {about}</pre>
         </section>
         {/if}
 
-        <!-- Per-service URL overrides are a desktop power-user feature; on mobile the
-             single Homelab URL drives every service (search/whisper/ollama/sync/ingest). -->
-        {#if !isMobile}
+        <!-- One section of toggleable homelab features — same on desktop + mobile. No
+             per-service URL overrides; everything rides the single Homelab URL above. -->
         <section class="set-group">
           <div class="set-group-h">
-            <h3 class="set-group-t">Diagrams</h3>
-            <p class="set-group-d">Pull diagrams + images into cheatsheets and chat, via the homelab's SearXNG — reached at <span class="mono">/searxng</span> off the Homelab URL above.</p>
+            <h3 class="set-group-t">Homelab features</h3>
+            <p class="set-group-d">Optional features powered by the services behind your Homelab URL — they switch on the moment a Homelab URL is set.</p>
           </div>
           <div class="set-card">
             {@render diagramsToggle()}
+            <div class="set-row stacked">
+              <div class="set-row-t">Transcription model <span class="faint">optional</span></div>
+              <input class="input mono" bind:value={whisperModel} onchange={saveWhisperModel} onblur={saveWhisperModel} placeholder="Systran/faster-whisper-base" />
+              <div class="set-row-d">The Whisper model your homelab server (faster-whisper / speaches) can load — reached at <span class="mono">/whisper</span> off the Homelab URL. Leave blank to let the server pick its own.</div>
+            </div>
           </div>
         </section>
-
-        {/if}
         <section class="set-group">
           <div class="set-group-h svc-h">
             <div>
