@@ -306,12 +306,21 @@
   let hlTailscale = $state("");
   let hlPublic    = $state("");
   let hlState     = $state<"idle" | "testing" | "ok" | "fail">("idle");
+  let hlSaveTimer: ReturnType<typeof setTimeout> | undefined;
   function saveHomelabBases() {
+    clearTimeout(hlSaveTimer);
     api.setSettings({
       homelab_base: hlBase.trim(),
       homelab_tailscale_base: hlTailscale.trim(),
       homelab_public_base: hlPublic.trim(),
     }).catch(() => {});
+  }
+  // iOS WKWebView fires change/blur unreliably (and "Sync now" lives in another
+  // section), so the base could stay unpersisted → sync reports "target not set".
+  // Persist shortly after each keystroke so the URL is always in the DB by sync time.
+  function saveHomelabBasesSoon() {
+    clearTimeout(hlSaveTimer);
+    hlSaveTimer = setTimeout(saveHomelabBases, 400);
   }
   async function testHomelab() {
     if (!hlBase.trim()) return;
@@ -337,7 +346,9 @@
 
   const anySyncUrl = $derived(!!(syncUrl.trim() || syncUrlTs.trim() || syncUrlPub.trim()));
 
+  let syncSaveTimer: ReturnType<typeof setTimeout> | undefined;
   function saveSync() {
+    clearTimeout(syncSaveTimer);
     api.setSettings({
       sync_url: syncUrl.trim(),
       sync_url_tailscale: syncUrlTs.trim(),
@@ -347,6 +358,11 @@
       sync_pass: syncPass,
       sync_enabled: syncOn ? "true" : "false",
     }).then(() => app.loadSyncStatus()).catch(() => {});
+  }
+  // Same iOS blur/change unreliability as the homelab bases — persist creds as typed.
+  function saveSyncSoon() {
+    clearTimeout(syncSaveTimer);
+    syncSaveTimer = setTimeout(saveSync, 400);
   }
   function toggleSync() {
     syncOn = !syncOn;
@@ -1532,7 +1548,7 @@ Notes: {about}</pre>
             <div class="set-row stacked">
               <div class="set-row-t">Local URL</div>
               <div class="row-inline">
-                <input class="input mono" bind:value={hlBase} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="http://192.168.1.10:8080" />
+                <input class="input mono" bind:value={hlBase} oninput={saveHomelabBasesSoon} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="http://192.168.1.10:8080" />
                 <button class="btn" onclick={testHomelab} disabled={hlState === 'testing' || !hlBase.trim()}>
                   <Icon name="refresh" size={12} /> Test
                 </button>
@@ -1541,12 +1557,12 @@ Notes: {about}</pre>
             </div>
             <div class="set-row stacked">
               <div class="set-row-t">Tailscale URL <span class="faint">optional</span></div>
-              <input class="input mono" bind:value={hlTailscale} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://homelab.tailnet-xxxx.ts.net" />
+              <input class="input mono" bind:value={hlTailscale} oninput={saveHomelabBasesSoon} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://homelab.tailnet-xxxx.ts.net" />
               <div class="set-row-d">Used when the local URL isn't reachable. Cortex swaps just the host (and port if you give one), keeping the service paths.</div>
             </div>
             <div class="set-row stacked">
               <div class="set-row-t">Public URL <span class="faint">optional</span></div>
-              <input class="input mono" bind:value={hlPublic} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://lab.example.com" />
+              <input class="input mono" bind:value={hlPublic} oninput={saveHomelabBasesSoon} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://lab.example.com" />
             </div>
           </div>
         </section>
@@ -1706,12 +1722,12 @@ Notes: {about}</pre>
             {/if}
             <div class="set-row stacked">
               <div class="set-row-t">Username <span class="faint">optional</span></div>
-              <input class="input mono" bind:value={syncUser} onchange={saveSync} onblur={saveSync} placeholder="cortex" />
+              <input class="input mono" bind:value={syncUser} oninput={saveSyncSoon} onchange={saveSync} onblur={saveSync} placeholder="cortex" />
             </div>
             <div class="set-row stacked">
               <div class="set-row-t">Password <span class="faint">optional</span></div>
               <div class="row-inline">
-                <input class="input mono" type="password" bind:value={syncPass} onchange={saveSync} onblur={saveSync} placeholder="••••••••" />
+                <input class="input mono" type="password" bind:value={syncPass} oninput={saveSyncSoon} onchange={saveSync} onblur={saveSync} placeholder="••••••••" />
                 <button class="btn btn--primary" disabled={app.syncState === "syncing" || !(anySyncUrl || hlBase.trim())} onclick={() => app.syncManual()}>
                   <Icon name="upload" size={12} /> {app.syncState === "syncing" ? "Syncing…" : "Sync now"}
                 </button>

@@ -235,8 +235,17 @@ html[data-mobile] .workspace-scroll { padding-bottom: 76px; }
 /* Bigger "In your words" bio box. */
 html[data-mobile] .set-bio { min-height: 150px; }
 
-/* Exam mode: the topic chips overflowed off-screen with many topics → wrap them. */
-html[data-mobile] .tag-suggest { flex-wrap: wrap; }
+/* Exam mode: topic chips overflowed off-screen. A long topic name (e.g. "The
+   Permanently Online and Permanently Connected Mind") is a nowrap chip wider than the
+   phone → horizontal overflow, chips clipped both edges. Wrap the row AND let each chip
+   wrap its own text so none can exceed the viewport. */
+html[data-mobile] .tag-suggest { flex-wrap: wrap; max-width: 100%; }
+html[data-mobile] .tag-chip-add {
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
 
 /* ── Mobile feedback round 7 (autonomous sweep) ───────────────────────────── */
 
@@ -264,13 +273,24 @@ html[data-mobile] .add-foot .btn { flex: 1 1 auto; min-width: 0; white-space: no
 
 /* Generated study materials (flashcards / quiz / slideshow): cards were fixed-width
    (520–560px) → clipped at 390px; rate/next buttons sat under the Ask pill. */
-html[data-mobile] .flashcard { max-width: calc(100vw - 28px); height: auto; min-height: 200px; }
+/* The faces are position:absolute (inset:0) for the flip crossfade, so with height:auto
+   the card collapses to min-height and .fc-text (max-height:188px) clips long answers.
+   Grid-stack both faces in one cell instead: the card grows to fit the taller face's
+   text (no clip, no hidden scroll) while the opacity crossfade still works. */
+html[data-mobile] .flashcard { max-width: calc(100vw - 28px); display: grid; height: auto; min-height: 200px; }
+html[data-mobile] .flashcard .fc-face { position: relative; inset: auto; grid-area: 1 / 1; }
+html[data-mobile] .fc-text { max-height: none; overflow: visible; }
 html[data-mobile] .quiz-card { max-width: calc(100vw - 28px); }
 html[data-mobile] .fc-bar-row { flex-wrap: wrap; gap: 6px; max-width: calc(100vw - 28px); }
 html[data-mobile] .fc-rate { flex-wrap: wrap; }
 html[data-mobile] .fc-rate .btn { min-width: 0; flex: 1 1 calc(50% - 4px); }
-html[data-mobile] .fc-wrap { padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+/* Top-align + scroll so a tall card (long definition) is fully reachable above the
+   rate buttons, instead of being centred and clipped at the viewport edges. */
+html[data-mobile] .fc-wrap { justify-content: flex-start; overflow-y: auto; padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
 html[data-mobile] .ss-nav { padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+/* Notes fullscreen overlay sits at top:0 over everything — without safe-area padding the
+   "Exit fullscreen" button hid under the iOS status bar/notch and couldn't be tapped. */
+html[data-mobile] .notes-fs-head { padding-top: max(14px, env(safe-area-inset-top)); }
 
 /* Kanban / Planner board: 3 equal columns are unreadable at 390px → swipeable
    horizontally-scrolling columns (~80vw each) with snap. */
@@ -315,13 +335,14 @@ html[data-mobile] .sp-grid {
 }
 /* Long Moodle grade/deadline/announcement lines overflowed the phone width and
    clipped off-screen — constrain the flex chain so they truncate (min-width:0 lets
-   the ellipsis kick in) and nothing escapes the sheet. */
+   the inner ellipsis kick in) and nothing escapes the sheet. NOTE: no card-level
+   overflow:hidden — that clipped the Grades/Deadlines grid and the disclosure inside
+   the portal card. The inner text spans (.sp-li-name/.sp-ann-subj) already ellipsis. */
 html[data-mobile] .sp-card,
 html[data-mobile] .sp-sub-card {
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
-  overflow: hidden;
 }
 /* The body is the scroll surface for the full-screen sheet — must scroll vertically
    (a previous overflow:hidden here made the whole Moodle page un-scrollable). */
@@ -338,3 +359,8 @@ html[data-mobile] .sp-ann-subj,
 html[data-mobile] .sp-row-link,
 html[data-mobile] .sp-ann-btn { min-width: 0; }
 html[data-mobile] .sp-course { flex-wrap: wrap; }
+/* Topic rows are cramped at name 42% + tags 48% + delete on one phone-width line.
+   Wrap: emoji + name + delete share the top line, the tags input drops full-width below. */
+html[data-mobile] .tr { flex-wrap: wrap; }
+html[data-mobile] .tr-name { flex: 1 1 auto; }
+html[data-mobile] .tr-tags { flex: 1 1 100%; order: 3; }

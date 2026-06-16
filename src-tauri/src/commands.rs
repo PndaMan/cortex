@@ -660,9 +660,22 @@ pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult>
 #[tauri::command]
 pub async fn stage_upload(app: AppHandle, path: String) -> Result<String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String> {
-        let src = std::path::Path::new(&path);
+        // iOS hands back a percent-encoded file:// URL (e.g.
+        // `file:///…/Inbox/NEW%20Student%20Guide.pdf`), not a plain path — taking it
+        // literally makes `.exists()` false ("file not found"). Decode it to a real
+        // filesystem path (scheme stripped, %20→space) before touching the file.
+        let real = if path.starts_with("file://") {
+            reqwest::Url::parse(&path)
+                .ok()
+                .and_then(|u| u.to_file_path().ok())
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.clone())
+        } else {
+            path.clone()
+        };
+        let src = std::path::Path::new(&real);
         if !src.exists() {
-            return Err(Error::NotFound(format!("file not found: {path}")));
+            return Err(Error::NotFound(format!("file not found: {real}")));
         }
         let dir = app
             .path()

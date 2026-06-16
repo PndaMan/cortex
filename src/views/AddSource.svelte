@@ -88,6 +88,13 @@
     app.setTab("sources");
   }
 
+  // The iOS picker returns a percent-encoded file:// URL; derive a clean, decoded
+  // display name from it (the actual file is staged+decoded in Rust stage_upload).
+  function pickedName(p: string): string {
+    const n = p.split(/[\\/?#]/).filter(Boolean).pop() ?? p;
+    try { return decodeURIComponent(n); } catch { return n; }
+  }
+
   async function beginUpload() {
     if (!guardSubject()) return;
     try {
@@ -103,7 +110,7 @@
       // Queue every picked file (concurrent ingests are safe now that each
       // LibreOffice conversion gets its own profile), then navigate once.
       for (const path of paths) {
-        const name = path.split(/[\\/]/).pop() ?? path;
+        const name = pickedName(path);
         // On mobile the picker returns a temp path the OS deletes before the
         // background ingest runs — copy it into app storage first. Surface a real
         // error (don't silently fall back to the doomed temp path) so a staging
@@ -155,7 +162,7 @@
       const path = typeof picked === "string" ? picked : picked?.[0] ?? null;
       if (!path) return;
 
-      const name = path.split(/[\\/]/).pop() ?? path;
+      const name = pickedName(path);
       let ingestPath = path;
       if (isMobile) {
         try {

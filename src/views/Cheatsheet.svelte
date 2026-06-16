@@ -469,6 +469,9 @@
     // editing, and focus the first field so the caret is ready to type immediately.
     (window as any).__cortexViewKeys = true;
     void tick().then(() => {
+      // On mobile, don't auto-focus the first field: it yanks the scroll to the top of
+      // the sheet (and pops the keyboard) the moment you tap Edit. Tap a block to edit it.
+      if (isMobile) return;
       const first = document.querySelector(".cs-sections.is-insert .cs-ce") as HTMLElement | null;
       if (first) focusCaretEnd(first);
     });

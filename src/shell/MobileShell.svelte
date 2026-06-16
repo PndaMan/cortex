@@ -139,8 +139,13 @@
   });
 
   // Ask FAB: only where a chat scope makes sense, and only when chat is closed.
+  // Hidden on the subject's Chats tab (it IS the chat — redundant) and Materials tab
+  // (flashcards/slides already have their own controls; the FAB blocked the next button).
   const showAsk = $derived(
-    ["subject", "source", "notes"].includes(app.view) && !app.chatOpen && !drawerOpen
+    ["subject", "source", "notes"].includes(app.view) &&
+      !app.chatOpen &&
+      !drawerOpen &&
+      !(app.view === "subject" && (app.subjectTab === "chats" || app.subjectTab === "materials"))
   );
 
   const NAV = [

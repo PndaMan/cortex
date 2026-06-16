@@ -86,9 +86,12 @@
     </span>
     <Icon name="chevron" size={11} style="transform:rotate(90deg);color:var(--fg-faint)" />
   </button>
-  {#if open && menuPos}
-    <div class="picker-back" role="presentation" onclick={() => (open = false)}></div>
-    <div class="picker-menu ms-menu" style={menuStyle(menuPos)}>
+  {#if open && (isMobile || menuPos)}
+    <div class={"picker-back" + (isMobile ? " ms-back" : "")} role="presentation" onclick={() => (open = false)}></div>
+    <div
+      class={"picker-menu ms-menu" + (isMobile ? " ms-sheet" : "")}
+      style={!isMobile && menuPos ? menuStyle(menuPos) : ""}
+    >
       <div class="ms-search">
         <Icon name="search" size={12} color="var(--fg-faint)" />
         <!-- svelte-ignore a11y_autofocus -->
@@ -166,4 +169,17 @@
   .ms-sub { font-size: var(--t-2xs); color: var(--fg-faint); }
   .ms-empty,
   .ms-more { padding: 12px 10px; text-align: center; color: var(--fg-faint); font-size: var(--t-2xs); }
+
+  /* Mobile: a top-anchored sheet, not a button-anchored dropdown — the keyboard
+     slides up from the bottom and would cover a dropdown, but never the search box
+     pinned at the top here. Sits above the mobile header (its z-index < .picker-menu). */
+  .ms-back { background: rgba(0, 0, 0, 0.45); }
+  .ms-sheet {
+    position: fixed;
+    top: max(14px, env(safe-area-inset-top));
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: min(64vh, 460px);
+  }
 </style>
