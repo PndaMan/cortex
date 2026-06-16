@@ -100,6 +100,9 @@ export function reorderable(node: HTMLElement, opts: ReorderOpts) {
     preview.style.margin = "0";
     preview.style.pointerEvents = "none";
     preview.style.zIndex = "9999";
+    // The clone inherits the card's `transition: transform` — which makes the preview
+    // ease toward the finger (visible lag). Snap it to the pointer instead.
+    preview.style.transition = "none";
     document.body.appendChild(preview);
   }
 
