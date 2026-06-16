@@ -3652,10 +3652,12 @@ pub async fn ping_url(url: String) -> Result<bool> {
     tauri::async_runtime::spawn_blocking(move || -> Result<bool> {
         let client = http_client(5);
         match client.get(&url).send() {
-            Ok(resp) => Ok(resp.status().is_success()),
-            // Surface the real transport error (DNS/timeout/TLS/connection refused)
-            // so the homelab "Test connection" button can explain WHY it failed. On
-            // iOS a blocked cleartext-LAN request shows up here, not as a silent false.
+            // ANY HTTP response means the server is reachable — a reverse-proxy root
+            // commonly answers 404/401/403, which is still "connected". (Matches
+            // homelab::reachable(); the old is_success() check reported those as failures.)
+            Ok(_) => Ok(true),
+            // Only a transport failure (DNS/timeout/TLS/connection refused) is unreachable —
+            // surface its message so the "Test connection" button explains WHY it failed.
             Err(e) => Err(Error::Other(format!("{e}"))),
         }
     })
