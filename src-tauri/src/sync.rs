@@ -272,11 +272,13 @@ fn is_syncable_setting(key: &str) -> bool {
     // links + the courses themselves already sync (they're DB rows); this adds the
     // token/site so the phone can fetch fresh data. It rides the user's own homelab
     // WebDAV, so the token never leaves their control.
-    const SYNCED_CREDS: &[&str] = &[
-        "moodle_url", "moodle_token", "moodle_userid",
-        "openrouter_api_key", "gemini_api_key", "claude_api_key", "openai_api_key",
-        "custom_endpoint",
-    ];
+    //
+    // Provider API keys are deliberately NOT synced (security): a billable OpenRouter/
+    // Claude/OpenAI/Gemini key — and the custom endpoint — is a real secret, and syncing
+    // it would copy it to every linked device + the WebDAV store. Each device holds its
+    // own; the keys tab promises "never synced". The `_key` substring guard below also
+    // backstops this if a future key sneaks into a group.
+    const SYNCED_CREDS: &[&str] = &["moodle_url", "moodle_token", "moodle_userid"];
     if SYNCED_CREDS.contains(&key) {
         return true;
     }
@@ -673,14 +675,19 @@ mod tests {
 
     #[test]
     fn syncable_settings_never_include_credentials() {
-        // Credentials & device endpoints must NEVER sync across devices.
+        // Provider API keys & device endpoints must NEVER sync across devices.
         for k in [
             "gemini_api_key", "openrouter_api_key", "openai_api_key", "claude_api_key",
-            "moodle_token", "moodle_userid", "moodle_url", "ollama_url", "searxng_url",
+            "custom_endpoint", "ollama_url", "searxng_url",
             "whisper_url", "sync_url", "sync_enabled", "google_calendar_token",
             "last_subject_id", "offline_mode",
         ] {
             assert!(!is_syncable_setting(k), "{k} must not sync");
+        }
+        // The Moodle connection is the one deliberate credential exception (opt-in, rides
+        // the user's own homelab WebDAV) so a linked phone shares course matching.
+        for k in ["moodle_url", "moodle_token", "moodle_userid"] {
+            assert!(is_syncable_setting(k), "{k} should sync (Moodle opt-in)");
         }
         // Preferences SHOULD sync.
         for k in [
