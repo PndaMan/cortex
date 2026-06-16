@@ -58,19 +58,29 @@ jobs:
       - name: Initialise the iOS project
         run: cargo tauri ios init --ci
 
-      - name: Allow LAN / cleartext homelab HTTP (App Transport Security)
-        # iOS blocks plain-HTTP LAN + Tailscale requests by default, so the homelab
-        # "Test connection" and the sync/whisper/searx/ingest calls all fail. Patch
-        # the generated Info.plist to permit them. Sideload phase — narrow this to
-        # NSExceptionDomains before any App Store submission.
+      - name: Patch iOS Info.plist (ATS + mic + per-build version)
+        # (1) ATS: iOS blocks plain-HTTP LAN/Tailscale by default → the homelab test +
+        #     sync/whisper/searx/ingest calls fail. Allow them (narrow to NSExceptionDomains
+        #     before any App Store submission).
+        # (2) Mic: lecture recording needs NSMicrophoneUsageDescription or iOS kills capture.
+        # (3) Per-build version: tauri.conf.json stays 1.0.7 (shared with desktop), so every
+        #     sideload IPA had the SAME version and LiveContainer/SideStore wouldn't offer the
+        #     update. Stamp a unique, monotonic CFBundleShortVersionString (1.0.<run#>) into the
+        #     iOS bundle ONLY, so each build shows up as a new version to sideload.
+        env:
+          BUILD_NUM: ${{ github.run_number }}
         run: |
           set -uo pipefail
+          VER="1.0.${BUILD_NUM}"
           for plist in $(find src-tauri/gen/apple -name 'Info.plist'); do
             /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "$plist" 2>/dev/null || true
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$plist"
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$plist"
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
-            echo "ATS patched: $plist"
+            /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Cortex records lectures and uploads the audio to your homelab for transcription." "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VER" "$plist"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILD_NUM}" "$plist"
+            echo "patched (v$VER): $plist"
           done
 
       - name: Build for the iOS Simulator (unsigned)
@@ -120,19 +130,29 @@ jobs:
       - name: Initialise the iOS project
         run: cargo tauri ios init --ci
 
-      - name: Allow LAN / cleartext homelab HTTP (App Transport Security)
-        # iOS blocks plain-HTTP LAN + Tailscale requests by default, so the homelab
-        # "Test connection" and the sync/whisper/searx/ingest calls all fail. Patch
-        # the generated Info.plist to permit them. Sideload phase — narrow this to
-        # NSExceptionDomains before any App Store submission.
+      - name: Patch iOS Info.plist (ATS + mic + per-build version)
+        # (1) ATS: iOS blocks plain-HTTP LAN/Tailscale by default → the homelab test +
+        #     sync/whisper/searx/ingest calls fail. Allow them (narrow to NSExceptionDomains
+        #     before any App Store submission).
+        # (2) Mic: lecture recording needs NSMicrophoneUsageDescription or iOS kills capture.
+        # (3) Per-build version: tauri.conf.json stays 1.0.7 (shared with desktop), so every
+        #     sideload IPA had the SAME version and LiveContainer/SideStore wouldn't offer the
+        #     update. Stamp a unique, monotonic CFBundleShortVersionString (1.0.<run#>) into the
+        #     iOS bundle ONLY, so each build shows up as a new version to sideload.
+        env:
+          BUILD_NUM: ${{ github.run_number }}
         run: |
           set -uo pipefail
+          VER="1.0.${BUILD_NUM}"
           for plist in $(find src-tauri/gen/apple -name 'Info.plist'); do
             /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "$plist" 2>/dev/null || true
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$plist"
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$plist"
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
-            echo "ATS patched: $plist"
+            /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Cortex records lectures and uploads the audio to your homelab for transcription." "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VER" "$plist"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILD_NUM}" "$plist"
+            echo "patched (v$VER): $plist"
           done
 
       # Build the device app with signing disabled (the Xcode Rust build phase still
@@ -266,19 +286,29 @@ jobs:
       - name: Initialise the iOS project
         run: cargo tauri ios init --ci
 
-      - name: Allow LAN / cleartext homelab HTTP (App Transport Security)
-        # iOS blocks plain-HTTP LAN + Tailscale requests by default, so the homelab
-        # "Test connection" and the sync/whisper/searx/ingest calls all fail. Patch
-        # the generated Info.plist to permit them. Sideload phase — narrow this to
-        # NSExceptionDomains before any App Store submission.
+      - name: Patch iOS Info.plist (ATS + mic + per-build version)
+        # (1) ATS: iOS blocks plain-HTTP LAN/Tailscale by default → the homelab test +
+        #     sync/whisper/searx/ingest calls fail. Allow them (narrow to NSExceptionDomains
+        #     before any App Store submission).
+        # (2) Mic: lecture recording needs NSMicrophoneUsageDescription or iOS kills capture.
+        # (3) Per-build version: tauri.conf.json stays 1.0.7 (shared with desktop), so every
+        #     sideload IPA had the SAME version and LiveContainer/SideStore wouldn't offer the
+        #     update. Stamp a unique, monotonic CFBundleShortVersionString (1.0.<run#>) into the
+        #     iOS bundle ONLY, so each build shows up as a new version to sideload.
+        env:
+          BUILD_NUM: ${{ github.run_number }}
         run: |
           set -uo pipefail
+          VER="1.0.${BUILD_NUM}"
           for plist in $(find src-tauri/gen/apple -name 'Info.plist'); do
             /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "$plist" 2>/dev/null || true
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$plist"
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$plist"
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
-            echo "ATS patched: $plist"
+            /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Cortex records lectures and uploads the audio to your homelab for transcription." "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VER" "$plist"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILD_NUM}" "$plist"
+            echo "patched (v$VER): $plist"
           done
 
       - name: Build signed IPA (App Store)

@@ -168,19 +168,12 @@ html[data-mobile] .gm2-grid {
   align-items: start;
 }
 
-/* ── AddSource: compact the method list, give the input panel real room ─────── */
-html[data-mobile] .addsrc-left { flex: 0 0 auto; gap: 10px; }
-/* method picker → compact icon+label tiles in a wrapping row */
-html[data-mobile] .add-methods {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
-  gap: 6px;
-}
-html[data-mobile] .add-method { padding: 10px 6px; gap: 6px; }
-html[data-mobile] .add-method .am-d { display: none; }
-html[data-mobile] .addsrc-target { margin-top: 12px; }
+/* ── AddSource: the method picker is a themed dropdown on mobile (see AddSource.svelte),
+   so just give the selected input panel real room. ──────────────────────────── */
+html[data-mobile] .addsrc-left { flex: 0 0 auto; gap: 12px; }
+html[data-mobile] .addsrc-target { margin-top: 0; }
 html[data-mobile] .addsrc-panel { min-height: 42vh; overflow: visible; }
-html[data-mobile] .addsrc-textarea { min-height: 200px; }
+html[data-mobile] .addsrc-textarea { min-height: 220px; }
 html[data-mobile] .addsrc-drop { min-height: 170px; }
 
 /* ── GenerateMaterial: kill the inner scrollers, flow + sticky footer ───────── */
@@ -199,8 +192,9 @@ html[data-mobile] .gm2-foot {
 /* ── Notes: the master/detail flex chain collapses to 0 height in .m-main and
    renders blank. Give it a real height; when the list is expanded, stack it
    above the editor instead of a cramped 260px side column. ─────────────────── */
-html[data-mobile] .notes-page { padding: 14px 14px 0; }
-html[data-mobile] .notes { min-height: 74vh; margin-bottom: 16px; }
+html[data-mobile] .notes-workspace-scroll { display: block; }
+html[data-mobile] .notes-page { padding: 14px 14px 0; flex: none; min-height: auto; }
+html[data-mobile] .notes { min-height: 74vh; flex: none; margin-bottom: 16px; }
 html[data-mobile] .notes:not(.notes--collapsed) { grid-template-columns: 1fr; }
 
 /* Subject detail / university-portal (Moodle) panel: a centred desktop modal is

@@ -20,9 +20,9 @@
     { id: "record" as const, ico: "record", t: "Record Lecture",  d: "live audio + transcript",       k: "r" },
     { id: "photo"  as const, ico: "grid",   t: "Snap Photo",      d: "OCR a whiteboard / page",       k: "o" },
   ] as const;
-  // Lecture recording is desktop-only (no native mic plugin / homelab ingest on mobile yet),
-  // and the recorder view isn't mounted in MobileShell — selecting it left a blank screen.
-  const methods = allMethods.filter((m) => !(isMobile && m.id === "record"));
+  // Recording is available on mobile again: it captures audio and transcribes via the
+  // homelab Whisper endpoint (remote-first). MobileShell mounts the Recorder view.
+  const methods = allMethods;
 
   // Subject + topic selectors, seeded ONCE from the per-topic "+" token
   // (app.addSourceTopicId) or the active subject. A single guarded effect
@@ -153,14 +153,14 @@
     if (method === "upload") beginUpload();
     else if (method === "url") beginUrl();
     else if (method === "text") beginText();
-    else if (method === "record" && !isMobile) app.setView("recorder");
+    else if (method === "record") app.setView("recorder");
     else if (method === "photo") beginPhoto();
   }
 
   function selectMethod(id: typeof methods[number]["id"]) {
     method = id;
     value = "";
-    if (id === "record" && !isMobile) app.setView("recorder");
+    if (id === "record") app.setView("recorder");
   }
 
   // Claim the keyboard while this view is open so the method mnemonics
@@ -206,6 +206,19 @@
   <div class="addsrc-grid">
     <!-- LEFT: method picker + target -->
     <div class="addsrc-left">
+      {#if isMobile}
+        <!-- Touch: a themed dropdown instead of clipping tiles. -->
+        <div class="field">
+          <span class="onb-label mono">SOURCE TYPE</span>
+          <Picker
+            value={method ?? ""}
+            onChange={(id) => selectMethod(id as typeof methods[number]["id"])}
+            options={methods.map((m) => ({ id: m.id, label: m.t }))}
+            icon={methods.find((m) => m.id === method)?.ico ?? "doc"}
+            placeholder="Choose a source type…"
+          />
+        </div>
+      {:else}
       <div class="add-methods">
         {#each methods as m (m.id)}
           <button
@@ -221,6 +234,7 @@
           </button>
         {/each}
       </div>
+      {/if}
 
       <div class="addsrc-target">
         <div class="field">
@@ -248,15 +262,13 @@
 
     <!-- RIGHT: input panel for the chosen method -->
     <div class="addsrc-right">
+      <!-- On mobile, don't render the big empty panel before a type is picked. -->
+      {#if !(isMobile && method === null)}
       <div class="addsrc-panel">
         {#if method === null}
           <div class="addsrc-empty">
             <Icon name="plus" size={26} color="var(--fg-faint)" />
-            {#if isMobile}
-              <p class="mono faint">Pick a source type above to get started.</p>
-            {:else}
-              <p class="mono faint">Pick a source type on the left,<br />or press its key (u · p · t · r · o).</p>
-            {/if}
+            <p class="mono faint">Pick a source type on the left,<br />or press its key (u · p · t · r · o).</p>
           </div>
         {:else if method === "url"}
           <span class="onb-label mono">URL</span>
@@ -319,6 +331,7 @@
           </button>
         {/if}
       </div>
+      {/if}
     </div>
   </div>
 </div>

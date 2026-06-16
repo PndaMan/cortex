@@ -42,6 +42,7 @@
   let CalendarViewC = $state<any>(null);
   let AnalyticsViewC = $state<any>(null);
   let ExamViewC = $state<any>(null);
+  let RecorderViewC = $state<any>(null);
   const loadSettings = () =>
     SettingsView ?? import("../views/Settings.svelte").then((m) => (SettingsView = m.default));
   const loadCalendar = () =>
@@ -50,13 +51,16 @@
     AnalyticsViewC ?? import("../views/AnalyticsView.svelte").then((m) => (AnalyticsViewC = m.default));
   const loadExam = () =>
     ExamViewC ?? import("../views/ExamView.svelte").then((m) => (ExamViewC = m.default));
-  // Lecture recording/transcription is intentionally NOT available on mobile: phones
-  // can't run Whisper locally and the homelab /ingest offload isn't built yet.
+  const loadRecorder = () =>
+    RecorderViewC ?? import("../views/Recorder.svelte").then((m) => (RecorderViewC = m.default));
+  // Lecture recording captures audio and transcribes via the homelab Whisper endpoint
+  // (remote-first). iOS mic capture is best-effort in WKWebView (the mic permission is set).
   $effect(() => {
     if (app.view === "settings") void loadSettings();
     else if (app.view === "calendar") void loadCalendar();
     else if (app.view === "analytics") void loadAnalytics();
     else if (app.view === "exam") void loadExam();
+    else if (app.view === "recorder") void loadRecorder();
   });
 
   // If we land on the subject view with nothing active (fresh install), show Home.
@@ -72,7 +76,7 @@
   // A "deep" view sits under a subject/source — show a back chevron for it.
   // Add source is a bottom-tab destination, so it gets no back chevron.
   const isDeep = $derived(
-    ["source", "add-subject", "gen-material", "exam"].includes(app.view)
+    ["source", "add-subject", "gen-material", "exam", "recorder"].includes(app.view)
   );
   function back() {
     if (app.view === "source") {
@@ -96,7 +100,9 @@
   // Left-edge swipe = back, app-wide (mobile-only; this shell only renders on mobile).
   $effect(() => {
     let sx = -1, sy = 0;
-    const EDGE = 28, DX = 60, DY = 45;
+    // Start zone a touch wider than iOS's own edge reservation; require a clear
+    // rightward, mostly-horizontal drag so it doesn't fight vertical scrolling.
+    const EDGE = 40, DX = 55, DY = 40;
     function onStart(e: TouchEvent) {
       if (e.touches.length !== 1) { sx = -1; return; }
       const t = e.touches[0];
@@ -131,6 +137,7 @@
       case "add-source": return "Add source";
       case "add-subject": return "New subject";
       case "gen-material": return "Generate";
+      case "recorder": return "Record lecture";
       case "notes": return "Notes";
       case "calendar": return "Calendar";
       case "analytics": return "Insights";
@@ -207,10 +214,11 @@
         {#if ExamViewC}{@const C = ExamViewC}<C />{/if}
       {:else if app.view === "settings"}
         {#if SettingsView}{@const C = SettingsView}<C />{/if}
+      {:else if app.view === "recorder"}
+        {#if RecorderViewC}{@const C = RecorderViewC}<C />{/if}
       {:else}
-        <!-- Safety net: any view MobileShell doesn't render (e.g. the desktop-only
-             "recorder", or a view added later) falls back to Home instead of a
-             blank screen. titleText has the matching default ("Cortex"). -->
+        <!-- Safety net: any view MobileShell doesn't render (or one added later)
+             falls back to Home instead of a blank screen. -->
         <Dashboard />
       {/if}
     {/if}
@@ -269,6 +277,9 @@
   .m-shell {
     position: fixed;
     inset: 0;
+    /* 100dvh tracks the *visible* viewport on iOS so the bottom tab bar sits on the
+       true screen bottom (not under the home indicator / past the inset). */
+    height: 100dvh;
     display: flex;
     flex-direction: column;
     background: var(--bg);
