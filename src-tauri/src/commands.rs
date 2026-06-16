@@ -3343,28 +3343,47 @@ fn transcribe_remote(base: &str, file: &Path, model: &str) -> std::result::Resul
     } else {
         format!("{base}/v1/audio/transcriptions")
     };
-    let bytes = std::fs::read(file).map_err(|e| format!("read audio: {e}"))?;
-    let fname = file
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("audio.webm")
-        .to_string();
-    let part = reqwest::blocking::multipart::Part::bytes(bytes)
-        .file_name(fname)
-        .mime_str("application/octet-stream")
-        .map_err(|e| e.to_string())?;
-    let mut form = reqwest::blocking::multipart::Form::new()
-        .text("response_format", "text")
-        .part("file", part);
-    if !model.trim().is_empty() {
-        form = form.text("model", model.trim().to_string());
+    let model = model.trim();
+    // Build + send a fresh transcription request. The multipart body consumes the file
+    // bytes, so we re-read the file each call — which lets us retry after pulling a model.
+    let send = || -> std::result::Result<reqwest::blocking::Response, String> {
+        let bytes = std::fs::read(file).map_err(|e| format!("read audio: {e}"))?;
+        let fname = file
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("audio.webm")
+            .to_string();
+        let part = reqwest::blocking::multipart::Part::bytes(bytes)
+            .file_name(fname)
+            .mime_str("application/octet-stream")
+            .map_err(|e| e.to_string())?;
+        let mut form = reqwest::blocking::multipart::Form::new()
+            .text("response_format", "text")
+            .part("file", part);
+        if !model.is_empty() {
+            form = form.text("model", model.to_string());
+        }
+        // Transcription is slow; allow a generous timeout.
+        http_client(600).post(&url).multipart(form).send().map_err(|e| e.to_string())
+    };
+
+    let mut resp = send()?;
+    // faster-whisper / speaches answers a missing model with 404 "Model '…' is not
+    // installed locally. … POST /v1/models …". Pull it on demand once, then retry, so the
+    // user doesn't have to download models by hand.
+    if resp.status() == reqwest::StatusCode::NOT_FOUND && !model.is_empty() {
+        let body = resp.text().unwrap_or_default();
+        if body.contains("not installed") || body.contains("/v1/models") {
+            let models_url = format!("{}/models", url.trim_end_matches("/audio/transcriptions"));
+            let _ = http_client(900)
+                .post(&models_url)
+                .json(&serde_json::json!({ "model": model }))
+                .send(); // best-effort download; the retry surfaces any real failure
+            resp = send()?;
+        } else {
+            return Err(format!("HTTP 404: {}", last_line(&body)));
+        }
     }
-    // Transcription is slow; allow a generous timeout.
-    let resp = http_client(600)
-        .post(&url)
-        .multipart(form)
-        .send()
-        .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         let code = resp.status();
         let body = resp.text().unwrap_or_default();

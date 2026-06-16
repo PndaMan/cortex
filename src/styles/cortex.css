@@ -676,14 +676,17 @@ a { color: inherit; }
    CITATION CHIP
    ============================================================ */
 .cite {
-  display: inline-flex; align-items: center; gap: 4px;
-  height: 17px; padding: 0 6px;
-  font-size: var(--t-2xs); font-weight: 600;
+  /* Inline (not fixed-height inline-flex) so a long "source · location" wraps cleanly —
+     box-decoration-break:clone repeats the chip bg/border per line fragment instead of
+     one broken block, and touch-action gives a reliable tap target on mobile. */
+  display: inline; padding: 1px 6px;
+  font-size: var(--t-2xs); font-weight: 600; line-height: 1.7;
   color: var(--accent);
   background: color-mix(in oklab, var(--accent) 12%, transparent);
   border: 1px solid color-mix(in oklab, var(--accent) 35%, transparent);
   border-radius: var(--rad-2);
-  cursor: pointer; vertical-align: baseline;
+  cursor: pointer; touch-action: manipulation;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
   transition: background var(--dur-fast);
 }
 .cite:hover { background: color-mix(in oklab, var(--accent) 22%, transparent); }

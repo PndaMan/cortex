@@ -1064,8 +1064,12 @@ class AppStore {
     this.cheatNonce++;
     api.setSetting("last_subject_id", id).catch(() => {}); // reopen on next launch
   }
-  openSource(src: Source) {
+  // When opening a source from a citation, the cited location (e.g. "p.14" or a heading)
+  // so SourceViewer can scroll to the matching chunk. Consumed (cleared) once handled.
+  sourceJumpLoc = $state<string | null>(null);
+  openSource(src: Source, loc?: string | null) {
     this.activeSource = src;
+    this.sourceJumpLoc = loc?.trim() || null;
     this.view = "source";
   }
   // Open the add-source view with a topic preselected (per-topic + button).

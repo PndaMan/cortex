@@ -6,12 +6,36 @@
   import Icon from "../components/Icon.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
   import { isMobile } from "../lib/platform";
+  import { tick } from "svelte";
 
   // ---- state ----
   let chunks = $state<ChunkInfo[]>([]);
   let loading = $state(true);
   let split = $state(58); // percent for left pane
   let dragging = $state(false);
+
+  // Citation deep-link: when a source is opened from a ⟦… · loc⟧ chip, scroll to the
+  // chunk whose loc matches the cited location and flash it. Best-effort — no match just
+  // opens the source. Re-runs when chunks finish loading.
+  $effect(() => {
+    const loc = app.sourceJumpLoc;
+    void chunks;
+    if (!loc || chunks.length === 0) return;
+    const lc = loc.toLowerCase();
+    const target = chunks.find((c) => {
+      const cl = (c.loc ?? "").toLowerCase();
+      return !!cl && (cl === lc || cl.includes(lc) || lc.includes(cl));
+    });
+    app.sourceJumpLoc = null; // consume
+    if (!target) return;
+    void tick().then(() => {
+      const el = document.getElementById("sv-chunk-" + target.ord);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("sv-chunk-flash");
+      setTimeout(() => el.classList.remove("sv-chunk-flash"), 1600);
+    });
+  });
 
   // ---- per-kind preview routing ----
   // `assetUrl` is the webview-loadable URL for the persisted original (or, for
@@ -299,7 +323,7 @@
 
         <!-- Chunk list -->
         {#each chunks as chunk (chunk.ord)}
-          <div class="pdf-page" style="width:100%;max-width:560px">
+          <div id={"sv-chunk-" + chunk.ord} class="pdf-page" style="width:100%;max-width:560px">
             <div class="pdf-pageno mono">#{chunk.ord}</div>
             {#if chunk.loc}
               <div class="pdf-formula mono" style="margin-bottom:10px">{chunk.loc}</div>

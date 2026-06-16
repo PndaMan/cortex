@@ -426,6 +426,7 @@ a.md-up-name:hover, button.md-up-link:hover { color: var(--accent); text-decorat
 .pdf-note { font-size: var(--r-md); line-height: 1.6; color: var(--fg); padding: 6px 10px; border-radius: var(--rad-2); }
 .pdf-note.cite-flash { background: var(--search-hl); animation: citeflash 1.6s var(--ease); }
 @keyframes citeflash { 0% { background: color-mix(in oklab, var(--accent) 35%, transparent); } 100% { background: var(--search-hl); } }
+.sv-chunk-flash { animation: citeflash 1.6s var(--ease); border-radius: var(--rad-2); }
 .pdf-formula { margin-top: 14px; padding: 10px 12px; background: var(--bg-sunken); border: 1px solid var(--border); border-radius: var(--rad-2); font-size: var(--t-sm); color: var(--accent); }
 .sv-splitter { width: 7px; flex: none; cursor: col-resize; display: flex; align-items: center; justify-content: center; background: var(--border); }
 .sv-splitter span { width: 2px; height: 30px; border-radius: 2px; background: var(--border-strong); }

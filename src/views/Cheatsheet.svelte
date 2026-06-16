@@ -466,16 +466,11 @@
     editingKey = null;
     insertMode = true;
     app.setMode("INS"); // flip the status-bar mode block to INSERT
-    // Claim the keyboard so global single-key shortcuts (t/r/c/i…) don't fire while
-    // editing, and focus the first field so the caret is ready to type immediately.
+    // Claim the keyboard so global single-key shortcuts (t/r/c/i…) don't fire while editing.
     (window as any).__cortexViewKeys = true;
-    void tick().then(() => {
-      // On mobile, don't auto-focus the first field: it yanks the scroll to the top of
-      // the sheet (and pops the keyboard) the moment you tap Edit. Tap a block to edit it.
-      if (isMobile) return;
-      const first = document.querySelector(".cs-sections.is-insert .cs-ce") as HTMLElement | null;
-      if (first) focusCaretEnd(first);
-    });
+    // No auto-focus on enter (any platform): focusing the first field scrolls the sheet to
+    // the top — WebKit/WebKitGTK ignores focus({preventScroll}) — and pops the mobile
+    // keyboard. This is click-to-edit: tap/click a block to start editing it where you are.
   }
   function scheduleInlineSave() {
     inlineDirty = true;

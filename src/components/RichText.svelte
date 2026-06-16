@@ -209,13 +209,15 @@
   const blocks = $derived(parse(text));
 
   function openCite(v: string) {
-    // v looks like "source-name · p.14"; match the source by name.
-    const name = v.split("·")[0].trim().toLowerCase();
+    // v looks like "source-name · p.14"; match the source by name, carry the location.
+    const parts = v.split("·");
+    const name = parts[0].trim().toLowerCase();
+    const loc = parts.slice(1).join("·").trim();
     if (!name) return;
     const src =
       app.activeSources().find((s) => s.name.toLowerCase() === name) ??
       app.activeSources().find((s) => s.name.toLowerCase().includes(name) || name.includes(s.name.toLowerCase()));
-    if (src) app.openSource(src);
+    if (src) app.openSource(src, loc);
     else app.pushToast({ kind: "info", title: "Source", body: v });
   }
 </script>
