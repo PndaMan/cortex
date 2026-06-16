@@ -1017,9 +1017,24 @@ class AppStore {
     this.#syncTimer = setTimeout(() => void this.syncNow(), 5000);
   }
 
-  /** Push immediately (used by the debounce and the Settings "Sync now" button). */
+  /** Push immediately (used by the debounce). Skips when auto-sync is off. */
   async syncNow() {
     if (this.syncState === "off") return;
+    if (this.#syncTimer) { clearTimeout(this.#syncTimer); this.#syncTimer = null; }
+    this.syncState = "syncing";
+    try {
+      this.syncLastAt = await api.syncPush();
+      this.syncState = "synced";
+    } catch (e) {
+      this.syncState = "error";
+      this.pushToast({ kind: "error", title: "Sync failed", body: String(e) });
+    }
+  }
+
+  /** Manual "Sync now" (Settings button) — pushes whenever a target is configured, even if
+   *  background auto-sync is off; surfaces any error instead of silently doing nothing. */
+  async syncManual() {
+    if (this.syncState === "syncing") return;
     if (this.#syncTimer) { clearTimeout(this.#syncTimer); this.#syncTimer = null; }
     this.syncState = "syncing";
     try {

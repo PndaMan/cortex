@@ -1692,7 +1692,7 @@ Notes: {about}</pre>
               <div class="set-row-t">Password <span class="faint">optional</span></div>
               <div class="row-inline">
                 <input class="input mono" type="password" bind:value={syncPass} onchange={saveSync} onblur={saveSync} placeholder="••••••••" />
-                <button class="btn btn--primary" disabled={!syncOn || app.syncState === "syncing"} onclick={() => app.syncNow()}>
+                <button class="btn btn--primary" disabled={app.syncState === "syncing" || !(anySyncUrl || hlBase.trim())} onclick={() => app.syncManual()}>
                   <Icon name="upload" size={12} /> {app.syncState === "syncing" ? "Syncing…" : "Sync now"}
                 </button>
               </div>

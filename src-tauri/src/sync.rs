@@ -76,7 +76,19 @@ fn reachable(cfg: &SyncCfg) -> bool {
 /// public — and the first reachable one is used, so the same device works on LAN,
 /// over Tailscale, or from anywhere without reconfiguring.
 pub fn read_cfg(c: &Connection) -> Option<SyncCfg> {
-    if repo::get_setting(c, K_ENABLED).ok().flatten().as_deref() != Some("true") {
+    read_cfg_inner(c, true)
+}
+
+/// Manual "Sync now" config: same as `read_cfg` but skips the enable gate — an explicit
+/// sync should run whenever a target is configured, even if background auto-sync is off.
+pub fn read_cfg_manual(c: &Connection) -> Option<SyncCfg> {
+    read_cfg_inner(c, false)
+}
+
+fn read_cfg_inner(c: &Connection, require_enabled: bool) -> Option<SyncCfg> {
+    if require_enabled
+        && repo::get_setting(c, K_ENABLED).ok().flatten().as_deref() != Some("true")
+    {
         return None;
     }
     let user = repo::get_setting(c, K_USER).ok().flatten().unwrap_or_default();
@@ -486,7 +498,11 @@ pub async fn sync_push(app: AppHandle) -> Result<i64> {
             .join("cortex.db");
         let cfg = {
             let c = state.db.lock().unwrap();
-            read_cfg(&c).ok_or_else(|| Error::Other("sync is not configured".into()))?
+            read_cfg_manual(&c).ok_or_else(|| {
+                Error::Other(
+                    "Sync target not set — add a Homelab URL (or sync URL) in Settings → Integrations.".into(),
+                )
+            })?
         };
         // Checkpoint the WAL into the main file, then copy a clean snapshot.
         let ts = now_ms();
