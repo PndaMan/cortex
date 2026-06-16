@@ -108,6 +108,16 @@ fn read_cfg_inner(c: &Connection, require_enabled: bool) -> Option<SyncCfg> {
     .into_iter()
     .flatten()
     .collect();
+    // On mobile the per-tier sync URL fields are hidden, so sync ALWAYS follows the
+    // single Homelab URL (→ its /sync WebDAV, with the homelab's own local→Tailscale→
+    // public reachability pick). This avoids a stale explicit sync_url pointing at the
+    // proxy root without /sync, or at a Tailscale host the phone can't reach.
+    #[cfg(mobile)]
+    {
+        candidates = homelab::resolved_setting(c, "sync_url")
+            .map(|u| vec![u.trim_end_matches('/').to_string()])
+            .unwrap_or_default();
+    }
     // No explicit sync URL set? Derive it from the unified homelab base (base + /sync),
     // so configuring the single homelab URL also enables sync — resolved_setting already
     // does the local→Tailscale→public fallback. This is why "Test all" can pass but sync
@@ -262,8 +272,12 @@ fn is_syncable_setting(key: &str) -> bool {
     // links + the courses themselves already sync (they're DB rows); this adds the
     // token/site so the phone can fetch fresh data. It rides the user's own homelab
     // WebDAV, so the token never leaves their control.
-    const MOODLE_SYNC: &[&str] = &["moodle_url", "moodle_token", "moodle_userid"];
-    if MOODLE_SYNC.contains(&key) {
+    const SYNCED_CREDS: &[&str] = &[
+        "moodle_url", "moodle_token", "moodle_userid",
+        "openrouter_api_key", "gemini_api_key", "claude_api_key", "openai_api_key",
+        "custom_endpoint",
+    ];
+    if SYNCED_CREDS.contains(&key) {
         return true;
     }
     // Hard exclusions first (credentials, device endpoints, device-local state).

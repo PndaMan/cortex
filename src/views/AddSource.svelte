@@ -105,8 +105,18 @@
       for (const path of paths) {
         const name = path.split(/[\\/]/).pop() ?? path;
         // On mobile the picker returns a temp path the OS deletes before the
-        // background ingest runs — copy it into app storage first.
-        const ingestPath = isMobile ? await api.stageUpload(path).catch(() => path) : path;
+        // background ingest runs — copy it into app storage first. Surface a real
+        // error (don't silently fall back to the doomed temp path) so a staging
+        // failure is visible instead of a later "no such file" deep in ingest.
+        let ingestPath = path;
+        if (isMobile) {
+          try {
+            ingestPath = await api.stageUpload(path);
+          } catch (e) {
+            app.pushToast({ kind: "error", title: "Couldn't read the file", body: String(e) });
+            continue;
+          }
+        }
         queueIngest({ subject_id: selectedSubjectId, topic_id: topicId, path: ingestPath, name, tags: [] }, name);
       }
       if (paths.length > 1) {
@@ -146,7 +156,15 @@
       if (!path) return;
 
       const name = path.split(/[\\/]/).pop() ?? path;
-      const ingestPath = isMobile ? await api.stageUpload(path).catch(() => path) : path;
+      let ingestPath = path;
+      if (isMobile) {
+        try {
+          ingestPath = await api.stageUpload(path);
+        } catch (e) {
+          app.pushToast({ kind: "error", title: "Couldn't read the image", body: String(e) });
+          return;
+        }
+      }
       startIngest({ subject_id: selectedSubjectId, topic_id: topicId, path: ingestPath, kind: "image", name, tags: [] }, name);
     } catch (e) {
       app.pushToast({ kind: "error", title: "Image pick failed", body: String(e) });

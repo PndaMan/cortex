@@ -1395,7 +1395,8 @@
   .cs-fab-edit {
     position: fixed;
     right: 14px;
-    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    /* Sit directly ABOVE the shell's Ask pill (same corner) instead of overlapping it. */
+    bottom: calc(74px + env(safe-area-inset-bottom, 0px));
     display: inline-flex;
     align-items: center;
     gap: 6px;
