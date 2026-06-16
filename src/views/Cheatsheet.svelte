@@ -436,7 +436,7 @@
 
   // Focus a contenteditable and drop the caret at its end.
   function focusCaretEnd(el: HTMLElement) {
-    el.focus();
+    el.focus({ preventScroll: true }); // don't yank the view to the top on desktop enter
     const r = document.createRange();
     r.selectNodeContents(el);
     r.collapse(false);

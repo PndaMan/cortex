@@ -617,7 +617,7 @@ pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult>
             if let Some(p) = input.path.as_deref() {
                 emit_progress(&app, &id, "parsing", "transcribing audio (Whisper)", 35);
                 let remote = whisper_remote_url(&state);
-                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref());
+                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref(), &whisper_model(&state));
                 if !t.trim().is_empty() {
                     text = t;
                     warning = w;
@@ -854,7 +854,7 @@ pub async fn add_source(
             if let Some(p) = input.path.as_deref() {
                 emit_progress(&app, &source_id, "parsing", "transcribing audio (Whisper)", 35);
                 let remote = whisper_remote_url(&state);
-                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref());
+                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref(), &whisper_model(&state));
                 if t.trim().is_empty() { (text, w.or(warning)) } else { (t, w) }
             } else {
                 (text, warning)
@@ -2878,6 +2878,21 @@ fn whisper_remote_url(state: &AppState) -> Option<String> {
     crate::homelab::resolved_setting(&c, "whisper_url")
 }
 
+/// Model name sent to the remote (OpenAI-compatible) Whisper endpoint. A homelab
+/// faster-whisper/speaches server needs a faster-whisper model id it can load, not
+/// OpenAI's "whisper-1" — so this is configurable (Settings → Integrations), defaulting
+/// to a small multilingual model. Empty → omit the field (server uses its own default).
+fn whisper_model(state: &AppState) -> String {
+    state
+        .db
+        .lock()
+        .ok()
+        .and_then(|c| crate::repo::get_setting(&c, "whisper_model").ok().flatten())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Systran/faster-whisper-base".to_string())
+}
+
 // ---- external dependency status -----------------------------------------
 
 #[derive(serde::Serialize)]
@@ -3123,6 +3138,7 @@ fn transcribe(
     data_dir: &Path,
     allow_install: bool,
     remote_url: Option<&str>,
+    remote_model: &str,
 ) -> (String, Option<String>) {
     use std::process::Command;
     let outdir = std::env::temp_dir().join(format!("cortex-asr-{}", crate::db::new_id()));
@@ -3131,7 +3147,7 @@ fn transcribe(
     // 0. Remote homelab Whisper (OpenAI-compatible /v1/audio/transcriptions).
     //    Tried first when configured so users never need a local Python toolchain.
     if let Some(base) = remote_url.map(str::trim).filter(|s| !s.is_empty()) {
-        match transcribe_remote(base, file) {
+        match transcribe_remote(base, file, remote_model) {
             Ok(t) => {
                 let _ = std::fs::remove_dir_all(&outdir);
                 return (t, None); // empty = ran but recognised nothing
@@ -3317,7 +3333,7 @@ fn last_line(s: &str) -> String {
 /// Send an audio file to an OpenAI-compatible transcription endpoint
 /// (`{base}/v1/audio/transcriptions`, model `whisper-1`). Returns the text or a
 /// short error. This is how the homelab Whisper service is consumed.
-fn transcribe_remote(base: &str, file: &Path) -> std::result::Result<String, String> {
+fn transcribe_remote(base: &str, file: &Path, model: &str) -> std::result::Result<String, String> {
     let base = base.trim_end_matches('/');
     // Accept either a bare base ("http://host:9009") or a full endpoint.
     let url = if base.ends_with("/audio/transcriptions") {
@@ -3337,10 +3353,12 @@ fn transcribe_remote(base: &str, file: &Path) -> std::result::Result<String, Str
         .file_name(fname)
         .mime_str("application/octet-stream")
         .map_err(|e| e.to_string())?;
-    let form = reqwest::blocking::multipart::Form::new()
-        .text("model", "whisper-1")
+    let mut form = reqwest::blocking::multipart::Form::new()
         .text("response_format", "text")
         .part("file", part);
+    if !model.trim().is_empty() {
+        form = form.text("model", model.trim().to_string());
+    }
     // Transcription is slow; allow a generous timeout.
     let resp = http_client(600)
         .post(&url)
@@ -3468,7 +3486,7 @@ pub async fn transcribe_partial(app: AppHandle, audio: Vec<u8>, ext: Option<Stri
     std::fs::write(&file, &audio)?;
 
     let remote = whisper_remote_url(&app.state::<AppState>());
-    let (transcript, _warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), false, remote.as_deref());
+    let (transcript, _warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), false, remote.as_deref(), &whisper_model(&app.state::<AppState>()));
     let _ = std::fs::remove_file(&file);
     Ok(transcript)
     })
@@ -3519,7 +3537,7 @@ pub async fn save_recording(
 
     // 3. transcribe (homelab Whisper if configured, else local)
     let remote = whisper_remote_url(&state);
-    let (transcript, warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref());
+    let (transcript, warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref(), &whisper_model(&state));
 
     if transcript.trim().is_empty() {
         let c = state.db.lock().unwrap();

@@ -1104,7 +1104,7 @@ pub fn get_cheatsheet_sections(
 ) -> Result<Vec<CsSection>> {
     let cid: Option<String> = conn
         .query_row(
-            "SELECT id FROM cheatsheets WHERE subject_id=?1 AND IFNULL(topic_id,'')=IFNULL(?2,'') LIMIT 1",
+            "SELECT id FROM cheatsheets WHERE subject_id=?1 AND IFNULL(topic_id,'')=IFNULL(?2,'') ORDER BY updated_at DESC LIMIT 1",
             params![subject_id, topic_id],
             |r| r.get(0),
         )

@@ -712,7 +712,15 @@ class AppStore {
       // Web images (diagrams) default ON when a homelab SearXNG is connected; an
       // explicit "false" from Settings → Homelab overrides that default.
       {
-        const hasSearx = !!(all["searxng_url"] && all["searxng_url"].trim());
+        // SearXNG is reachable via an explicit searxng_url OR derived from any homelab
+        // base (/searxng) — mirror the backend's resolved_setting so a Tailscale-only
+        // setup still counts as "has SearXNG".
+        const hasSearx = !!(
+          all["searxng_url"]?.trim() ||
+          all["homelab_base"]?.trim() ||
+          all["homelab_tailscale_base"]?.trim() ||
+          all["homelab_public_base"]?.trim()
+        );
         this.webImagesEnabled = all["web_images_enabled"] === "false"
           ? false
           : all["web_images_enabled"] === "true"
