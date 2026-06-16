@@ -1573,6 +1573,9 @@ Notes: {about}</pre>
         </section>
         {/if}
 
+        <!-- Per-service URL overrides are a desktop power-user feature; on mobile the
+             single Homelab URL drives every service (search/whisper/ollama/sync/ingest). -->
+        {#if !isMobile}
         <section class="set-group">
           <div class="set-group-h">
             <h3 class="set-group-t">Per-service overrides <span class="faint">optional</span></h3>
@@ -1618,6 +1621,7 @@ Notes: {about}</pre>
           failHint: "Unreachable — check the URL and that the Whisper service is running.",
           hint: "OpenAI-compatible endpoint, base URL only (Cortex calls <span class='mono'>/v1/audio/transcriptions</span>).",
         })}
+        {/if}
 
         <section class="set-group">
           <div class="set-group-h svc-h">
@@ -1685,7 +1689,7 @@ Notes: {about}</pre>
               <div class="set-row-t">Password <span class="faint">optional</span></div>
               <div class="row-inline">
                 <input class="input mono" type="password" bind:value={syncPass} onchange={saveSync} onblur={saveSync} placeholder="••••••••" />
-                <button class="btn btn--primary" disabled={!syncOn || app.syncState === "syncing"} onclick={() => app.syncNow()}>
+                <button class="btn btn--primary" disabled={app.syncState === "syncing" || !(anySyncUrl || hlBase.trim())} onclick={() => app.syncNow()}>
                   <Icon name="upload" size={12} /> {app.syncState === "syncing" ? "Syncing…" : "Sync now"}
                 </button>
               </div>

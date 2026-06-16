@@ -20,6 +20,7 @@
 
 use crate::db::AppState;
 use crate::error::{Error, Result};
+use crate::homelab;
 use crate::repo;
 use rusqlite::Connection;
 use std::collections::HashSet;
@@ -75,7 +76,20 @@ fn reachable(cfg: &SyncCfg) -> bool {
 /// public — and the first reachable one is used, so the same device works on LAN,
 /// over Tailscale, or from anywhere without reconfiguring.
 pub fn read_cfg(c: &Connection) -> Option<SyncCfg> {
-    if repo::get_setting(c, K_ENABLED).ok().flatten().as_deref() != Some("true") {
+    read_cfg_inner(c, true)
+}
+
+/// Manual "Sync now" config: same as `read_cfg` but skips the enable gate — an
+/// explicit sync should run whenever a target is configured, even when background
+/// auto-sync is toggled off.
+pub fn read_cfg_manual(c: &Connection) -> Option<SyncCfg> {
+    read_cfg_inner(c, false)
+}
+
+fn read_cfg_inner(c: &Connection, require_enabled: bool) -> Option<SyncCfg> {
+    if require_enabled
+        && repo::get_setting(c, K_ENABLED).ok().flatten().as_deref() != Some("true")
+    {
         return None;
     }
     let user = repo::get_setting(c, K_USER).ok().flatten().unwrap_or_default();
@@ -85,7 +99,7 @@ pub fn read_cfg(c: &Connection) -> Option<SyncCfg> {
     let local = endpoint(c, K_URL);
     let ts = endpoint(c, K_URL_TS);
     let public = endpoint(c, K_URL_PUB);
-    let candidates: Vec<String> = match mode.as_str() {
+    let mut candidates: Vec<String> = match mode.as_str() {
         "local" => vec![local],
         "tailscale" => vec![ts],
         "public" => vec![public],
@@ -94,6 +108,15 @@ pub fn read_cfg(c: &Connection) -> Option<SyncCfg> {
     .into_iter()
     .flatten()
     .collect();
+    // No explicit sync URL set? Derive it from the unified homelab base (base + /sync),
+    // so configuring the single homelab URL also enables sync — resolved_setting already
+    // does the local→Tailscale→public fallback. This is why "Test all" can pass but sync
+    // was a no-op: sync had its own (empty) URL fields.
+    if candidates.is_empty() {
+        if let Some(u) = homelab::resolved_setting(c, "sync_url") {
+            candidates.push(u.trim_end_matches('/').to_string());
+        }
+    }
     if candidates.is_empty() {
         return None;
     }
@@ -477,7 +500,10 @@ pub async fn sync_push(app: AppHandle) -> Result<i64> {
             .join("cortex.db");
         let cfg = {
             let c = state.db.lock().unwrap();
-            read_cfg(&c).ok_or_else(|| Error::Other("sync is not configured".into()))?
+            // Manual push: don't require the auto-sync toggle — if a target (or homelab
+            // base) is configured, an explicit "Sync now" should work.
+            read_cfg_manual(&c)
+                .ok_or_else(|| Error::Other("Sync target not set — add a Homelab URL or sync URL in Settings → Integrations.".into()))?
         };
         // Checkpoint the WAL into the main file, then copy a clean snapshot.
         let ts = now_ms();
