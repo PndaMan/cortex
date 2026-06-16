@@ -2806,6 +2806,26 @@ fn detect_pkg_manager() -> &'static str {
     }
 }
 
+/// How Cortex was installed, so the UI routes self-updates correctly. Tauri's Linux
+/// auto-updater only works for AppImage; deb/rpm/pacman installs must update via the
+/// system package manager. AppImage sets the APPIMAGE env var at runtime.
+#[tauri::command]
+pub fn install_kind() -> String {
+    if cfg!(target_os = "linux") {
+        if std::env::var_os("APPIMAGE").is_some() {
+            "appimage".to_string()
+        } else {
+            "linux-package".to_string()
+        }
+    } else if cfg!(target_os = "macos") {
+        "macos".to_string()
+    } else if cfg!(target_os = "windows") {
+        "windows".to_string()
+    } else {
+        "unknown".to_string()
+    }
+}
+
 /// Status of every external tool Cortex shells out to + a copy-pasteable command
 /// to install whatever's missing. We don't run installers ourselves — system
 /// packages need sudo and vary by distro — but this makes setup one paste.

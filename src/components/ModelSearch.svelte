@@ -5,6 +5,7 @@
   // so the full 300+ OpenRouter catalog is searchable, not a fixed dropdown.
   import Icon from "./Icon.svelte";
   import { tick } from "svelte";
+  import { menuPosition, menuStyle, type MenuPos } from "../lib/dropdown";
 
   let {
     value,
@@ -27,7 +28,7 @@
   const CAP = 60; // render at most this many rows; keep typing to narrow
 
   let open = $state(false);
-  let dropUp = $state(false);
+  let menuPos = $state<MenuPos | null>(null);
   let q = $state("");
   let btnEl = $state<HTMLButtonElement | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
@@ -44,17 +45,21 @@
 
   function toggle() {
     if (!open) {
-      if (btnEl) {
-        const rect = btnEl.getBoundingClientRect();
-        const below = window.innerHeight - rect.bottom;
-        dropUp = below < 320 && rect.top > below;
-      }
+      if (btnEl) menuPos = menuPosition(btnEl.getBoundingClientRect(), 300);
       q = "";
       onOpen?.();
       void tick().then(() => inputEl?.focus());
     }
     open = !open;
   }
+
+  // A fixed menu doesn't follow the page — close it if the user scrolls.
+  $effect(() => {
+    if (!open) return;
+    const close = () => (open = false);
+    window.addEventListener("scroll", close, true);
+    return () => window.removeEventListener("scroll", close, true);
+  });
   function pick(id: string) {
     onChange(id);
     open = false;
@@ -78,9 +83,9 @@
     </span>
     <Icon name="chevron" size={11} style="transform:rotate(90deg);color:var(--fg-faint)" />
   </button>
-  {#if open}
+  {#if open && menuPos}
     <div class="picker-back" role="presentation" onclick={() => (open = false)}></div>
-    <div class={"picker-menu ms-menu" + (dropUp ? " up" : "")}>
+    <div class="picker-menu ms-menu" style={menuStyle(menuPos)}>
       <div class="ms-search">
         <Icon name="search" size={12} color="var(--fg-faint)" />
         <!-- svelte-ignore a11y_autofocus -->
@@ -127,7 +132,6 @@
   /* Reuses global .picker / .picker-btn / .picker-menu / .picker-item / .picker-back /
      .picker-val (app.css). These are the search-specific overrides + additions. */
   .ms-menu {
-    width: max(300px, 100%);
     padding: 0;
     max-height: 340px;
     overflow: hidden;

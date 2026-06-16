@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
+  import { menuPosition, menuStyle, type MenuPos } from "../lib/dropdown";
 
   let {
     value,
@@ -16,25 +17,25 @@
   } = $props();
 
   let open = $state(false);
-  let dropUp = $state(false);
+  let menuPos = $state<MenuPos | null>(null);
   let btnEl = $state<HTMLButtonElement | null>(null);
 
   const cur = $derived(options.find((o) => o.id === value));
 
-  // Open upward when there isn't room below the trigger (e.g. a picker near the
-  // bottom of the screen) and there's more room above — so the menu never clips
-  // off-screen. Recomputed every time it opens.
+  // Anchor the menu to the trigger as a viewport-fixed box (escapes overflow clipping),
+  // flipping up / shifting on-screen as needed. Recomputed every time it opens.
   function toggle() {
-    if (!open && btnEl) {
-      const rect = btnEl.getBoundingClientRect();
-      const below = window.innerHeight - rect.bottom;
-      const above = rect.top;
-      // Approx menu height: capped at the CSS max-height (220) + chrome.
-      const needed = Math.min(232, options.length * 30 + 16);
-      dropUp = below < needed && above > below;
-    }
+    if (!open && btnEl) menuPos = menuPosition(btnEl.getBoundingClientRect());
     open = !open;
   }
+
+  // A fixed menu doesn't follow the page — close it if the user scrolls.
+  $effect(() => {
+    if (!open) return;
+    const close = () => (open = false);
+    window.addEventListener("scroll", close, true);
+    return () => window.removeEventListener("scroll", close, true);
+  });
 </script>
 
 <div class="picker">
@@ -52,9 +53,9 @@
     </span>
     <Icon name="chevron" size={11} style="transform:rotate(90deg);color:var(--fg-faint)" />
   </button>
-  {#if open}
+  {#if open && menuPos}
     <div class="picker-back" role="presentation" onclick={() => (open = false)}></div>
-    <div class={"picker-menu" + (dropUp ? " up" : "")}>
+    <div class="picker-menu" style={menuStyle(menuPos)}>
       {#each options as o}
         <button
           type="button"

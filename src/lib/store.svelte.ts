@@ -1502,6 +1502,17 @@ class AppStore {
         if (!silent) this.pushToast({ kind: "success", title: "You're up to date", body: "Cortex is running the latest version." });
         return;
       }
+      // Linux package installs (deb/rpm/AUR) can't be self-updated — Tauri's updater only
+      // replaces AppImages. Point the user at their package manager instead of failing.
+      const kind = await api.installKind().catch(() => "unknown");
+      if (kind === "linux-package") {
+        this.pushToast({
+          kind: "info",
+          title: `Cortex ${update.version} is available`,
+          body: "You installed Cortex with your package manager — update it there (e.g. yay -Syu cortex-bin, sudo apt upgrade, or brew upgrade --cask cortex).",
+        });
+        return;
+      }
       const ok = await this.confirm({
         title: `Update to ${update.version}?`,
         body: update.body?.trim() || "A new version of Cortex is available.",
@@ -1509,9 +1520,13 @@ class AppStore {
       });
       if (!ok) return;
       this.pushToast({ kind: "info", title: "Downloading update…", body: "Cortex will restart when it's ready." });
-      await update.downloadAndInstall();
-      const { relaunch } = await import("@tauri-apps/plugin-process");
-      await relaunch();
+      try {
+        await update.downloadAndInstall();
+        const { relaunch } = await import("@tauri-apps/plugin-process");
+        await relaunch();
+      } catch (e) {
+        this.pushToast({ kind: "error", title: "Update failed to install", body: `Couldn't apply the update automatically: ${String(e)}. You can download the latest release manually from GitHub.` });
+      }
     } catch (e) {
       if (!silent) this.pushToast({ kind: "error", title: "Update check failed", body: String(e) });
     } finally {

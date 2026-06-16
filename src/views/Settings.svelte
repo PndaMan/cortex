@@ -80,7 +80,7 @@
       { id: "gemini-2.0-flash-001",  label: "Gemini 2.0 Flash — legacy, cheap" },
       { id: "gemini-2.5-pro",        label: "Gemini 2.5 Pro — ★ premium" },
     ] },
-    { id: "openrouter", label: "OpenRouter (everything)", models: [
+    { id: "openrouter", label: "OpenRouter", models: [
       // ── best value: cheap + capable ──
       { id: "google/gemini-2.5-flash",            label: "Gemini 2.5 Flash — ⚡ best value" },
       { id: "google/gemini-2.5-flash-lite",       label: "Gemini 2.5 Flash-Lite — cheapest" },

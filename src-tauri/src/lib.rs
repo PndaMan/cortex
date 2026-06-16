@@ -318,6 +318,7 @@ pub fn run() {
             commands::retag_calendar_events,
             commands::dependency_status,
             commands::install_dependencies,
+            commands::install_kind,
             commands::list_folder_sources,
             // notes
             notes::create_note,
