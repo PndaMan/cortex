@@ -176,11 +176,22 @@ export function reorderable(node: HTMLElement, opts: ReorderOpts) {
     }
   }
 
-  // Stop the page from scrolling ONLY while an armed touch-drag is in progress.
-  // Non-passive so preventDefault actually takes effect; a no-op otherwise, so
-  // normal scrolling over the card is untouched.
+  // touchmove fires reliably during a native scroll (pointermove often does NOT —
+  // iOS captures the gesture for scrolling and stops dispatching it to the element),
+  // so this is the AUTHORITATIVE place to (a) cancel a pending long-press the moment
+  // the finger moves = the user is scrolling, not reordering, and (b) block the
+  // scroll once a drag is actually armed.
   function onTouchMove(e: TouchEvent) {
-    if (dragging && isTouch && e.cancelable) e.preventDefault();
+    if (!pressing || !isTouch) return;
+    const t = e.touches[0];
+    if (!armed) {
+      if (t && (Math.abs(t.clientX - startX) > 8 || Math.abs(t.clientY - startY) > 8)) {
+        cancelHold();
+        pressing = false; // let the page scroll; this gesture will never become a drag
+      }
+      return;
+    }
+    if (dragging && e.cancelable) e.preventDefault();
   }
 
   function onPointerUp() {
