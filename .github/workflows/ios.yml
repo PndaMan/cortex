@@ -82,6 +82,14 @@ jobs:
             /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILD_NUM}" "$plist"
             echo "patched (v$VER): $plist"
           done
+          # The AUTHORITATIVE version source: `cargo tauri ios build` re-syncs the bundle
+          # version from the merged Tauri config at build time (verified — it overwrites the
+          # plist/pbxproj patches above back to tauri.conf.json's value, while preserving
+          # custom plist keys like ATS/mic). So set the version in the iOS-ONLY config; the
+          # desktop tauri.conf.json is left untouched.
+          cfg=src-tauri/tauri.ios.conf.json
+          tmp=$(mktemp); jq --arg v "$VER" '.version = $v' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
+          echo "tauri.ios.conf.json version → $VER"; cat "$cfg"
 
       - name: Build for the iOS Simulator (unsigned)
         run: cargo tauri ios build --target aarch64-sim --ci
@@ -154,6 +162,14 @@ jobs:
             /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILD_NUM}" "$plist"
             echo "patched (v$VER): $plist"
           done
+          # The AUTHORITATIVE version source: `cargo tauri ios build` re-syncs the bundle
+          # version from the merged Tauri config at build time (verified — it overwrites the
+          # plist/pbxproj patches above back to tauri.conf.json's value, while preserving
+          # custom plist keys like ATS/mic). So set the version in the iOS-ONLY config; the
+          # desktop tauri.conf.json is left untouched.
+          cfg=src-tauri/tauri.ios.conf.json
+          tmp=$(mktemp); jq --arg v "$VER" '.version = $v' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
+          echo "tauri.ios.conf.json version → $VER"; cat "$cfg"
 
       # Build the device app with signing disabled (the Xcode Rust build phase still
       # compiles the aarch64-apple-ios staticlib), then zip it into an unsigned IPA.
@@ -320,6 +336,14 @@ jobs:
             /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILD_NUM}" "$plist"
             echo "patched (v$VER): $plist"
           done
+          # The AUTHORITATIVE version source: `cargo tauri ios build` re-syncs the bundle
+          # version from the merged Tauri config at build time (verified — it overwrites the
+          # plist/pbxproj patches above back to tauri.conf.json's value, while preserving
+          # custom plist keys like ATS/mic). So set the version in the iOS-ONLY config; the
+          # desktop tauri.conf.json is left untouched.
+          cfg=src-tauri/tauri.ios.conf.json
+          tmp=$(mktemp); jq --arg v "$VER" '.version = $v' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
+          echo "tauri.ios.conf.json version → $VER"; cat "$cfg"
 
       - name: Build signed IPA (App Store)
         env:
