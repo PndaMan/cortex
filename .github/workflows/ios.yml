@@ -171,6 +171,24 @@ jobs:
           tmp=$(mktemp); jq --arg v "$VER" '.version = $v' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
           echo "tauri.ios.conf.json version → $VER"; cat "$cfg"
 
+      - name: Apply the Cortex app icon (override tauri-ios-init's default Tauri icon)
+        # `cargo tauri ios init` generates the AppIcon.appiconset with Tauri's DEFAULT swirl
+        # icon and does NOT pull in src-tauri/icons/ios — verified by decoding the shipped
+        # IPA (the installed icon was the Tauri logo, not the Cortex brain). Overwrite the
+        # generated PNGs with ours; the filenames match the Contents.json the template
+        # already references, so actool compiles the brain into Assets.car + the loose
+        # AppIcon*.png that LiveContainer/SpringBoard read.
+        run: |
+          set -euo pipefail
+          found=0
+          for set in $(find src-tauri/gen/apple -type d -name 'AppIcon.appiconset'); do
+            found=1
+            echo "── $set (before)"; ls "$set"
+            cp -f src-tauri/icons/ios/*.png "$set"/
+            echo "── $set (after)";  ls "$set"
+          done
+          [ "$found" = 1 ] || { echo "::error::no AppIcon.appiconset under src-tauri/gen/apple"; exit 1; }
+
       # Build the device app with signing disabled (the Xcode Rust build phase still
       # compiles the aarch64-apple-ios staticlib), then zip it into an unsigned IPA.
       - name: Build unsigned device .app → .ipa
