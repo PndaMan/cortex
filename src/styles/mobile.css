@@ -235,6 +235,9 @@ html[data-mobile] .workspace-scroll { padding-bottom: 76px; }
 /* Bigger "In your words" bio box. */
 html[data-mobile] .set-bio { min-height: 150px; }
 
+/* Exam mode: the topic chips overflowed off-screen with many topics → wrap them. */
+html[data-mobile] .tag-suggest { flex-wrap: wrap; }
+
 /* Recorder: the live-transcript panel is removed on mobile → single full-width stage. */
 html[data-mobile] .recorder { display: flex; flex-direction: column; }
 html[data-mobile] .rec-stage { width: 100%; }

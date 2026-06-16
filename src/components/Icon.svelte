@@ -58,6 +58,8 @@
     <path d="M6 6h4v4H6z M6 6a1.4 1.4 0 1 1-1.4-1.4H6 M10 6a1.4 1.4 0 1 0 1.4-1.4H10 M6 10a1.4 1.4 0 1 0-1.4 1.4V10 M10 10a1.4 1.4 0 1 1 1.4 1.4V10" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
   {:else if name === "bolt"}
     <path d="M9 2 L4 9 H8 L7 14 L12 7 H8 Z" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
+  {:else if name === "menu"}
+    <path d="M2.5 4.5h11 M2.5 8h11 M2.5 11.5h11" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
   {:else if name === "grid"}
     <g>
       <path d="M3 3h4v4H3z" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
