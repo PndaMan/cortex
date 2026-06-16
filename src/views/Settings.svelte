@@ -6,6 +6,8 @@
   import type { Memory } from "../lib/api";
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
+  import ModelSearch from "../components/ModelSearch.svelte";
+  import { loadOpenRouterModels, type OrModel } from "../lib/openrouter";
   import { stations } from "../lib/mock";
   import { keybinds, ACTION_LABELS, ACTION_ORDER, LEADER_ACTIONS } from "../lib/keybinds.svelte";
   import type { Action } from "../lib/keybinds.svelte";
@@ -178,6 +180,18 @@
 
   // ---- keys state ----
   let keys = $state({ openrouter: "", gemini: "", claude: "", openai: "", custom: "" });
+  // Live OpenRouter catalog for the searchable model picker (the curated list is the
+  // offline fallback). The /models endpoint is public + CORS-open, fetched once.
+  let orModels = $state<OrModel[]>([]);
+  let orLoading = $state(false);
+  let orLoaded = false;
+  async function ensureOrModels() {
+    if (orLoaded || orLoading) return;
+    orLoading = true;
+    try { orModels = await loadOpenRouterModels(); orLoaded = true; }
+    catch { /* keep the curated list */ }
+    finally { orLoading = false; }
+  }
   const keyMeta = [
     { id: "openrouter", label: "OpenRouter",              note: "openrouter.ai/keys",    placeholder: "sk-or-…" },
     { id: "gemini",     label: "Gemini",                  note: "Google AI Studio",       placeholder: "AIza…" },
@@ -1135,6 +1149,7 @@ Notes: {about}</pre>
             {@const a = assign[t.id]}
             {@const provList = t.id === "embedding" ? EMBED_PROVIDERS : PROVIDERS}
             {@const prov = provList.find((p) => p.id === a.provider) ?? provList[0]}
+            {@const isOr = a.provider === "openrouter"}
             <div class="mt-row">
               <div class="mt-task">
                 <div class="mt-task-t">{t.label}</div>
@@ -1145,10 +1160,13 @@ Notes: {about}</pre>
                 onChange={(p) => onModelProviderChange(t.id, p)}
                 options={provList.map((p) => ({ id: p.id, label: p.label }))}
               />
-              <Picker
+              <ModelSearch
                 value={a.model}
                 onChange={(m) => onModelChange(t.id, m)}
-                options={prov.models.map((m) => ({ id: m, label: m }))}
+                options={isOr && orModels.length ? orModels : prov.models.map((m) => ({ id: m, label: m }))}
+                loading={isOr && orLoading}
+                onOpen={isOr ? ensureOrModels : undefined}
+                placeholder={isOr ? "Search OpenRouter…" : undefined}
               />
               {#if t.id === "embedding"}
                 <span class="mono faint mt-budget-na">n/a</span>
