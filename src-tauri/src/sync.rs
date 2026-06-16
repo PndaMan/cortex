@@ -485,12 +485,17 @@ pub fn sync_status(state: tauri::State<AppState>) -> Result<SyncStatus> {
     // homelab_base. This is a pure settings read: a status check must NOT probe the
     // network (resolved_setting → resolve() does blocking reachability probes, which on
     // a phone stall on the unreachable LAN URL and wrongly flip the pill to "off").
-    let configured = repo::get_setting(&c, K_URL)?
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false)
-        || repo::get_setting(&c, "homelab_base")?
+    let is_set = |k: &str| {
+        repo::get_setting(&c, k)
+            .ok()
+            .flatten()
             .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
+            .unwrap_or(false)
+    };
+    let configured = is_set(K_URL)
+        || is_set("homelab_base")
+        || is_set("homelab_tailscale_base")
+        || is_set("homelab_public_base");
     let last_at = repo::get_setting(&c, K_LAST_AT)?
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0);

@@ -171,13 +171,19 @@ pub fn resolved_setting(conn: &Connection, key: &str) -> Option<String> {
     {
         return Some(resolve(conn, &raw));
     }
-    // Otherwise derive it from the one homelab base URL + the service's path.
+    // Otherwise derive it from a homelab base URL + the service's path. Prefer the LAN
+    // base, but fall back to the Tailscale/public base when that's all the user set —
+    // e.g. a phone that only ever reaches the homelab over Tailscale (no LAN URL).
     if let Some(path) = service_path(key) {
-        if let Some(base) = repo::get_setting(conn, "homelab_base")
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
-        {
+        let base = ["homelab_base", "homelab_tailscale_base", "homelab_public_base"]
+            .iter()
+            .find_map(|k| {
+                repo::get_setting(conn, k)
+                    .ok()
+                    .flatten()
+                    .filter(|s| !s.trim().is_empty())
+            });
+        if let Some(base) = base {
             let resolved = resolve(conn, base.trim().trim_end_matches('/'));
             return Some(format!("{resolved}{path}"));
         }

@@ -385,7 +385,7 @@
   // On mobile the per-tier sync URL fields are hidden — live sync rides the single
   // Homelab base URL (→ its /sync WebDAV). So the base alone must be enough to enable
   // the toggle; gating only on anySyncUrl left mobile stuck on "live sync off".
-  const canSync = $derived(anySyncUrl || !!hlBase.trim());
+  const canSync = $derived(anySyncUrl || !!hlBase.trim() || !!hlTailscale.trim() || !!hlPublic.trim());
 
   let syncSaveTimer: ReturnType<typeof setTimeout> | undefined;
   function saveSync() {
@@ -1751,7 +1751,7 @@ Notes: {about}</pre>
               <div class="set-row-t">Password <span class="faint">optional</span></div>
               <div class="row-inline">
                 <input class="input mono" type="password" bind:value={syncPass} oninput={saveSyncSoon} onchange={saveSync} onblur={saveSync} placeholder="••••••••" />
-                <button class="btn btn--primary" disabled={app.syncState === "syncing" || !(anySyncUrl || hlBase.trim())} onclick={() => app.syncManual()}>
+                <button class="btn btn--primary" disabled={app.syncState === "syncing" || !canSync} onclick={() => app.syncManual()}>
                   <Icon name="upload" size={12} /> {app.syncState === "syncing" ? "Syncing…" : "Sync now"}
                 </button>
               </div>
