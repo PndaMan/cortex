@@ -2,6 +2,7 @@
   import { app, THEMES, THEME_LABELS } from "../lib/store.svelte";
   import type { Theme } from "../lib/store.svelte";
   import * as api from "../lib/api";
+  import { getVersion } from "@tauri-apps/api/app";
   import type { Memory } from "../lib/api";
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
@@ -325,6 +326,11 @@
   let hlTailscale = $state("");
   let hlPublic    = $state("");
   let hlState     = $state<"idle" | "testing" | "ok" | "fail">("idle");
+  let hlReach     = $state<Record<string, "ok" | "fail">>({});
+
+  // Real app version for the footer (the Tauri build version), loaded once.
+  let appVersion = $state("");
+  $effect(() => { void getVersion().then((v) => (appVersion = v)).catch(() => {}); });
   function saveHomelabBases() {
     api.setSettings({
       homelab_base: hlBase.trim(),
@@ -333,9 +339,16 @@
     }).catch(() => {});
   }
   async function testHomelab() {
-    if (!hlBase.trim()) return;
+    const tiers: [string, string][] = [["local", hlBase], ["tailscale", hlTailscale], ["public", hlPublic]];
+    if (!tiers.some(([, u]) => u.trim())) return;
     hlState = "testing";
-    hlState = await testEndpoint(hlBase);
+    const reach: Record<string, "ok" | "fail"> = {};
+    for (const [tier, url] of tiers) {
+      if (!url.trim()) continue;
+      reach[tier] = await testEndpoint(url.trim());
+    }
+    hlReach = reach;
+    hlState = Object.values(reach).some((r) => r === "ok") ? "ok" : "fail";
   }
 
   // ---- live homelab sync (smart per-record merge + binary file sync) ----
@@ -1014,7 +1027,7 @@
       </button>
     {/each}
 
-    <div class="set-nav-foot mono faint">Cortex v0.1 · BYOK · local-first</div>
+    <div class="set-nav-foot mono faint">Cortex {appVersion ? "v" + appVersion : ""} · BYOK · local-first</div>
   </aside>
 
   <!-- MAIN BODY -->
@@ -1573,13 +1586,8 @@ Notes: {about}</pre>
           <div class="set-card">
             <div class="set-row stacked">
               <div class="set-row-t">Local URL</div>
-              <div class="row-inline">
-                <input class="input mono" bind:value={hlBase} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="http://192.168.1.10:8080" />
-                <button class="btn" onclick={testHomelab} disabled={hlState === 'testing' || !hlBase.trim()}>
-                  <Icon name="refresh" size={12} /> Test
-                </button>
-              </div>
-              <div class="set-row-d">Your homelab's LAN address (the Caddy proxy port, default <span class="mono">8080</span>). Leave the per-service overrides below blank to use this.</div>
+              <input class="input mono" bind:value={hlBase} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="http://192.168.1.10:8080" />
+              <div class="set-row-d">Your homelab's LAN address (the Caddy proxy port, default <span class="mono">8080</span>).</div>
             </div>
             <div class="set-row stacked">
               <div class="set-row-t">Tailscale URL <span class="faint">optional</span></div>
@@ -1589,6 +1597,16 @@ Notes: {about}</pre>
             <div class="set-row stacked">
               <div class="set-row-t">Public URL <span class="faint">optional</span></div>
               <input class="input mono" bind:value={hlPublic} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://lab.example.com" />
+            </div>
+            <div class="set-row stacked">
+              <div class="row-inline" style="flex-wrap:wrap; gap:8px 12px; align-items:center">
+                <button class="btn" onclick={testHomelab} disabled={hlState === 'testing' || !(hlBase.trim() || hlTailscale.trim() || hlPublic.trim())}>
+                  <Icon name="refresh" size={12} /> {hlState === 'testing' ? "Testing…" : "Test all URLs"}
+                </button>
+                {#if hlReach.local}<span class="hl-reach" style="color:{hlReach.local === 'ok' ? 'var(--ok)' : 'var(--err,#e5484d)'}">LAN {hlReach.local === 'ok' ? '✓' : '✗'}</span>{/if}
+                {#if hlReach.tailscale}<span class="hl-reach" style="color:{hlReach.tailscale === 'ok' ? 'var(--ok)' : 'var(--err,#e5484d)'}">Tailscale {hlReach.tailscale === 'ok' ? '✓' : '✗'}</span>{/if}
+                {#if hlReach.public}<span class="hl-reach" style="color:{hlReach.public === 'ok' ? 'var(--ok)' : 'var(--err,#e5484d)'}">Public {hlReach.public === 'ok' ? '✓' : '✗'}</span>{/if}
+              </div>
             </div>
           </div>
         </section>
@@ -1604,10 +1622,13 @@ Notes: {about}</pre>
           <div class="set-card">
             {#if depReport}
               {#each depReport.deps as d (d.name)}
-                <div class="dep-row">
-                  <span class="dep-ico" class:on={d.present}>{d.present ? "✓" : "✗"}</span>
-                  <span class="dep-name">{d.name}</span>
-                  <span class="dep-detail mono">{d.detail}</span>
+                <div class="dep-row" class:dep-missing={!d.present}>
+                  <span class="dep-dot" class:on={d.present}></span>
+                  <div class="dep-main">
+                    <span class="dep-name">{d.name}</span>
+                    <span class="dep-detail mono">{d.detail}</span>
+                  </div>
+                  <span class="dep-status {d.present ? 'ok' : 'miss'}">{d.present ? "installed" : "missing"}</span>
                 </div>
               {/each}
               {#if depReport.install_command}

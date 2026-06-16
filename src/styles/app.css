@@ -200,11 +200,18 @@
 .st-id--clickable:hover { background: var(--surface-2); }
 
 /* Dependency status list (Settings → Integrations) */
-.dep-row { display: flex; align-items: center; gap: 10px; padding: 6px 2px; font-size: var(--t-sm); }
-.dep-ico { flex: none; width: 16px; text-align: center; font-weight: 700; color: var(--err, #e5484d); font-family: var(--font-mono); }
-.dep-ico.on { color: var(--ok); }
-.dep-name { color: var(--fg); }
-.dep-detail { margin-left: auto; color: var(--fg-faint); font-size: var(--t-xs); }
+.dep-row { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: var(--rad-2); font-size: var(--t-sm); }
+.dep-row + .dep-row { margin-top: 3px; }
+.dep-row.dep-missing { background: color-mix(in oklab, var(--err, #e5484d) 9%, transparent); }
+.dep-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--err, #e5484d); box-shadow: 0 0 0 3px color-mix(in oklab, var(--err, #e5484d) 18%, transparent); }
+.dep-dot.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ok) 18%, transparent); }
+.dep-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dep-name { color: var(--fg-bright); }
+.dep-detail { color: var(--fg-faint); font-size: var(--t-xs); }
+.dep-status { margin-left: auto; flex: none; font-size: var(--t-2xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.dep-status.ok { color: var(--ok); }
+.dep-status.miss { color: var(--err, #e5484d); }
+.hl-reach { font-size: var(--t-xs); font-family: var(--font-mono); }
 
 /* Google "Calendars to sync" checklist (Settings → Google Calendar) */
 .gcal-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin: 2px 0; border: 1px solid transparent; border-radius: var(--rad-2); cursor: pointer; font-size: var(--t-sm); color: var(--fg); transition: background 0.12s, border-color 0.12s; }

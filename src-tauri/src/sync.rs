@@ -440,9 +440,9 @@ pub struct SyncStatus {
 pub fn sync_status(state: tauri::State<AppState>) -> Result<SyncStatus> {
     let c = state.db.lock().unwrap();
     let enabled = repo::get_setting(&c, K_ENABLED)?.as_deref() == Some("true");
-    let configured = repo::get_setting(&c, K_URL)?
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false);
+    // "Configured" if there's any usable sync target — an explicit sync_url OR one
+    // derived from the unified homelab_base (resolved_setting checks both).
+    let configured = homelab::resolved_setting(&c, "sync_url").is_some();
     let last_at = repo::get_setting(&c, K_LAST_AT)?
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0);
