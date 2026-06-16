@@ -275,11 +275,12 @@
   /* All chrome below is styled ONLY from existing design tokens — no new colours
      (continuity rule, docs/MOBILE_PORT.md §3.4). */
   .m-shell {
+    /* inset:0 fills the exact viewport so the bottom tab bar sits flush on the
+       screen edge — an explicit height (100dvh) measured shorter than the screen
+       in LiveContainer and left a gap below the nav. The nav's own safe-area
+       padding handles the home indicator. */
     position: fixed;
     inset: 0;
-    /* 100dvh tracks the *visible* viewport on iOS so the bottom tab bar sits on the
-       true screen bottom (not under the home indicator / past the inset). */
-    height: 100dvh;
     display: flex;
     flex-direction: column;
     background: var(--bg);
