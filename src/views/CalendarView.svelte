@@ -13,6 +13,7 @@
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
   import EventModal from "../components/EventModal.svelte";
+  import { isMobile } from "../lib/platform";
 
   const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const MONTHS = [
@@ -30,6 +31,9 @@
   let mode = $state<Mode>("month");
   // The reference day for week/day views (anchors the grid + nav).
   let selectedDay = $state<Date>(new Date());
+  // Mobile month view: the day whose agenda is shown below the grid (tap a day to
+  // select it) — month cells are too small to read event titles on a phone.
+  let monthSel = $state<Date>(startOfDay(new Date()));
 
   function openDayView(d: Date) {
     selectedDay = startOfDay(d);
@@ -283,6 +287,8 @@
 
   // Day-view: blocks + all-day for the single selected day.
   const dayEventsList = $derived<CalEvent[]>(byDay[dayKey(selectedDay)] ?? []);
+  // Events for the mobile month-view agenda (the selected day below the grid).
+  const monthSelEvents = $derived<CalEvent[]>(byDay[dayKey(monthSel)] ?? []);
   const dayAllDay = $derived<CalEvent[]>(dayEventsList.filter((e) => e.all_day));
   const dayBlocks = $derived.by<Block[]>(() => layoutDay(selectedDay, dayEventsList));
 
@@ -492,11 +498,11 @@
         {@const dayEvents = byDay[c.key] ?? []}
         {@const overflow = dayEvents.length - MONTH_CHIP_CAP}
         <div
-          class={"cal-cell" + (c.inMonth ? "" : " out") + (c.isToday ? " today" : "") + (c.weekend ? " weekend" : "")}
+          class={"cal-cell" + (c.inMonth ? "" : " out") + (c.isToday ? " today" : "") + (c.weekend ? " weekend" : "") + (isMobile && sameYMD(c.date, monthSel) ? " sel" : "")}
           role="button"
           tabindex="0"
-          onclick={() => openDayView(c.date)}
-          onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDayView(c.date); } }}
+          onclick={() => (isMobile ? (monthSel = startOfDay(c.date)) : openDayView(c.date))}
+          onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); isMobile ? (monthSel = startOfDay(c.date)) : openDayView(c.date); } }}
         >
           <div class="cal-cell-head">
             <span class="cal-daynum">{c.date.getDate()}</span>
@@ -537,6 +543,25 @@
         </div>
       {/each}
     </div>
+
+    {#if isMobile}
+      <!-- Mobile month agenda: the tapped day's events with readable titles + times,
+           since the month cells only show dots on a phone. -->
+      <div class="cal-agenda">
+        <div class="cal-agenda-head mono">{DAYS_LONG[monthSel.getDay()]} · {monthSel.getDate()} {MONTHS[monthSel.getMonth()]}</div>
+        {#if monthSelEvents.length === 0}
+          <div class="cal-agenda-empty mono faint">No events. Tap a day above, or + New.</div>
+        {:else}
+          {#each monthSelEvents as e (e.id)}
+            <button type="button" class="cal-agenda-row" style:--chip-color={pillColor(e)} onclick={(ev) => openEdit(e, ev)}>
+              <span class="cal-agenda-dot"></span>
+              <span class="cal-agenda-time mono">{e.all_day ? "all day" : timeLabel(e)}</span>
+              <span class="cal-agenda-title">{e.title}</span>
+            </button>
+          {/each}
+        {/if}
+      </div>
+    {/if}
 
     {#if !loading && events.length === 0}
       <div class="cal-empty">No events — click a day to view or add one.</div>

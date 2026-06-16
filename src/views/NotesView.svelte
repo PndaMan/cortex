@@ -11,6 +11,7 @@
   import MarkdownEditor from "../components/MarkdownEditor.svelte";
   import RichText from "../components/RichText.svelte";
   import { savePdf } from "../lib/pdf";
+  import { isMobile } from "../lib/platform";
 
   let { embedded = false }: { embedded?: boolean } = $props();
 
@@ -152,9 +153,9 @@
 </script>
 
 {#snippet notesWorkspace()}
-  <div class={"notes" + (embedded ? " notes--embedded" : "") + (listCollapsed ? " notes--collapsed" : "")}>
+  <div class={"notes" + (embedded ? " notes--embedded" : "") + (listCollapsed && !isMobile ? " notes--collapsed" : "") + (isMobile ? (selected ? " notes--m notes--m-detail" : " notes--m notes--m-list") : "")}>
     <!-- Left: note list or slim rail when collapsed -->
-    {#if listCollapsed}
+    {#if listCollapsed && !isMobile}
       <aside class="notes-rail" aria-label="Note list (collapsed)">
         <button
           type="button"
@@ -230,6 +231,11 @@
     <section class="notes-detail">
       {#if selected}
         <div class="notes-detail-head">
+          {#if isMobile}
+            <button class="btn btn--icon btn--sm btn--ghost" title="Back to notes" aria-label="Back to notes" onclick={() => select(null)}>
+              <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={14} /></span>
+            </button>
+          {/if}
           <input
             class="notes-title"
             placeholder="Untitled"

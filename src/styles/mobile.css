@@ -197,6 +197,45 @@ html[data-mobile] .notes-page { padding: 14px 14px 0; flex: none; min-height: au
 html[data-mobile] .notes { min-height: 74vh; flex: none; margin-bottom: 16px; }
 html[data-mobile] .notes:not(.notes--collapsed) { grid-template-columns: 1fr; }
 
+/* ── Mobile feedback round 4 ──────────────────────────────────────────────── */
+
+/* Calendar: month cells are too narrow at 7-across to read titles, so chips become
+   dots and the readable titles/times live in a selected-day agenda below the grid. */
+html[data-mobile] .cal-chips { flex-direction: row; flex-wrap: wrap; gap: 3px; align-content: flex-start; }
+html[data-mobile] .chip {
+  padding: 0; width: 6px; height: 6px; min-height: 0; border-radius: 50%;
+  background: var(--chip-color, var(--accent)); border: none; overflow: hidden;
+}
+html[data-mobile] .chip-title,
+html[data-mobile] .chip-time,
+html[data-mobile] .chip-glyph,
+html[data-mobile] .chip-check,
+html[data-mobile] .chip-dot { display: none; }
+html[data-mobile] .chip-more { font-size: 9px; padding: 0; background: none; border: none; color: var(--fg-faint); }
+html[data-mobile] .cal-cell.sel { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--rad-2, 6px); }
+html[data-mobile] .cal-agenda { margin-top: 14px; display: flex; flex-direction: column; gap: 0; }
+html[data-mobile] .cal-agenda-head { padding: 4px 2px 8px; color: var(--fg-muted); font-size: var(--t-sm); border-bottom: 1px solid var(--border); }
+html[data-mobile] .cal-agenda-empty { padding: 16px 4px; text-align: center; font-size: var(--t-sm); }
+html[data-mobile] .cal-agenda-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px;
+  padding: 10px 6px; background: none; border: none; border-bottom: 1px solid var(--border);
+  color: var(--fg); text-align: left; cursor: pointer;
+}
+html[data-mobile] .cal-agenda-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--chip-color, var(--accent)); }
+html[data-mobile] .cal-agenda-time { flex: none; width: 62px; color: var(--fg-muted); font-size: var(--t-xs); }
+html[data-mobile] .cal-agenda-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Recorder: the live-transcript panel is removed on mobile → single full-width stage. */
+html[data-mobile] .recorder { display: flex; flex-direction: column; }
+html[data-mobile] .rec-stage { width: 100%; }
+
+/* Notes: show ONE pane at a time on a phone (list, then full-width editor + a back
+   chevron) instead of the cramped desktop master/detail. */
+html[data-mobile] .notes--m { grid-template-columns: 1fr; }
+html[data-mobile] .notes--m-list .notes-detail { display: none; }
+html[data-mobile] .notes--m-detail .notes-list { display: none; }
+html[data-mobile] .notes--m .notes-list { min-height: 0; }
+
 /* Subject detail / university-portal (Moodle) panel: a centred desktop modal is
    cramped on a phone — make it a near-full-screen sheet and stack its grids. */
 html[data-mobile] .sp {
