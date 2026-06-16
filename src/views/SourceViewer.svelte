@@ -5,6 +5,7 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import Icon from "../components/Icon.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
+  import { isMobile } from "../lib/platform";
 
   // ---- state ----
   let chunks = $state<ChunkInfo[]>([]);
@@ -42,6 +43,52 @@
   );
   // Anything with a dedicated preview skips the chunk-list fallback.
   const hasPreview = $derived(isPdfDoc || isImage || isAudio || isText);
+
+  // ---- mobile PDF rendering ----
+  // iOS WKWebView only renders the FIRST page of an <iframe> PDF and won't scroll,
+  // so on mobile we render every page to a canvas with PDF.js into a scroll column.
+  // Desktop keeps the native <iframe> preview.
+  let pdfBox = $state<HTMLDivElement | null>(null);
+  let pdfRendering = $state(false);
+  let pdfError = $state<string | null>(null);
+  $effect(() => {
+    if (!(isMobile && isPdfDoc && assetUrl && pdfBox)) return;
+    const url = assetUrl;
+    const box = pdfBox;
+    let cancelled = false;
+    pdfRendering = true;
+    pdfError = null;
+    box.replaceChildren();
+    (async () => {
+      try {
+        const pdfjs = await import("pdfjs-dist");
+        const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
+        pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+        const doc = await pdfjs.getDocument({ url }).promise;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        for (let n = 1; n <= doc.numPages; n++) {
+          if (cancelled) return;
+          const page = await doc.getPage(n);
+          const base = page.getViewport({ scale: 1 });
+          const cssWidth = box.clientWidth || 360;
+          const vp = page.getViewport({ scale: (cssWidth / base.width) * dpr });
+          const canvas = document.createElement("canvas");
+          canvas.className = "sv-pdf-page";
+          canvas.width = vp.width;
+          canvas.height = vp.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) continue;
+          box.appendChild(canvas);
+          await page.render({ canvasContext: ctx, viewport: vp, canvas }).promise;
+        }
+      } catch (e) {
+        if (!cancelled) pdfError = String(e);
+      } finally {
+        if (!cancelled) pdfRendering = false;
+      }
+    })();
+    return () => { cancelled = true; };
+  });
 
   // ---- load chunks on mount / when the active source changes ----
   // Re-runs reactively whenever app.activeSource (or its id) changes. We only
@@ -186,7 +233,18 @@
         </div>
       {:else if isPdfDoc && assetUrl}
         <!-- PDF / rendered slide preview (also covers pptx & docx via rendered PDF) -->
-        <iframe class="sv-frame" src={assetUrl} title={src?.name ?? "document"}></iframe>
+        {#if isMobile}
+          <!-- All pages via PDF.js (WKWebView's iframe shows only page 1) -->
+          <div class="sv-pdf-pages" bind:this={pdfBox}></div>
+          {#if pdfRendering}
+            <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--fg-muted);text-align:center;padding:12px">Rendering pages…</p>
+          {/if}
+          {#if pdfError}
+            <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--err,var(--warn));text-align:center;padding:12px">Couldn't render PDF: {pdfError}</p>
+          {/if}
+        {:else}
+          <iframe class="sv-frame" src={assetUrl} title={src?.name ?? "document"}></iframe>
+        {/if}
       {:else if isImage && assetUrl}
         <!-- Image preview, centered & fit -->
         <div class="sv-img-wrap">
