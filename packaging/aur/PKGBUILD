@@ -9,12 +9,13 @@ pkgdesc="Local-first, open-source NotebookLM alternative — a desktop study OS"
 arch=('x86_64')
 url="https://github.com/PndaMan/cortex"
 license=('Apache-2.0')
-depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3')
+# poppler (pdftotext/pdftoppm) + ffmpeg are VITAL to core ingestion (PDF text/page
+# images, audio), so they're hard deps — the app must not launch without them.
+depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'poppler' 'ffmpeg')
 optdepends=(
   'mpv: background study music'
-  'ffmpeg: audio processing for recordings'
   'libreoffice-fresh: rendered PPTX/DOCX slide previews (text ingest works without it)'
-  'poppler: faster, cleaner PDF text extraction'
+  'tesseract: OCR for scanned PDFs / images'
   'ollama: local, keyless LLM + embeddings'
   'yt-dlp: YouTube / web audio + video ingest'
   'rclone: encrypted cloud backup'

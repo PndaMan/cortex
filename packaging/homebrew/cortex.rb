@@ -20,6 +20,10 @@ cask "cortex" do
   desc "Local-first, open-source NotebookLM alternative — a desktop study OS"
   homepage "https://github.com/PndaMan/cortex"
 
+  # Vital runtime tools so ingestion works the moment Cortex launches:
+  # poppler → pdftotext/pdftoppm (PDF text + page images), ffmpeg → audio.
+  depends_on formula: ["poppler", "ffmpeg"]
+
   app "Cortex.app"
 
   zap trash: [
