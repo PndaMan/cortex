@@ -483,12 +483,10 @@ pub fn ooxml_to_text(path: &str) -> Result<String> {
 /// back to auto-generated captions.
 fn youtube_to_text(url: &str) -> Result<(String, Option<String>)> {
     use std::process::Command;
-    let bin = tool("yt-dlp").ok_or_else(|| {
-        Error::Other(
-            "yt-dlp not found — install it (e.g. `pipx install yt-dlp`) to ingest YouTube links"
-                .into(),
-        )
-    })?;
+    // No yt-dlp (e.g. on mobile)? Fall back to a pure-HTTP caption fetch — no binary.
+    let Some(bin) = tool("yt-dlp") else {
+        return youtube_via_http(url);
+    };
     let dir = std::env::temp_dir().join(format!("cortex-yt-{}", crate::db::new_id()));
     std::fs::create_dir_all(&dir)?;
     let out_tmpl = dir.join("%(id)s.%(ext)s");
@@ -535,6 +533,65 @@ fn youtube_to_text(url: &str) -> Result<(String, Option<String>)> {
     };
     let _ = std::fs::remove_dir_all(&dir);
     res
+}
+
+/// Pure-HTTP YouTube transcript fetch (no yt-dlp): pull the watch page, find a
+/// caption track URL in the player response, fetch the timedtext, strip to prose.
+/// Best-effort (YouTube can change this) — used as the mobile/binary-less fallback.
+fn youtube_via_http(url: &str) -> Result<(String, Option<String>)> {
+    let client = crate::commands::http_client(30);
+    let html = client
+        .get(url)
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .send()?
+        .text()?;
+    let tracks = regex::Regex::new(r#""captionTracks":(\[.*?\])"#)
+        .unwrap()
+        .captures(&html)
+        .map(|c| c[1].to_string())
+        .ok_or_else(|| Error::Other("no captions are available for this video".into()))?;
+    let burl_re = regex::Regex::new(r#""baseUrl":"(.*?)""#).unwrap();
+    let lang_re = regex::Regex::new(r#""languageCode":"(.*?)""#).unwrap();
+    // Prefer an English track; otherwise take the first.
+    let mut chosen: Option<String> = None;
+    for chunk in tracks.split("},{") {
+        let Some(burl) = burl_re.captures(chunk).map(|c| c[1].to_string()) else { continue };
+        let lang = lang_re.captures(chunk).map(|c| c[1].to_string()).unwrap_or_default();
+        if lang.starts_with("en") {
+            chosen = Some(burl);
+            break;
+        }
+        chosen.get_or_insert(burl);
+    }
+    let base = chosen
+        .ok_or_else(|| Error::Other("no caption track URL found".into()))?
+        .replace("\\u0026", "&")
+        .replace("\\/", "/");
+    let xml = client.get(&base).send()?.text()?;
+    let text = timedtext_to_text(&xml);
+    if text.trim().is_empty() {
+        Err(Error::Other("the video's transcript was empty".into()))
+    } else {
+        Ok((text, None))
+    }
+}
+
+/// Strip YouTube timedtext XML (`<text start=… dur=…>…</text>`) to plain prose.
+fn timedtext_to_text(xml: &str) -> String {
+    let text_re = regex::Regex::new(r"(?s)<text[^>]*>(.*?)</text>").unwrap();
+    let tag_re = regex::Regex::new(r"<[^>]+>").unwrap();
+    let mut parts: Vec<String> = Vec::new();
+    for c in text_re.captures_iter(xml) {
+        let inner = tag_re.replace_all(&c[1], " ").into_owned();
+        let t = decode_entities(&inner)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !t.is_empty() {
+            parts.push(t);
+        }
+    }
+    parts.join(" ")
 }
 
 /// Strip a WebVTT subtitle file to plain deduped prose.
