@@ -36,6 +36,7 @@ fn swap_origin(primary: &str, base: &str) -> Option<String> {
 /// Quick reachability probe: any HTTP response (even 404/401) means the host is up.
 fn reachable(origin: &str) -> bool {
     let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(2)) // fail fast on an unreachable LAN URL (phones)
         .timeout(Duration::from_secs(3))
         .build()
         .unwrap_or_default();

@@ -481,9 +481,16 @@ pub struct SyncStatus {
 pub fn sync_status(state: tauri::State<AppState>) -> Result<SyncStatus> {
     let c = state.db.lock().unwrap();
     let enabled = repo::get_setting(&c, K_ENABLED)?.as_deref() == Some("true");
-    // "Configured" if there's any usable sync target — an explicit sync_url OR one
-    // derived from the unified homelab_base (resolved_setting checks both).
-    let configured = homelab::resolved_setting(&c, "sync_url").is_some();
+    // "Configured" means a sync target is SET — an explicit sync_url OR the unified
+    // homelab_base. This is a pure settings read: a status check must NOT probe the
+    // network (resolved_setting → resolve() does blocking reachability probes, which on
+    // a phone stall on the unreachable LAN URL and wrongly flip the pill to "off").
+    let configured = repo::get_setting(&c, K_URL)?
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false)
+        || repo::get_setting(&c, "homelab_base")?
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
     let last_at = repo::get_setting(&c, K_LAST_AT)?
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0);
