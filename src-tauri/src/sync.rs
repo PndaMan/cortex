@@ -20,6 +20,7 @@
 
 use crate::db::AppState;
 use crate::error::{Error, Result};
+use crate::homelab;
 use crate::repo;
 use rusqlite::Connection;
 use std::collections::HashSet;
@@ -85,7 +86,7 @@ pub fn read_cfg(c: &Connection) -> Option<SyncCfg> {
     let local = endpoint(c, K_URL);
     let ts = endpoint(c, K_URL_TS);
     let public = endpoint(c, K_URL_PUB);
-    let candidates: Vec<String> = match mode.as_str() {
+    let mut candidates: Vec<String> = match mode.as_str() {
         "local" => vec![local],
         "tailscale" => vec![ts],
         "public" => vec![public],
@@ -94,6 +95,14 @@ pub fn read_cfg(c: &Connection) -> Option<SyncCfg> {
     .into_iter()
     .flatten()
     .collect();
+    // No explicit sync URL set? Derive it from the unified homelab base (base + /sync),
+    // so configuring the single Homelab URL is all that's needed — resolved_setting
+    // already does the local→Tailscale→public reachability pick.
+    if candidates.is_empty() {
+        if let Some(u) = homelab::resolved_setting(c, "sync_url") {
+            candidates.push(u.trim_end_matches('/').to_string());
+        }
+    }
     if candidates.is_empty() {
         return None;
     }

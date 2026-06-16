@@ -366,7 +366,7 @@
   }
   function toggleSync() {
     syncOn = !syncOn;
-    if (syncOn && !anySyncUrl) { syncOn = false; return; }
+    if (syncOn && !anySyncUrl && !hlBase.trim()) { syncOn = false; return; }
     saveSync();
   }
   function setSyncMode(m: "auto" | "local" | "tailscale" | "public") {
@@ -1547,7 +1547,7 @@ Notes: {about}</pre>
             <div class="set-row-d">A relevant diagram per cheatsheet section + images in chat. On by default once SearXNG is connected.</div>
           </div>
           <div class="set-row-r">
-            <button type="button" class={"st-toggle" + (webImages ? " on" : "")} onclick={() => setWebImages(!webImages)} disabled={!searxng.trim()} role="switch" aria-checked={webImages} aria-label="diagrams"><span class="st-knob"></span></button>
+            <button type="button" class={"st-toggle" + (webImages ? " on" : "")} onclick={() => setWebImages(!webImages)} disabled={!(searxng.trim() || hlBase.trim())} role="switch" aria-checked={webImages} aria-label="diagrams"><span class="st-knob"></span></button>
           </div>
         </div>
       {/snippet}
@@ -1633,49 +1633,13 @@ Notes: {about}</pre>
 
         <section class="set-group">
           <div class="set-group-h">
-            <h3 class="set-group-t">Per-service overrides <span class="faint">optional</span></h3>
-            <p class="set-group-d">Only needed if you run a service somewhere other than the Homelab URL above (or aren't using the bundled proxy). A value here takes precedence over the unified URL for that one service.</p>
+            <h3 class="set-group-t">Diagrams</h3>
+            <p class="set-group-d">Pull diagrams + images into cheatsheets and chat, via the homelab's SearXNG — reached at <span class="mono">/searxng</span> off the Homelab URL above.</p>
+          </div>
+          <div class="set-card">
+            {@render diagramsToggle()}
           </div>
         </section>
-
-        {@render endpointService({
-          title: "Local models (Ollama)",
-          desc: "Run chat/embeddings on a local or self-hosted <span class='mono'>ollama</span> server — keyless and private. Select <span class='mono'>ollama:&lt;model&gt;</span> per task in Models.",
-          value: endpoint,
-          oninput: (v: string) => (endpoint = v),
-          onsave: () => {},
-          onTest: testConnection,
-          state: testState,
-          placeholder: "http://localhost:11434",
-          failHint: "Unreachable — check the URL and that ollama is running.",
-        })}
-
-        {@render endpointService({
-          title: "Web search (SearXNG)",
-          desc: "Pulls diagrams/images into cheatsheets and enriches chat answers. There is no separate web-search page.",
-          value: searxng,
-          oninput: (v: string) => (searxng = v),
-          onsave: saveSearxng,
-          onTest: testSearxng,
-          state: searxState,
-          placeholder: "http://192.168.1.50:8080",
-          failHint: "Unreachable — check the URL and that SearXNG is running with JSON enabled.",
-          hint: "Base URL only. Enable JSON in settings.yml (<span class='mono'>formats: [html, json]</span>).",
-          extra: diagramsToggle,
-        })}
-
-        {@render endpointService({
-          title: "Remote transcription (Whisper)",
-          desc: "Offload lecture transcription to a homelab Whisper server instead of installing Python locally. Leave blank to transcribe on this machine.",
-          value: whisperUrl,
-          oninput: (v: string) => (whisperUrl = v),
-          onsave: saveWhisper,
-          onTest: testWhisper,
-          state: whisperState,
-          placeholder: "http://192.168.1.50:9009",
-          failHint: "Unreachable — check the URL and that the Whisper service is running.",
-          hint: "OpenAI-compatible endpoint, base URL only (Cortex calls <span class='mono'>/v1/audio/transcriptions</span>).",
-        })}
 
         <section class="set-group">
           <div class="set-group-h svc-h">
@@ -1692,48 +1656,12 @@ Notes: {about}</pre>
                 <div class="set-row-d">Merges the remote vault in on launch (in the background — never blocks startup), then pushes your changes (debounced).</div>
               </div>
               <div class="set-row-r">
-                <button type="button" class={"st-toggle" + (syncOn ? " on" : "")} onclick={toggleSync} disabled={!anySyncUrl} role="switch" aria-checked={syncOn} aria-label="live sync"><span class="st-knob"></span></button>
-              </div>
-            </div>
-
-            <div class="set-row">
-              <div class="set-row-l">
-                <div class="set-row-t">Endpoint</div>
-                <div class="set-row-d">Auto tries Local → Tailscale → Public and uses the first reachable — so the same device syncs on LAN, over Tailscale, or from anywhere.</div>
-              </div>
-              <div class="set-row-r">
-                <div class="seg">
-                  {#each [{ id: "auto", label: "Auto" }, { id: "local", label: "Local" }, { id: "tailscale", label: "Tailscale" }, { id: "public", label: "Public" }] as opt}
-                    <button type="button" class={"seg-opt" + (syncMode === opt.id ? " on" : "")} onclick={() => setSyncMode(opt.id as typeof syncMode)}>{opt.label}</button>
-                  {/each}
-                </div>
+                <button type="button" class={"st-toggle" + (syncOn ? " on" : "")} onclick={toggleSync} disabled={!(anySyncUrl || hlBase.trim())} role="switch" aria-checked={syncOn} aria-label="live sync"><span class="st-knob"></span></button>
               </div>
             </div>
 
             <div class="set-row stacked">
-              <div class="set-row-t">Local / LAN URL</div>
-              <input class="input mono" bind:value={syncUrl} onchange={saveSync} onblur={saveSync} placeholder="http://192.168.1.50:9010" />
-              {#if syncReach.local !== undefined}<div class="set-row-d" style="color:{syncReach.local ? 'var(--ok)' : 'var(--err,#e5484d)'}">{syncReach.local ? "✓ reachable" : "✗ unreachable"}</div>{/if}
-            </div>
-            <div class="set-row stacked">
-              <div class="set-row-t">Tailscale URL <span class="faint">optional</span></div>
-              <input class="input mono" bind:value={syncUrlTs} onchange={saveSync} onblur={saveSync} placeholder="http://homelab.tailnet-xxxx.ts.net:9010" />
-              {#if syncReach.tailscale !== undefined}<div class="set-row-d" style="color:{syncReach.tailscale ? 'var(--ok)' : 'var(--err,#e5484d)'}">{syncReach.tailscale ? "✓ reachable" : "✗ unreachable"}</div>{/if}
-            </div>
-            <div class="set-row stacked">
-              <div class="set-row-t">Public URL <span class="faint">optional</span></div>
-              <div class="row-inline">
-                <input class="input mono" bind:value={syncUrlPub} onchange={saveSync} onblur={saveSync} placeholder="https://cortex.example.com" />
-                <button class="btn" onclick={testSync} disabled={syncTestState === "testing" || !anySyncUrl}>
-                  <Icon name="refresh" size={12} /> Test all
-                </button>
-              </div>
-              {#if syncReach.public !== undefined}<div class="set-row-d" style="color:{syncReach.public ? 'var(--ok)' : 'var(--err,#e5484d)'}">{syncReach.public ? "✓ reachable" : "✗ unreachable"}</div>{/if}
-              {#if syncTestState === "fail"}
-                <div class="set-row-d" style="color:var(--err,#e5484d)">No endpoint reachable — check the URLs and credentials.</div>
-              {:else if syncTestState === "ok"}
-                <div class="set-row-d" style="color:var(--ok)">At least one endpoint reachable.</div>
-              {/if}
+              <div class="set-row-d">Syncs through the <strong>Homelab URL</strong> above (its <span class="mono">/sync</span> WebDAV), with the same local → Tailscale → public reachability. Just add the credentials your WebDAV target expects below.</div>
             </div>
             <div class="set-row stacked">
               <div class="set-row-t">Username <span class="faint">optional</span></div>

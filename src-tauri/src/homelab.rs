@@ -104,6 +104,8 @@ fn service_path(key: &str) -> Option<&'static str> {
         "searxng_url" => Some("/searxng"),
         "whisper_url" => Some("/whisper"),
         "ollama_url" => Some("/ollama"),
+        "ingest_url" => Some("/ingest"),
+        "sync_url" => Some("/sync"),
         _ => None,
     }
 }
