@@ -415,6 +415,7 @@
   // churn — snapshot=false), and Esc exits, recording ONE version. The structured
   // "Restructure" editor (above) is still there for adding/removing sections + images.
   let insertMode = $state(false);
+  let sectionsOpen = $state(false); // mobile: the section-jump bottom sheet
   let inlineDraft = $state<ApiCsSection[]>([]);
   let inlineDirty = $state(false);
   let inlineTimer: ReturnType<typeof setTimeout> | null = null;
@@ -957,6 +958,28 @@
     {:else}
       <button class="cs-fab-edit" onclick={enterInsert} aria-label="Edit cheatsheet" title="Edit inline"><Icon name="pencil" size={16} /> Edit</button>
     {/if}
+    <!-- Mobile section jump (desktop's top-right index, as a bottom-left button → sheet). -->
+    <button class="cs-fab-sections" onclick={() => (sectionsOpen = true)} aria-label="Jump to a section" title="Sections">
+      <Icon name="grid" size={16} />
+    </button>
+  {/if}
+
+  {#if isMobile && sectionsOpen}
+    <button class="cs-sheet-back" aria-label="Close" onclick={() => (sectionsOpen = false)}></button>
+    <nav class="cs-sheet" aria-label="Jump to section">
+      <div class="cs-sheet-head">
+        <span class="page-title">Sections</span>
+        <button class="btn btn--icon btn--sm btn--ghost" aria-label="Close" onclick={() => (sectionsOpen = false)}><Icon name="x" size={15} /></button>
+      </div>
+      <div class="cs-sheet-list">
+        {#each indexSections as sec (sec.id)}
+          <button class="cs-sheet-sec" onclick={() => { jumpTo("cs-sec-" + sec.id); sectionsOpen = false; }}>{sec.title}</button>
+          {#each sec.items as item, i (i)}
+            <button class="cs-sheet-item" onclick={() => { jumpTo("cs-it-" + sec.id + "-" + i); sectionsOpen = false; }}>{item.t.startsWith("__topic__") ? item.t.slice(9) : item.t}</button>
+          {/each}
+        {/each}
+      </div>
+    </nav>
   {/if}
 </div>
 
@@ -1412,4 +1435,73 @@
     z-index: 30;
   }
   .cs-fab-edit:active { transform: scale(0.96); }
+
+  /* Mobile section-jump: a round button bottom-LEFT (opposite the Edit/Ask pills) */
+  .cs-fab-sections {
+    position: fixed;
+    left: 14px;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 46px;
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--fg-bright);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    z-index: 30;
+  }
+  .cs-fab-sections:active { transform: scale(0.96); }
+  .cs-sheet-back {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    border: none;
+    padding: 0;
+    background: color-mix(in oklab, var(--bg) 55%, transparent);
+  }
+  .cs-sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 61;
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-top: 1px solid var(--border-strong);
+    border-radius: var(--r-lg, 14px) var(--r-lg, 14px) 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    animation: cs-sheet-up 0.18s ease;
+  }
+  @keyframes cs-sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+  .cs-sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .cs-sheet-list { overflow-y: auto; padding: 8px 8px 14px; }
+  .cs-sheet-sec,
+  .cs-sheet-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--fg);
+    cursor: pointer;
+    border-radius: var(--rad-2);
+    min-height: 40px;
+    padding: 9px 12px;
+  }
+  .cs-sheet-sec { font-weight: 600; color: var(--fg-bright); margin-top: 4px; }
+  .cs-sheet-item { padding-left: 26px; font-size: var(--t-sm); color: var(--fg-muted); }
+  .cs-sheet-sec:active,
+  .cs-sheet-item:active { background: var(--surface-2); }
 </style>
