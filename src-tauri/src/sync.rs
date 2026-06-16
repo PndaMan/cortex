@@ -136,7 +136,11 @@ fn read_cfg_inner(c: &Connection, require_enabled: bool) -> Option<SyncCfg> {
 
 fn client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        // Bounded so a non-responsive or non-WebDAV target fails with a clear error
+        // instead of leaving the UI on "Syncing…" for minutes. LAN/Tailscale targets
+        // answer in well under this, and a multi-MB DB/file push still fits comfortably.
+        .connect_timeout(std::time::Duration::from_secs(8))
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .unwrap_or_default()
 }
