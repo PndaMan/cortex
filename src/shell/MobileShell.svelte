@@ -155,10 +155,10 @@
   const NAV = [
     { id: "dashboard",   icon: "home",     label: "Home" },
     { id: "add-source",  icon: "doc",      label: "Add source" },
+    { id: "recorder",    icon: "record",   label: "Record lecture" },
     { id: "calendar",    icon: "calendar", label: "Calendar" },
     { id: "notes",       icon: "reader",   label: "Notes" },
     { id: "analytics",   icon: "chart",    label: "Insights" },
-    { id: "exam",        icon: "cards",    label: "Exam mode" },
     { id: "add-subject", icon: "plus",     label: "New subject" },
     { id: "settings",    icon: "settings", label: "Settings" },
   ] as const;
