@@ -62,7 +62,31 @@ services:
     volumes:
       - whisper-models:/home/ubuntu/.cache/huggingface
     environment:
-      - WHISPER__MODEL=Systran/faster-whisper-base.en
+      # The server's DEFAULT model. Cortex sends NO model field when the user hasn't
+      # picked one, so transcription always uses exactly this — no "model not installed"
+      # errors from a client/server name mismatch. whisper-init pre-pulls it below.
+      - WHISPER__MODEL=Systran/faster-whisper-base
+
+  whisper-init:
+    # One-shot: pre-download the default faster-whisper model into the shared cache so
+    # the first transcription never has to fetch it (and so nobody has to install a model
+    # by hand). Waits for the whisper server, asks it to pull the model, then exits.
+    image: curlimages/curl:latest
+    container_name: cortex-whisper-init
+    restart: "no"
+    depends_on:
+      - whisper
+    entrypoint:
+      - sh
+      - -c
+      - |
+        echo "whisper-init: waiting for the whisper server…";
+        until curl -sf http://whisper:8000/v1/models >/dev/null 2>&1; do sleep 2; done;
+        echo "whisper-init: pulling Systran/faster-whisper-base…";
+        curl -s -X POST http://whisper:8000/v1/models \
+          -H 'Content-Type: application/json' \
+          -d '{"model":"Systran/faster-whisper-base"}' || true;
+        echo "whisper-init: done.";
 
   sync:
     # WebDAV target for Cortex live sync (last-write-wins DB snapshot).

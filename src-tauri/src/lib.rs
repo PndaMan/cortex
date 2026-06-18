@@ -285,6 +285,8 @@ pub fn run() {
             commands::delete_citation,
             commands::get_all_settings,
             commands::set_settings,
+            commands::ollama_models,
+            commands::verify_provider,
             commands::save_recording,
             commands::transcribe_partial,
             commands::web_search,

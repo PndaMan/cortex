@@ -92,17 +92,20 @@
     app.setView("dashboard");
   }
 
-  // Unified "go back" for the edge-swipe gesture: close the topmost overlay first,
-  // then the drawer, then walk the deep-view stack.
-  function swipeBack() {
+  // Unified handler for the left-edge right-swipe: close the topmost overlay first,
+  // then the drawer, then walk the deep-view stack. On a TOP-LEVEL view (the header
+  // shows the hamburger, not a back chevron) with nothing open, the same swipe OPENS
+  // the drawer — so the menu is reachable by gesture, mirroring the back gesture.
+  function swipeRight() {
     if (app.chatOpen) { app.chatOpen = false; return; }
     if (app.searchOpen) { app.searchOpen = false; return; }
     if (app.subjectPanelOpen) { app.closeSubjectPanel(); return; }
     if (drawerOpen) { drawerOpen = false; return; }
-    if (isDeep) back();
+    if (isDeep) { back(); return; }
+    drawerOpen = true; // hamburger present, nothing to dismiss → open the menu
   }
 
-  // Left-edge swipe = back, app-wide (mobile-only; this shell only renders on mobile).
+  // Left-edge swipe = back / open-menu, app-wide (mobile-only; this shell only renders on mobile).
   $effect(() => {
     let sx = -1, sy = 0;
     const EDGE = 40, DX = 55, DY = 40;
@@ -117,7 +120,7 @@
       const t = e.touches[0];
       if (t.clientX - sx > DX && Math.abs(t.clientY - sy) < DY) {
         sx = -1;
-        swipeBack();
+        swipeRight();
       }
     }
     function onEnd() { sx = -1; }

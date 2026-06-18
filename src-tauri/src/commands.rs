@@ -18,12 +18,19 @@ const NO_MODEL: &str =
     "No model configured — add an API key in Settings → API keys (Gemini or OpenRouter), then pick it under Settings → Models.";
 
 /// Default for everything that reads the `model_chat` setting (chat, plus the
-/// auto-rename / vision-OCR / transcript helpers). A fast NON-reasoning model: the
-/// chat path is blocking (total latency == perceived time-to-first-token) and must
-/// reliably emit the inline ⟦source · loc⟧ citation markers the UI renders. Keep all
-/// `model_chat` readers on the same default so the one setting can't resolve to two
-/// different models. (Cheatsheet/quiz/material default separately to Step 3.7 Flash.)
-const DEFAULT_CHAT_MODEL: &str = "gemini:gemini-2.5-flash";
+/// auto-rename / transcript helpers). A fast NON-reasoning model: the chat path is
+/// blocking (total latency == perceived time-to-first-token) and must reliably emit
+/// the inline ⟦source · loc⟧ citation markers the UI renders. DeepSeek V4 Flash is the
+/// platform-wide default — very cheap ($0.09/$0.18 per Mtok), 1M context, fast and
+/// non-reasoning — falling back to any configured key (see llm::from_spec_or_any).
+const DEFAULT_CHAT_MODEL: &str = "openrouter:deepseek/deepseek-v4-flash";
+
+/// Default for the OCR / vision helper (`ocr_via_vision`). MUST be vision-capable —
+/// the chat default (DeepSeek V4 Flash) is text-only, so OCR rides its own default so
+/// image/scanned-PDF transcription keeps working out of the box. `from_spec_or_any`
+/// falls back to whichever keyed provider is available, all of whose fallbacks are
+/// multimodal (gpt-4o-mini / gemini-2.5-flash / claude-3.5-sonnet).
+const DEFAULT_VISION_MODEL: &str = "openrouter:google/gemini-2.5-flash";
 
 fn truncate(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
@@ -103,6 +110,137 @@ pub(crate) fn read_keys(c: &Connection) -> Result<llm::Keys> {
         // over Tailscale/public, not just on the LAN.
         ollama_url: crate::homelab::resolved_setting(c, "ollama_url"),
     })
+}
+
+/// The effective Ollama base URL: the homelab-resolved `ollama_url` (local→Tailscale→
+/// public, or unified base + /ollama) if set, else localhost on DESKTOP only. On mobile
+/// there is no localhost Ollama, so Ollama is reachable only through the homelab — this
+/// returns None when no homelab/ollama url is configured.
+fn ollama_base(c: &Connection) -> Option<String> {
+    if let Some(u) = crate::homelab::resolved_setting(c, "ollama_url").filter(|s| !s.trim().is_empty()) {
+        return Some(u.trim_end_matches('/').to_string());
+    }
+    if cfg!(mobile) {
+        None
+    } else {
+        Some("http://localhost:11434".to_string())
+    }
+}
+
+/// List the models actually installed on the configured Ollama server (hits Ollama's
+/// native `GET /api/tags`). Returns an EMPTY list (never an error) when Ollama is
+/// unreachable or has nothing pulled — the model picker uses "no models" to render an
+/// empty Ollama option set rather than offering models that aren't installed.
+#[tauri::command]
+pub fn ollama_models(state: State<AppState>) -> Vec<String> {
+    let base = {
+        let c = state.db.lock().unwrap();
+        ollama_base(&c)
+    };
+    let Some(base) = base else { return Vec::new() };
+    let url = format!("{base}/api/tags");
+    let Ok(resp) = http_client(6).get(&url).send() else { return Vec::new() };
+    if !resp.status().is_success() {
+        return Vec::new();
+    }
+    let Ok(json) = resp.json::<serde_json::Value>() else { return Vec::new() };
+    json["models"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m["name"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Result of a provider connection check (Settings → API keys "verify").
+#[derive(serde::Serialize)]
+pub struct VerifyResult {
+    pub ok: bool,
+    pub detail: String,
+}
+
+fn verify_outcome(req: reqwest::blocking::RequestBuilder) -> VerifyResult {
+    match req.send() {
+        Ok(r) if r.status().is_success() => VerifyResult { ok: true, detail: "connected".into() },
+        Ok(r) => {
+            let code = r.status().as_u16();
+            let detail = match code {
+                401 | 403 => "invalid key".into(),
+                404 => "reached, but endpoint not found".into(),
+                _ => format!("HTTP {code}"),
+            };
+            VerifyResult { ok: false, detail }
+        }
+        Err(e) => VerifyResult {
+            ok: false,
+            detail: if e.is_connect() || e.is_timeout() { "unreachable".into() } else { e.to_string() },
+        },
+    }
+}
+
+/// Verify that a provider's stored credential actually works — a lightweight, low-cost
+/// AUTHENTICATED probe (a models/key lookup, never a billable generation). Powers the
+/// "connected / invalid" badge in Settings → API keys. `provider` is one of
+/// gemini | openrouter | openai | claude | custom | ollama.
+#[tauri::command]
+pub fn verify_provider(state: State<AppState>, provider: String) -> VerifyResult {
+    let (keys, ollama) = {
+        let c = state.db.lock().unwrap();
+        let keys = match read_keys(&c) {
+            Ok(k) => k,
+            Err(e) => return VerifyResult { ok: false, detail: e.to_string() },
+        };
+        (keys, ollama_base(&c))
+    };
+    let nonempty = |o: &Option<String>| o.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let client = http_client(10);
+    match provider.as_str() {
+        "gemini" => match nonempty(&keys.gemini) {
+            Some(k) => verify_outcome(client.get(format!(
+                "https://generativelanguage.googleapis.com/v1beta/models?key={k}"
+            ))),
+            None => VerifyResult { ok: false, detail: "not set".into() },
+        },
+        "openrouter" => match nonempty(&keys.openrouter) {
+            Some(k) => verify_outcome(
+                client.get("https://openrouter.ai/api/v1/key").header("Authorization", format!("Bearer {k}")),
+            ),
+            None => VerifyResult { ok: false, detail: "not set".into() },
+        },
+        "openai" => match nonempty(&keys.openai) {
+            Some(k) => verify_outcome(
+                client.get("https://api.openai.com/v1/models").header("Authorization", format!("Bearer {k}")),
+            ),
+            None => VerifyResult { ok: false, detail: "not set".into() },
+        },
+        "claude" => match nonempty(&keys.claude) {
+            Some(k) => verify_outcome(
+                client
+                    .get("https://api.anthropic.com/v1/models")
+                    .header("x-api-key", k)
+                    .header("anthropic-version", "2023-06-01"),
+            ),
+            None => VerifyResult { ok: false, detail: "not set".into() },
+        },
+        "custom" => match nonempty(&keys.custom_endpoint) {
+            Some(base) => {
+                let url = format!("{}/models", base.trim_end_matches('/'));
+                let mut rb = client.get(url);
+                if let Some(k) = nonempty(&keys.openai) {
+                    rb = rb.header("Authorization", format!("Bearer {k}"));
+                }
+                verify_outcome(rb)
+            }
+            None => VerifyResult { ok: false, detail: "not set".into() },
+        },
+        "ollama" => match ollama {
+            Some(base) => verify_outcome(client.get(format!("{base}/api/tags"))),
+            None => VerifyResult { ok: false, detail: "set a Homelab URL".into() },
+        },
+        other => VerifyResult { ok: false, detail: format!("unknown provider {other}") },
+    }
 }
 
 /// Build a concise "About the user" + "Remembered facts" preamble from the
@@ -488,8 +626,11 @@ fn ocr_via_vision(state: &State<AppState>, kind: &str, path: Option<&str>) -> Re
     let path = path.ok_or_else(|| Error::Other("no file to OCR".into()))?;
     let (spec, keys) = {
         let c = state.db.lock().unwrap();
-        let spec = repo::get_setting(&c, "model_chat")?
-            .unwrap_or_else(|| DEFAULT_CHAT_MODEL.into());
+        // Prefer an explicitly-chosen vision model if the user set one; otherwise the
+        // vision default (NOT model_chat, which now defaults to a text-only model).
+        let spec = repo::get_setting(&c, "model_vision")?
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_VISION_MODEL.into());
         (spec, read_keys(&c)?)
     };
     let model = llm::from_spec_or_any(&spec, &keys).ok_or_else(|| Error::Other(NO_MODEL.into()))?;
@@ -2056,7 +2197,7 @@ pub async fn generate_cheatsheet(
             bucket.push((title, text));
         }
         let spec =
-            repo::get_setting(&c, "model_cheatsheet")?.unwrap_or_else(|| "openrouter:stepfun/step-3.7-flash".into());
+            repo::get_setting(&c, "model_cheatsheet")?.unwrap_or_else(|| "openrouter:deepseek/deepseek-v4-flash".into());
         guard_offline_llm(&c, &spec)?;
         (bucket, subj.name, tname, spec, read_keys(&c)?, style_instruction(&c), searxng_base(&c)?)
     };
@@ -2511,7 +2652,7 @@ pub async fn generate_material(
             .map(|t| t.name.clone())
             .unwrap_or_default();
         let spec = repo::get_setting(&c, setting_key)?
-            .unwrap_or_else(|| "openrouter:stepfun/step-3.7-flash".into());
+            .unwrap_or_else(|| "openrouter:deepseek/deepseek-v4-flash".into());
         guard_offline_llm(&c, &spec)?;
         let host_a = cap(repo::get_setting(&c, "voice_a")?.unwrap_or_else(|| "maya".into()));
         let host_b = cap(repo::get_setting(&c, "voice_b")?.unwrap_or_else(|| "theo".into()));
@@ -2880,8 +3021,11 @@ fn whisper_remote_url(state: &AppState) -> Option<String> {
 
 /// Model name sent to the remote (OpenAI-compatible) Whisper endpoint. A homelab
 /// faster-whisper/speaches server needs a faster-whisper model id it can load, not
-/// OpenAI's "whisper-1" — so this is configurable (Settings → Integrations), defaulting
-/// to a small multilingual model. Empty → omit the field (server uses its own default).
+/// OpenAI's "whisper-1" — so this is configurable (Settings → Integrations). When the
+/// user hasn't picked one we return EMPTY, which makes `transcribe_remote` omit the
+/// `model` form field entirely so the homelab Whisper uses its OWN configured default
+/// (WHISPER__MODEL). That avoids the "model not installed" error from sending a model
+/// id the server doesn't have loaded — the cause of having to install one by hand.
 fn whisper_model(state: &AppState) -> String {
     state
         .db
@@ -2890,7 +3034,7 @@ fn whisper_model(state: &AppState) -> String {
         .and_then(|c| crate::repo::get_setting(&c, "whisper_model").ok().flatten())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "Systran/faster-whisper-base".to_string())
+        .unwrap_or_default()
 }
 
 // ---- external dependency status -----------------------------------------

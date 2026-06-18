@@ -37,6 +37,18 @@
     });
   });
 
+  // Mobile: zoom is locked app-wide (native-app feel), but a source IS the one place
+  // you need pinch-zoom — to read a dense PDF/slide. Unlock the viewport while this
+  // viewer is mounted and restore the lock on exit. Desktop is unaffected (no touch-zoom).
+  $effect(() => {
+    if (!isMobile) return;
+    const meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) return;
+    const locked = meta.getAttribute("content") ?? "width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no";
+    meta.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=5, user-scalable=yes");
+    return () => meta.setAttribute("content", locked);
+  });
+
   // ---- per-kind preview routing ----
   // `assetUrl` is the webview-loadable URL for the persisted original (or, for
   // pptx/docx, the backend-rendered PDF). Guarded against a null stored_path.

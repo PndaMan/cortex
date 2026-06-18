@@ -40,6 +40,105 @@ const K_LAST_AT: &str = "sync_last_at"; // epoch-ms of the version we currently 
 const REMOTE_DB: &str = "cortex.db";
 const REMOTE_STAMP: &str = "cortex.stamp";
 
+// ---- credential encryption (sync at rest) ----------------------------------
+//
+// Sync uploads the whole SQLite DB to the homelab WebDAV, so any secret in the
+// `settings` table would otherwise sit there in plaintext. Before upload we encrypt
+// every credential value (API keys, Google/Moodle tokens, custom endpoint) with
+// XChaCha20-Poly1305 under a key derived from the SYNC PASSWORD — which both linked
+// devices have but the WebDAV (and anyone reading the snapshot off disk) does not. The
+// result is opaque (unreadable) and AEAD-authenticated (tamper-evident) outside the app.
+// Values carry an `enc:v1:` marker; anything without it is plaintext (back-compat with
+// pre-encryption snapshots and non-secret preferences).
+use base64::Engine as _;
+use chacha20poly1305::aead::{Aead, KeyInit};
+use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
+
+const ENC_PREFIX: &str = "enc:v1:";
+
+/// Is this settings key a secret that must be encrypted before it rides sync?
+fn is_credential_key(key: &str) -> bool {
+    const SECRET_SUBSTR: &[&str] = &["token", "secret", "password", "_key"];
+    SECRET_SUBSTR.iter().any(|s| key.contains(s))
+        || key.starts_with("google_")
+        || key == "custom_endpoint"
+        || key == "moodle_userid"
+}
+
+fn cred_cipher(pass: &str) -> XChaCha20Poly1305 {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"cortex-sync-cred-v1\0");
+    h.update(pass.as_bytes());
+    let digest = h.finalize();
+    XChaCha20Poly1305::new(Key::from_slice(digest.as_slice()))
+}
+
+/// Encrypt a credential value → `enc:v1:<base64(nonce(24) || ciphertext+tag)>`.
+/// None when there's no sync password (no key to derive) — the caller then blanks the
+/// value rather than leaking plaintext.
+fn seal_cred(plain: &str, pass: &str) -> Option<String> {
+    use rand_core::{OsRng, RngCore};
+    if pass.is_empty() {
+        return None;
+    }
+    let mut nonce = [0u8; 24];
+    OsRng.fill_bytes(&mut nonce);
+    let ct = cred_cipher(pass)
+        .encrypt(XNonce::from_slice(&nonce), plain.as_bytes())
+        .ok()?;
+    let mut blob = Vec::with_capacity(24 + ct.len());
+    blob.extend_from_slice(&nonce);
+    blob.extend_from_slice(&ct);
+    Some(format!(
+        "{ENC_PREFIX}{}",
+        base64::engine::general_purpose::STANDARD.encode(blob)
+    ))
+}
+
+/// Decrypt an `enc:v1:` value; passthrough for plaintext (old snapshots / prefs).
+/// None only when an encrypted value can't be decrypted (wrong/no password or tampered)
+/// — the caller skips it rather than storing ciphertext as a plaintext value.
+fn unseal_cred(stored: &str, pass: &str) -> Option<String> {
+    let Some(b64) = stored.strip_prefix(ENC_PREFIX) else {
+        return Some(stored.to_string());
+    };
+    if pass.is_empty() {
+        return None;
+    }
+    let blob = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+    if blob.len() < 24 {
+        return None;
+    }
+    let (nonce, ct) = blob.split_at(24);
+    let pt = cred_cipher(pass).decrypt(XNonce::from_slice(nonce), ct).ok()?;
+    String::from_utf8(pt).ok()
+}
+
+/// Encrypt (or, with no sync password, blank) every credential value in a snapshot DB
+/// copy about to be uploaded. Operates on the TEMP COPY only — the live DB keeps its
+/// plaintext values so the running app is unaffected.
+fn seal_snapshot_credentials(snapshot: &Path, pass: &str) -> Result<()> {
+    let conn = Connection::open(snapshot)?;
+    let rows: Vec<(String, String)> = {
+        let mut st = conn.prepare("SELECT key, value FROM settings")?;
+        let r = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        r.filter_map(|x| x.ok()).collect()
+    };
+    for (k, v) in rows {
+        if !is_credential_key(&k) || v.is_empty() || v.starts_with(ENC_PREFIX) {
+            continue;
+        }
+        // No password ⇒ blank (""), never upload a readable secret.
+        let sealed = seal_cred(&v, pass).unwrap_or_default();
+        conn.execute(
+            "UPDATE settings SET value=?1 WHERE key=?2",
+            rusqlite::params![sealed, k],
+        )?;
+    }
+    Ok(())
+}
+
 pub struct SyncCfg {
     pub url: String,
     pub user: String,
@@ -271,12 +370,22 @@ fn is_syncable_setting(key: &str) -> bool {
     // token/site so the phone can fetch fresh data. It rides the user's own homelab
     // WebDAV, so the token never leaves their control.
     //
-    // Provider API keys are deliberately NOT synced (security): a billable OpenRouter/
-    // Claude/OpenAI/Gemini key — and the custom endpoint — is a real secret, and syncing
-    // it would copy it to every linked device + the WebDAV store. Each device holds its
-    // own; the keys tab promises "never synced". The `_key` substring guard below also
-    // backstops this if a future key sneaks into a group.
-    const SYNCED_CREDS: &[&str] = &["moodle_url", "moodle_token", "moodle_userid"];
+    // The Google Calendar connection is synced too (user-requested), so a linked phone
+    // shows "connected" and can work without repeating the OAuth flow. Like Moodle, these
+    // ride the user's own homelab — and, unlike before, every value here is ENCRYPTED in
+    // the uploaded snapshot (see seal_snapshot_credentials), so the refresh token et al.
+    // are never readable or changeable off-device.
+    //
+    // Provider API keys remain NOT synced (security): a billable OpenRouter/Claude/OpenAI/
+    // Gemini key is a real per-device secret. Each device holds its own; the keys tab
+    // promises "never synced". (They're still encrypted in the snapshot at rest.) The
+    // `_key` substring guard below backstops this if a future key sneaks into a group.
+    const SYNCED_CREDS: &[&str] = &[
+        "moodle_url", "moodle_token", "moodle_userid",
+        "google_client_id", "google_client_secret", "google_access_token",
+        "google_refresh_token", "google_token_expiry", "google_connected_email",
+        "google_calendar_id", "google_pull_calendars",
+    ];
     if SYNCED_CREDS.contains(&key) {
         return true;
     }
@@ -445,19 +554,32 @@ fn merge_attached(conn: &Connection, remote: &Path) -> Result<()> {
     // device-independent keys. No per-key timestamp exists, so this is
     // last-push-wins — fine for preferences.
     if has_table(conn, "rmt", "settings") {
+        // The local sync password decrypts the snapshot's credential values.
+        let pass: String = conn
+            .query_row("SELECT value FROM main.settings WHERE key='sync_pass'", [], |r| r.get(0))
+            .unwrap_or_default();
         let pairs: Vec<(String, String)> = {
             let mut st = conn.prepare("SELECT key, value FROM rmt.settings")?;
             let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
             rows.filter_map(|x| x.ok()).collect()
         };
         for (k, v) in pairs {
-            if is_syncable_setting(&k) {
-                conn.execute(
-                    "INSERT INTO main.settings (key, value) VALUES (?1, ?2) \
-                     ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                    rusqlite::params![k, v],
-                )?;
+            if !is_syncable_setting(&k) {
+                continue;
             }
+            // Decrypt `enc:v1:` values (Google/Moodle creds); plaintext prefs pass through.
+            // Skip anything we can't decrypt rather than storing ciphertext as a value.
+            let Some(value) = unseal_cred(&v, &pass) else { continue };
+            // Never let a blanked credential (e.g. snapshot built with no sync password)
+            // overwrite a device's real connected token — that would falsely disconnect it.
+            if value.is_empty() && is_credential_key(&k) {
+                continue;
+            }
+            conn.execute(
+                "INSERT INTO main.settings (key, value) VALUES (?1, ?2) \
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                rusqlite::params![k, value],
+            )?;
         }
     }
 
@@ -554,6 +676,9 @@ pub async fn sync_push(app: AppHandle) -> Result<i64> {
                 c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0));
             std::fs::copy(&db_path, &tmp).map_err(Error::Io)?;
         }
+        // Encrypt every credential value in the snapshot copy before it leaves the
+        // device, keyed by the sync password (the live DB keeps plaintext).
+        seal_snapshot_credentials(&tmp, &cfg.pass)?;
         let bytes = std::fs::read(&tmp).map_err(Error::Io)?;
         let _ = std::fs::remove_file(&tmp);
         put(&cfg, REMOTE_DB, bytes)?;
@@ -695,19 +820,51 @@ mod tests {
         ] {
             assert!(!is_syncable_setting(k), "{k} must not sync");
         }
-        // The Moodle connection is the one deliberate credential exception (opt-in, rides
-        // the user's own homelab WebDAV) so a linked phone shares course matching.
-        for k in ["moodle_url", "moodle_token", "moodle_userid"] {
-            assert!(is_syncable_setting(k), "{k} should sync (Moodle opt-in)");
+        // The Moodle + Google connections are the deliberate credential exceptions
+        // (opt-in, ride the user's own homelab WebDAV, ENCRYPTED at rest) so a linked
+        // phone shows connected and works without repeating sign-in.
+        for k in [
+            "moodle_url", "moodle_token", "moodle_userid",
+            "google_refresh_token", "google_access_token", "google_client_id",
+            "google_client_secret", "google_connected_email", "google_pull_calendars",
+        ] {
+            assert!(is_syncable_setting(k), "{k} should sync (opt-in credential)");
         }
-        // Preferences SHOULD sync.
+        // Every synced credential MUST be classed as a credential so it's encrypted
+        // before upload (never plaintext on the WebDAV).
+        for k in ["moodle_token", "google_refresh_token", "google_client_secret"] {
+            assert!(is_credential_key(k), "{k} must be encrypted in the snapshot");
+        }
+        // Preferences SHOULD sync (and are NOT treated as credentials).
         for k in [
             "theme", "density", "reading_font", "keybind_cmdk", "keybind_preset",
             "model_chat", "budget_cheatsheet", "pomo_workMin", "profile_name",
             "default_station", "web_images_enabled", "cs_memory",
         ] {
             assert!(is_syncable_setting(k), "{k} should sync");
+            assert!(!is_credential_key(k), "{k} is a preference, not a credential");
         }
+    }
+
+    #[test]
+    fn cred_encryption_roundtrips_and_resists_tampering() {
+        let pass = "homelab-sync-pw";
+        let secret = "1//refresh-token-abc.DEF_ghi";
+        let sealed = seal_cred(secret, pass).expect("seal");
+        assert!(sealed.starts_with(ENC_PREFIX), "carries the version marker");
+        assert!(!sealed.contains(secret), "plaintext is not present in the blob");
+        // Right password → original value back.
+        assert_eq!(unseal_cred(&sealed, pass).as_deref(), Some(secret));
+        // Wrong password → refuses (returns None, never garbage).
+        assert_eq!(unseal_cred(&sealed, "wrong-pw"), None);
+        // Tampered ciphertext → AEAD auth fails (None), so it can't be changed off-device.
+        let mut bad = sealed.clone();
+        bad.push('A');
+        assert_eq!(unseal_cred(&bad, pass), None);
+        // Plaintext (a preference, or a pre-encryption snapshot) passes through unchanged.
+        assert_eq!(unseal_cred("osaka-jade", pass).as_deref(), Some("osaka-jade"));
+        // No password ⇒ we cannot seal (caller blanks instead of leaking).
+        assert_eq!(seal_cred(secret, ""), None);
     }
 
     fn ins(c: &Connection, id: &str, name: &str, upd: i64) {

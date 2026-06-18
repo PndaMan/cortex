@@ -12,6 +12,7 @@ export type OrModel = {
 // Curated cost/quality picks, pinned to the top in this order (a sensible default
 // shortlist; the full 300+ catalog is one keystroke away via search).
 const RECOMMENDED: string[] = [
+  "deepseek/deepseek-v4-flash",
   "google/gemini-2.5-flash",
   "google/gemini-2.5-flash-lite",
   "openai/gpt-5-mini",

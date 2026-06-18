@@ -237,7 +237,7 @@ pub async fn moodle_set_token(app: AppHandle, url: String, token: String) -> Res
 }
 
 /// SSO login: open the Moodle mobile launch flow in a window. The user signs in
-/// through their institution's SSO (e.g. Stellenbosch Microsoft + MFA) and Moodle
+/// through their institution's SSO (e.g. Microsoft/SAML + MFA) and Moodle
 /// redirects to `cortexmoodle://token=<base64>`; we intercept that, decode the
 /// token, verify it and store it. Emits `moodle-sso-done` (full name) on success
 /// or `moodle-sso-error` (message) on failure.

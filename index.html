@@ -2,7 +2,11 @@
 <html lang="en" data-theme="everforest">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Zoom locked by default so Cortex feels like a native app, not a zoomable web
+         page (no pinch / double-tap zoom in the mobile WKWebView). The source viewer
+         temporarily unlocks this while open so PDFs/slides stay zoomable — see
+         SourceViewer.svelte. Harmless on desktop (touch-scaling is irrelevant there). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
     <title>Cortex — study OS</title>
   </head>
   <body>

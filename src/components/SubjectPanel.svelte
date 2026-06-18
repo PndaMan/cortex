@@ -1,6 +1,6 @@
 <script lang="ts">
   // Subject detail panel (modal). Opened by clicking the subject header in
-  // SubjectView. Holds the subject's About info, the Moodle/SUNLearn link + synced
+  // SubjectView. Holds the subject's About info, the Moodle link + synced
   // grades/deadlines/announcements, and the module framework — whose original file
   // opens in-app as a PDF, like a source.
   import { app } from "../lib/store.svelte";
@@ -295,7 +295,7 @@
       </div>
 
       <div class="sp-body">
-        <!-- University portal (Moodle / SUNLearn) -->
+        <!-- University portal (Moodle) -->
         <section class="sp-card">
           <div class="sp-card-h">
             <Icon name="link" size={14} /><span>University portal</span>
@@ -310,7 +310,7 @@
 
           {#if !mdStatus.configured}
             <div class="sp-empty">
-              <p class="sp-faint">Connect your SUNLearn / Moodle portal to pull grades, deadlines and announcements into this subject.</p>
+              <p class="sp-faint">Connect your Moodle portal to pull grades, deadlines and announcements into this subject.</p>
               <button class="btn btn--sm btn--primary" onclick={() => { app.closeSubjectPanel(); app.openSettings("experimental"); }}>
                 <Icon name="settings" size={12} /> Open Moodle settings
               </button>

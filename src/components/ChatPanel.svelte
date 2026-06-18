@@ -59,6 +59,7 @@
 
   // In-chat model picker (writes the same model_chat setting Settings uses).
   const CHAT_MODELS = [
+    "openrouter:deepseek/deepseek-v4-flash",
     "openrouter:openai/gpt-4o-mini",
     "openrouter:openai/gpt-4o",
     "openrouter:anthropic/claude-3.5-sonnet",

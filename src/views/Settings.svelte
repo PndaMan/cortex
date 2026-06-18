@@ -91,7 +91,8 @@
     ] },
     { id: "openrouter", label: "OpenRouter", models: [
       // ── best value: cheap + capable ──
-      { id: "google/gemini-2.5-flash",            label: "Gemini 2.5 Flash — ⚡ best value" },
+      { id: "deepseek/deepseek-v4-flash",         label: "DeepSeek V4 Flash — ⚡ default · best value" },
+      { id: "google/gemini-2.5-flash",            label: "Gemini 2.5 Flash — strong + cheap" },
       { id: "google/gemini-2.5-flash-lite",       label: "Gemini 2.5 Flash-Lite — cheapest" },
       { id: "openai/gpt-5-mini",                  label: "GPT-5 mini — cheap + smart" },
       { id: "openai/gpt-4o-mini",                 label: "GPT-4o mini — cheap" },
@@ -201,17 +202,17 @@
 
   // ---- models state ----
   type TaskAssign = { provider: string; model: string; budget: string };
-  // Defaults: Step 3.7 Flash (via OpenRouter) for text generation — cheaper than
-  // Gemini 2.5 Flash ($0.20/$1.15 vs ~$0.30/$2.50 per Mtok), 256K context, with
-  // strong agentic/structured-output quality. Falls back to any configured key
-  // if OpenRouter isn't set (see llm::from_spec_or_any). Embeddings stay on Gemini.
+  // Defaults: DeepSeek V4 Flash (via OpenRouter) for ALL text generation —
+  // extremely cheap ($0.09/$0.18 per Mtok), 1M context, fast and non-reasoning.
+  // Falls back to any configured key if OpenRouter isn't set (see
+  // llm::from_spec_or_any). Embeddings stay on Gemini (DeepSeek doesn't embed).
   let assign = $state<Record<TaskId, TaskAssign>>({
-    chat:       { provider: "openrouter", model: "stepfun/step-3.7-flash", budget: "8000" },
-    cheatsheet: { provider: "openrouter", model: "stepfun/step-3.7-flash", budget: "32000" },
-    audio:      { provider: "openrouter", model: "stepfun/step-3.7-flash", budget: "16000" },
-    quiz:       { provider: "openrouter", model: "stepfun/step-3.7-flash", budget: "8000" },
-    flashcard:  { provider: "openrouter", model: "stepfun/step-3.7-flash", budget: "6000" },
-    embedding:  { provider: "gemini",     model: "text-embedding-004",     budget: "—" },
+    chat:       { provider: "openrouter", model: "deepseek/deepseek-v4-flash", budget: "8000" },
+    cheatsheet: { provider: "openrouter", model: "deepseek/deepseek-v4-flash", budget: "32000" },
+    audio:      { provider: "openrouter", model: "deepseek/deepseek-v4-flash", budget: "16000" },
+    quiz:       { provider: "openrouter", model: "deepseek/deepseek-v4-flash", budget: "8000" },
+    flashcard:  { provider: "openrouter", model: "deepseek/deepseek-v4-flash", budget: "6000" },
+    embedding:  { provider: "gemini",     model: "text-embedding-004",        budget: "—" },
   });
 
   function setTask(id: TaskId, patch: Partial<TaskAssign>) {
@@ -732,11 +733,12 @@
       : { cls: "pending", label: "Not set" };
   }
 
-  // persist the Ollama endpoint on change
+  // persist the Ollama endpoint on change, and re-probe its installed models
   $effect(() => {
     const ep = endpoint;
     if (!loaded) return;
     api.setSettings({ ollama_url: ep }).catch(() => {});
+    invalidateOllamaModels();
   });
 
   // ---- focus timer (pomodoro) durations — bound to the app-wide timer ----
@@ -969,6 +971,11 @@
 
       // Hydration complete — persist effects may now write without clobbering.
       loaded = true;
+
+      // Auto-verify each stored key's connection, and pre-load Ollama's installed
+      // models if any task uses Ollama (so the picker reflects reality immediately).
+      verifyAllKeys();
+      if (Object.values(assign).some((x) => x.provider === "ollama")) void ensureOllamaModels();
     })();
   });
 
@@ -1015,11 +1022,15 @@
     }
   }
 
-  function onModelProviderChange(taskId: TaskId, p: string) {
-    const provList = taskId === "embedding" ? EMBED_PROVIDERS : PROVIDERS;
+  async function onModelProviderChange(taskId: TaskId, p: string) {
+    if (p === "ollama") await ensureOllamaModels();
+    const provList = providersFor(taskId);
     const np = provList.find((x) => x.id === p) ?? provList[0];
-    setTask(taskId, { provider: p, model: np.models[0].id });
-    const kv: Record<string, string> = { [`model_${taskId}`]: p + ":" + np.models[0].id };
+    // Ollama → default to the first INSTALLED model (empty if none pulled, which leaves
+    // the picker blank as intended). Others → the provider's first curated model.
+    const firstModel = p === "ollama" ? (ollamaInstalled[0] ?? "") : (np.models[0]?.id ?? "");
+    setTask(taskId, { provider: p, model: firstModel });
+    const kv: Record<string, string> = { [`model_${taskId}`]: p + ":" + firstModel };
     if (taskId === "embedding") kv.embed_provider = p;
     api.setSettings(kv).catch(() => {});
   }
@@ -1027,6 +1038,73 @@
   function onModelChange(taskId: TaskId, m: string) {
     setTask(taskId, { model: m });
     api.setSettings({ [`model_${taskId}`]: assign[taskId].provider + ":" + m }).catch(() => {});
+  }
+
+  // ── Ollama: live installed-model list (GET /api/tags) ──────────────────────
+  // When a task's provider is Ollama, the model picker shows ONLY the models actually
+  // installed on the configured server (local on desktop, or the homelab). An empty
+  // list ⇒ an empty picker (nothing to choose) — never models that aren't pulled.
+  let ollamaInstalled = $state<string[]>([]);
+  let ollamaLoaded = false;
+  async function ensureOllamaModels() {
+    if (ollamaLoaded) return;
+    ollamaLoaded = true;
+    try { ollamaInstalled = await api.ollamaModels(); } catch { ollamaInstalled = []; }
+  }
+  // Changing the Ollama/homelab URL just INVALIDATES the cached list — it's re-probed
+  // lazily next time the picker opens, so we don't fire a network call per keystroke.
+  function invalidateOllamaModels() { ollamaLoaded = false; ollamaInstalled = []; }
+
+  // Is local-model (Ollama) usage available here? On desktop, always (localhost). On
+  // mobile there is no localhost Ollama, so it needs a homelab base (or an explicit
+  // non-localhost Ollama URL) to be reachable.
+  const hasHomelabOllama = $derived(
+    !!(hlBase.trim() || hlTailscale.trim() || hlPublic.trim()) ||
+    (!!endpoint.trim() && !/localhost|127\.0\.0\.1/.test(endpoint))
+  );
+  const ollamaAvailable = $derived(!isMobile || hasHomelabOllama);
+
+  // Provider list for a task, with Ollama dropped on mobile when no homelab is set
+  // (so it isn't offered when it can't possibly work).
+  function providersFor(taskId: TaskId) {
+    const base = taskId === "embedding" ? EMBED_PROVIDERS : PROVIDERS;
+    return ollamaAvailable ? base : base.filter((p) => p.id !== "ollama");
+  }
+
+  // Options for a task's model picker: OpenRouter → live catalog; Ollama → installed
+  // models (may be empty); else the provider's curated list.
+  function modelOptionsFor(prov: { id: string; models: Model[] }) {
+    if (prov.id === "openrouter" && orModels.length) return orModels;
+    if (prov.id === "ollama") return ollamaInstalled.map((id) => ({ id, label: id }));
+    return prov.models.map((m) => ({ id: m.id, label: m.label }));
+  }
+
+  // Ollama URL to display in API keys. Desktop: the editable endpoint. Mobile: the
+  // homelab-derived URL (base + /ollama), shown read-only — Ollama is homelab-only there.
+  const ollamaDisplayUrl = $derived(
+    endpoint.trim() ? endpoint.trim()
+    : (hlBase.trim() ? hlBase.trim().replace(/\/+$/, "") + "/ollama" : "")
+  );
+
+  // ── API-key verification (a real authed connection check, not just "key present") ──
+  type VerifyState = api.VerifyResult | "checking" | null;
+  let verify = $state<Record<string, VerifyState>>({});
+  // Status-badge class + label, shared by the provider rows and the Ollama row.
+  const statusClass = (v: VerifyState) =>
+    "key-status " + (v === "checking" ? "checking" : v ? (v.ok ? "ok" : "bad") : "off");
+  const statusLabel = (v: VerifyState, isSet = false) =>
+    v === "checking" ? "checking…" : v ? (v.ok ? "connected" : v.detail) : (isSet ? "not checked" : "not set");
+  async function verifyKey(id: string) {
+    verify = { ...verify, [id]: "checking" };
+    try { verify = { ...verify, [id]: await api.verifyProvider(id) }; }
+    catch (e) { verify = { ...verify, [id]: { ok: false, detail: String(e) } }; }
+  }
+  // Verify every provider that has a stored key (run on load + after Save keys).
+  function verifyAllKeys() {
+    for (const k of keyMeta) {
+      if (keys[k.id as keyof typeof keys]?.trim()) void verifyKey(k.id);
+    }
+    if (ollamaAvailable) void verifyKey("ollama");
   }
 
   const levelLabels: Record<string, string> = {
@@ -1241,9 +1319,11 @@ Notes: {about}</pre>
           </div>
           {#each MODEL_TASKS as t}
             {@const a = assign[t.id]}
-            {@const provList = t.id === "embedding" ? EMBED_PROVIDERS : PROVIDERS}
-            {@const prov = provList.find((p) => p.id === a.provider) ?? provList[0]}
+            {@const provList = providersFor(t.id)}
+            {@const allProv = t.id === "embedding" ? EMBED_PROVIDERS : PROVIDERS}
+            {@const prov = allProv.find((p) => p.id === a.provider) ?? provList[0]}
             {@const isOr = a.provider === "openrouter"}
+            {@const isOllama = a.provider === "ollama"}
             <div class="mt-row">
               <div class="mt-task">
                 <div class="mt-task-t">{t.label}</div>
@@ -1255,14 +1335,15 @@ Notes: {about}</pre>
                 options={provList.map((p) => ({ id: p.id, label: p.label }))}
               />
               <!-- OpenRouter → live searchable catalog (curated list as offline/pre-fetch
-                   fallback); every other provider → its own curated list, still searchable. -->
+                   fallback); Ollama → only models actually installed (empty ⇒ nothing to
+                   pick); every other provider → its own curated list, still searchable. -->
               <ModelSearch
                 value={a.model}
                 onChange={(m) => onModelChange(t.id, m)}
-                options={isOr && orModels.length ? orModels : prov.models.map((m) => ({ id: m.id, label: m.label }))}
+                options={modelOptionsFor(prov)}
                 loading={isOr && orLoading}
-                onOpen={isOr ? ensureOrModels : undefined}
-                placeholder={isOr ? "Search OpenRouter…" : undefined}
+                onOpen={isOr ? ensureOrModels : (isOllama ? ensureOllamaModels : undefined)}
+                placeholder={isOr ? "Search OpenRouter…" : (isOllama ? (ollamaInstalled.length ? "Pick an installed model" : "No models installed") : undefined)}
               />
               {#if t.id === "embedding"}
                 <span class="mono faint mt-budget-na">n/a</span>
@@ -1297,14 +1378,13 @@ Notes: {about}</pre>
           <div class="set-card">
             {#each keyMeta as k}
               {@const isSet = !!keys[k.id as keyof typeof keys]}
+              {@const v = verify[k.id]}
               <div class="set-row stacked">
                 <div class="set-row-l">
                   <div class="set-row-t">
                     <span class="row-keytitle">
                       {k.label}
-                      <span class={"key-status " + (isSet ? "ok" : "off")}>
-                        {isSet ? `connected · ${keys[k.id as keyof typeof keys].trim().length} chars` : "not set"}
-                      </span>
+                      <span class={statusClass(v)}>{statusLabel(v, isSet)}</span>
                     </span>
                   </div>
                   <div class="set-row-d">{k.note}</div>
@@ -1315,7 +1395,7 @@ Notes: {about}</pre>
                       class="input mono"
                       type={showKey[k.id] ? "text" : "password"}
                       value={keys[k.id as keyof typeof keys]}
-                      oninput={(e) => { keys = { ...keys, [k.id]: (e.target as HTMLInputElement).value }; }}
+                      oninput={(e) => { keys = { ...keys, [k.id]: (e.target as HTMLInputElement).value }; verify = { ...verify, [k.id]: null }; }}
                       placeholder={k.placeholder}
                       spellcheck={false}
                     />
@@ -1329,12 +1409,18 @@ Notes: {about}</pre>
                     </button>
                   </div>
                   {#if isSet}
-                    <button
-                      type="button"
-                      class="btn btn--ghost btn--sm"
-                      style="margin-top:6px"
-                      onclick={() => { keys = { ...keys, [k.id]: "" }; }}
-                    >Clear</button>
+                    <div style="display:flex;gap:6px;margin-top:6px">
+                      <button
+                        type="button"
+                        class="btn btn--ghost btn--sm"
+                        onclick={() => verifyKey(k.id)}
+                      >Verify</button>
+                      <button
+                        type="button"
+                        class="btn btn--ghost btn--sm"
+                        onclick={() => { keys = { ...keys, [k.id]: "" }; verify = { ...verify, [k.id]: null }; }}
+                      >Clear</button>
+                    </div>
                   {/if}
                 </div>
               </div>
@@ -1342,8 +1428,50 @@ Notes: {about}</pre>
           </div>
         </section>
 
+        <!-- Local models (Ollama) — keyless; a URL, not a key. On mobile Ollama is
+             reached only through the Homelab (no localhost on a phone). -->
+        {#if ollamaAvailable}
+        {@const ov = verify.ollama}
+        <section class="set-group">
+          <div class="set-group-h"><h3 class="set-group-t">Local models (Ollama)</h3></div>
+          <div class="set-card">
+            <div class="set-row stacked">
+              <div class="set-row-l">
+                <div class="set-row-t">
+                  <span class="row-keytitle">
+                    Ollama URL
+                    <span class={statusClass(ov)}>{statusLabel(ov)}</span>
+                  </span>
+                </div>
+                <div class="set-row-d">
+                  {#if isMobile}
+                    Runs through your Homelab — set the Homelab URL in Integrations. Keyless.
+                  {:else}
+                    Keyless, local. Defaults to <span class="mono">http://localhost:11434</span>; leave blank to use your Homelab.
+                  {/if}
+                </div>
+              </div>
+              <div class="set-row-r">
+                {#if isMobile}
+                  <input class="input mono" value={ollamaDisplayUrl} placeholder="set Homelab URL in Integrations" readonly />
+                {:else}
+                  <input
+                    class="input mono"
+                    value={endpoint}
+                    oninput={(e) => { endpoint = (e.target as HTMLInputElement).value; verify = { ...verify, ollama: null }; }}
+                    placeholder="http://localhost:11434"
+                    spellcheck={false}
+                  />
+                {/if}
+                <button type="button" class="btn btn--ghost btn--sm" style="margin-top:6px" onclick={() => verifyKey("ollama")}>Verify</button>
+              </div>
+            </div>
+          </div>
+        </section>
+        {/if}
+
         <div class="set-foot-actions">
-          <button class="btn btn--primary" onclick={saveKeys}>
+          <button class="btn btn--primary" onclick={() => { saveKeys(); verifyAllKeys(); }}>
             <Icon name="check" size={13} /> Save keys
           </button>
         </div>
@@ -2040,8 +2168,8 @@ Notes: {about}</pre>
         <section class="set-group">
           <div class="set-group-h svc-h">
             <div>
-              <h3 class="set-group-t">University portal (Moodle / SUNLearn)</h3>
-              <p class="set-group-d">Pull grades, assignments, deadlines and announcements from your Moodle portal (Stellenbosch SUNLearn = <span class="mono">learn.sun.ac.za</span>) into Cortex.</p>
+              <h3 class="set-group-t">University portal (Moodle)</h3>
+              <p class="set-group-d">Pull grades, assignments, deadlines and announcements from your Moodle portal into Cortex.</p>
             </div>
             <button class={"st-toggle" + (expMoodle ? " on" : "")} type="button" onclick={toggleExpMoodle} role="switch" aria-checked={expMoodle} aria-label="enable moodle"><span class="st-knob"></span></button>
           </div>
@@ -2064,7 +2192,7 @@ Notes: {about}</pre>
               <div class="set-row">
                 <div class="set-row-l">
                   <div class="set-row-t">Sign-in method</div>
-                  <div class="set-row-d">Stellenbosch uses Microsoft SSO, so username/password usually won't work — paste a web-services token instead.</div>
+                  <div class="set-row-d">Many institutions use SSO (Microsoft/SAML), so username/password often won't work — paste a web-services token instead.</div>
                 </div>
                 <div class="set-row-r" style="gap:6px">
                   <button class={"btn btn--sm" + (mdAuthMode === 'token' ? ' btn--primary' : ' btn--ghost')} type="button" onclick={() => (mdAuthMode = 'token')}>Token</button>
@@ -2085,7 +2213,7 @@ Notes: {about}</pre>
                 <div class="set-row stacked">
                   <div class="set-row-t">Web-services token</div>
                   <input class="input mono" bind:value={mdToken} placeholder="paste your Moodle token" />
-                  <div class="set-row-d">Obtain it from the official SUNLearn / Moodle app or a browser login. Stored locally; your password is never sent to Cortex.</div>
+                  <div class="set-row-d">Obtain it from the official Moodle app or a browser login. Stored locally; your password is never sent to Cortex.</div>
                 </div>
               {/if}
 

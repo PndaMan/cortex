@@ -1,6 +1,6 @@
 [package]
 name = "cortex"
-version = "1.0.23"
+version = "1.0.24"
 description = "Cortex — desktop study OS"
 authors = ["Aidan McConnon"]
 license = "Apache-2.0"
@@ -21,6 +21,13 @@ tauri-plugin-notification = "2"
 tauri-plugin-process = "2"
 base64 = "0.22"
 percent-encoding = "2"
+# Sync credential encryption: XChaCha20-Poly1305 AEAD (chacha20poly1305) with a key
+# derived from the sync password (sha2). Keeps Google/Moodle tokens — and every other
+# secret — opaque and tamper-evident at rest in the homelab snapshot, so they can't be
+# read or changed outside the app. rand_core/OsRng supplies the per-message nonce.
+chacha20poly1305 = "0.10"
+sha2 = "0.10"
+rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }

@@ -1025,6 +1025,8 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
 .key-status { font-family: var(--font-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 7px; border-radius: var(--rad-pill); }
 .key-status.ok { color: var(--ok); background: color-mix(in oklab, var(--ok) 12%, transparent); border: 1px solid color-mix(in oklab, var(--ok) 35%, transparent); }
 .key-status.off { color: var(--fg-faint); border: 1px solid var(--border-strong); }
+.key-status.bad { color: var(--err); background: color-mix(in oklab, var(--err) 12%, transparent); border: 1px solid color-mix(in oklab, var(--err) 35%, transparent); }
+.key-status.checking { color: var(--warn); border: 1px solid color-mix(in oklab, var(--warn) 35%, transparent); }
 
 /* toggle */
 .st-toggle { width: 40px; height: 23px; border-radius: var(--rad-pill); background: var(--surface-3); border: 1px solid var(--border-strong); position: relative; cursor: pointer; flex: none; transition: background var(--dur); }

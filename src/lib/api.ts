@@ -521,6 +521,13 @@ export const dbStats = () => invoke<DbStats>("db_stats");
 export const deleteAllData = () => invoke<void>("delete_all_data");
 export const pingUrl = (url: string) => invoke<boolean>("ping_url", { url });
 
+/** Models actually installed on the configured Ollama server (local or homelab). Empty when unreachable / none pulled. */
+export const ollamaModels = () => invoke<string[]>("ollama_models");
+/** Lightweight authenticated probe of a provider's stored key/url. provider: gemini|openrouter|openai|claude|custom|ollama. */
+export interface VerifyResult { ok: boolean; detail: string }
+export const verifyProvider = (provider: string) =>
+  invoke<VerifyResult>("verify_provider", { provider });
+
 // ---- Google Calendar (OAuth + sync) ----
 export interface GoogleStatus {
   connected: boolean;

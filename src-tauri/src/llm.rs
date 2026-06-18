@@ -525,7 +525,7 @@ pub fn from_spec_or_any(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
         return Some(m);
     }
     let fallback = if nonempty(&keys.openrouter).is_some() {
-        "openrouter:openai/gpt-4o-mini"
+        "openrouter:deepseek/deepseek-v4-flash"
     } else if nonempty(&keys.gemini).is_some() {
         "gemini:gemini-2.5-flash"
     } else if nonempty(&keys.openai).is_some() {
