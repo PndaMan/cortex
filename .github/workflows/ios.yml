@@ -313,22 +313,38 @@ jobs:
       # iOS Distribution cert — the macOS "Developer ID" cert will not sign for the
       # App Store. Fails loudly so a wrong cert is obvious.
       - name: Import signing certificate
+        # iOS App Store signing needs an "Apple Distribution" cert. APPLE_CERTIFICATE is the
+        # macOS "Developer ID" cert (shared with release.yml notarization) and CANNOT sign for
+        # the App Store, so prefer a dedicated APPLE_IOS_CERTIFICATE; fall back to APPLE_CERTIFICATE
+        # only in case a correctly-typed cert is shared. A guard below fails fast on the wrong type.
         env:
+          APPLE_IOS_CERTIFICATE: ${{ secrets.APPLE_IOS_CERTIFICATE }}
+          APPLE_IOS_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_IOS_CERTIFICATE_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           set -e
-          echo "$APPLE_CERTIFICATE" | base64 --decode > cert.p12
+          CERT_B64="${APPLE_IOS_CERTIFICATE:-$APPLE_CERTIFICATE}"
+          CERT_PW="${APPLE_IOS_CERTIFICATE_PASSWORD:-$APPLE_CERTIFICATE_PASSWORD}"
+          if [ -z "$CERT_B64" ]; then
+            echo "::error::No iOS signing cert. Add APPLE_IOS_CERTIFICATE (an Apple Distribution .p12, base64-encoded) to the Production environment."
+            exit 1
+          fi
+          echo "$CERT_B64" | base64 --decode > cert.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security import cert.p12 -k build.keychain -P "$CERT_PW" -T /usr/bin/codesign
           security default-keychain -s build.keychain
           security list-keychains -d user -s build.keychain login.keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           echo "Signing identities available:"
           security find-identity -v -p codesigning build.keychain
+          if ! security find-identity -v -p codesigning build.keychain | grep -qE "Apple Distribution|iPhone Distribution"; then
+            echo "::error::No 'Apple Distribution' identity in the keychain — the stored cert is not an iOS App Store cert (it looks like the macOS 'Developer ID' cert). Set APPLE_IOS_CERTIFICATE to an Apple Distribution .p12 exported WITH its private key."
+            exit 1
+          fi
 
       # Install the provisioning profile (NEW secret: base64 of a .mobileprovision
       # for study.cortex.app). Required for an App Store / TestFlight export.
@@ -378,6 +394,29 @@ jobs:
           cfg=src-tauri/tauri.ios.conf.json
           tmp=$(mktemp); jq --arg v "$VER" '.version = $v' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
           echo "tauri.ios.conf.json version → $VER"; cat "$cfg"
+
+      - name: Force manual App Store signing
+        # The generated Xcode project defaults to AUTOMATIC signing, so xcodebuild tries to
+        # fetch a *Development* profile via a logged-in Apple account the runner doesn't have
+        # → "No Accounts" / "No profiles for 'study.cortex.app' were found". Pin MANUAL signing
+        # to the imported Apple Distribution identity + the installed App Store profile so it
+        # uses exactly our cert + profile (same pbxproj-patch technique as the device-ipa job).
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          PROFILE="$HOME/Library/MobileDevice/Provisioning Profiles/cortex.mobileprovision"
+          security cms -D -i "$PROFILE" > /tmp/pp.plist
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/pp.plist)
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /tmp/pp.plist)
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain \
+            | sed -nE 's/.*"(Apple Distribution[^"]*|iPhone Distribution[^"]*)".*/\1/p' | head -1)
+          echo "identity=$IDENTITY"
+          echo "profile=$PROFILE_NAME ($PROFILE_UUID)"
+          for pbx in src-tauri/gen/apple/*.xcodeproj/project.pbxproj; do
+            perl -0pi -e "s/(buildSettings = \{)/\$1\n\t\t\t\tCODE_SIGN_STYLE = Manual;\n\t\t\t\tDEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\";\n\t\t\t\tCODE_SIGN_IDENTITY = \"$IDENTITY\";\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"$PROFILE_NAME\";/g" "$pbx"
+            echo "manual signing patched: $pbx"
+          done
 
       - name: Build signed IPA (App Store)
         env:
