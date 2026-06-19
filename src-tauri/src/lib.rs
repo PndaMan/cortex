@@ -100,6 +100,30 @@ pub fn run() {
 
             app.manage(state);
 
+            // Background sync + homelab connect. The frontend (store.svelte.ts) only
+            // syncs while a window is open and dies when it closes; this dedicated OS
+            // thread keeps pulling/pushing and warming the homelab connection for as
+            // long as the PROCESS lives — so a closed-window device (close-to-tray on
+            // desktop) stays in sync without anyone reopening it. A plain thread (not
+            // the async runtime) keeps it independent of webview/UI state; each tick is
+            // panic-caught so a transient poisoned-lock/network error can't kill the loop.
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // Let the frontend's launch sync go first on a normal foreground start.
+                    std::thread::sleep(std::time::Duration::from_secs(30));
+                    loop {
+                        let h = handle.clone();
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            sync::background_tick(&h);
+                        }));
+                        std::thread::sleep(std::time::Duration::from_secs(
+                            sync::BACKGROUND_INTERVAL_SECS,
+                        ));
+                    }
+                });
+            }
+
             // If a previous session crashed, its mpv music sidecar is still
             // alive and streaming — quit it before this session starts its own.
             mpv::cleanup_stale(app.handle());

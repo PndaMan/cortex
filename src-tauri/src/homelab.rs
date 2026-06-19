@@ -97,6 +97,19 @@ pub fn resolve(conn: &Connection, primary: &str) -> String {
     chosen
 }
 
+/// Proactively resolve every homelab service so the reachable origin is cached
+/// (TTL) before the user needs it — called from the background sync loop so first
+/// foreground use (chat, transcription, search, sync) doesn't pay a cold network
+/// probe. Best-effort: a service that isn't configured or isn't reachable just falls
+/// back to its primary, exactly as on-demand resolution would. Under the unified
+/// `homelab_base` all services share one origin, so this is a single probe round
+/// (the first resolve caches the base; the rest hit the cache).
+pub fn warm(conn: &Connection) {
+    for key in ["sync_url", "ollama_url", "whisper_url", "searxng_url", "ingest_url"] {
+        let _ = resolved_setting(conn, key);
+    }
+}
+
 /// Path prefix each service lives under when the unified single-URL homelab is
 /// used — everything is reached through one base URL + a reverse proxy that
 /// strips these prefixes (see homelab/Caddyfile).

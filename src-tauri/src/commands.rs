@@ -32,6 +32,15 @@ const DEFAULT_CHAT_MODEL: &str = "openrouter:deepseek/deepseek-v4-flash";
 /// multimodal (gpt-4o-mini / gemini-2.5-flash / claude-3.5-sonnet).
 const DEFAULT_VISION_MODEL: &str = "openrouter:google/gemini-2.5-flash";
 
+/// Default faster-whisper model id sent to the remote (speaches) transcription
+/// endpoint when the user hasn't picked one. speaches REQUIRES the `model` form
+/// field — omitting it answers HTTP 422 `{"loc":["body","model"],"msg":"Field
+/// required"}`, not a fall-through to its own WHISPER__MODEL. So we always send a
+/// model, and this matches exactly what the homelab compose pre-pulls
+/// (`WHISPER__MODEL` + the `whisper-init` one-shot), so there's no name mismatch;
+/// the 404→pull→retry path in `transcribe_remote` still covers a cold server.
+const DEFAULT_WHISPER_MODEL: &str = "Systran/faster-whisper-base";
+
 fn truncate(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
@@ -3022,10 +3031,9 @@ fn whisper_remote_url(state: &AppState) -> Option<String> {
 /// Model name sent to the remote (OpenAI-compatible) Whisper endpoint. A homelab
 /// faster-whisper/speaches server needs a faster-whisper model id it can load, not
 /// OpenAI's "whisper-1" — so this is configurable (Settings → Integrations). When the
-/// user hasn't picked one we return EMPTY, which makes `transcribe_remote` omit the
-/// `model` form field entirely so the homelab Whisper uses its OWN configured default
-/// (WHISPER__MODEL). That avoids the "model not installed" error from sending a model
-/// id the server doesn't have loaded — the cause of having to install one by hand.
+/// user hasn't picked one we fall back to `DEFAULT_WHISPER_MODEL` (the model the
+/// homelab compose pre-pulls): speaches requires the `model` field, so we must always
+/// send one — omitting it is the HTTP 422 "Field required" error.
 fn whisper_model(state: &AppState) -> String {
     state
         .db
@@ -3034,7 +3042,7 @@ fn whisper_model(state: &AppState) -> String {
         .and_then(|c| crate::repo::get_setting(&c, "whisper_model").ok().flatten())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_default()
+        .unwrap_or_else(|| DEFAULT_WHISPER_MODEL.to_string())
 }
 
 // ---- external dependency status -----------------------------------------

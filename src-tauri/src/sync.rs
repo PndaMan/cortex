@@ -25,6 +25,7 @@ use crate::repo;
 use rusqlite::Connection;
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
@@ -320,42 +321,47 @@ fn get_bytes(cfg: &SyncCfg, name: &str) -> Result<Vec<u8>> {
 /// homelab network I/O. Returns true if a newer remote was merged in.
 #[tauri::command]
 pub async fn sync_pull(app: AppHandle) -> Result<bool> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<bool> {
-        let state = app.state::<AppState>();
-        let (cfg, local_at) = {
-            let c = state.db.lock().unwrap();
-            let Some(cfg) = read_cfg(&c) else {
-                return Ok(false); // sync disabled / unconfigured
-            };
-            let local_at = repo::get_setting(&c, K_LAST_AT)
-                .ok()
-                .flatten()
-                .and_then(|s| s.parse::<i64>().ok())
-                .unwrap_or(0);
-            (cfg, local_at)
+    tauri::async_runtime::spawn_blocking(move || pull_blocking(&app))
+        .await
+        .map_err(|e| Error::Other(format!("sync pull task failed: {e}")))?
+}
+
+/// Blocking body of `sync_pull`, shared with the background sync loop (which runs on
+/// its own OS thread, not the async runtime). `Ok(false)` when sync is unconfigured
+/// or the remote hasn't advanced since the last merge.
+fn pull_blocking(app: &AppHandle) -> Result<bool> {
+    let state = app.state::<AppState>();
+    let (cfg, local_at) = {
+        let c = state.db.lock().unwrap();
+        let Some(cfg) = read_cfg(&c) else {
+            return Ok(false); // sync disabled / unconfigured
         };
-        let remote = match remote_stamp(&cfg)? {
-            Some(s) => s,
-            None => return Ok(false), // nothing on the remote yet
-        };
-        if remote <= local_at {
-            return Ok(false); // remote hasn't advanced since our last merge
-        }
-        let bytes = get_bytes(&cfg, REMOTE_DB)?;
-        let tmp = std::env::temp_dir().join(format!("cortex-pull-{remote}.db"));
-        std::fs::write(&tmp, &bytes).map_err(Error::Io)?;
-        {
-            let c = state.db.lock().unwrap();
-            merge_attached(&c, &tmp)?;
-            // We now hold the remote version; the launch push uploads the union
-            // back with a fresh, higher stamp.
-            repo::set_setting(&c, K_LAST_AT, &remote.to_string())?;
-        }
-        let _ = std::fs::remove_file(&tmp);
-        Ok(true)
-    })
-    .await
-    .map_err(|e| Error::Other(format!("sync pull task failed: {e}")))?
+        let local_at = repo::get_setting(&c, K_LAST_AT)
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0);
+        (cfg, local_at)
+    };
+    let remote = match remote_stamp(&cfg)? {
+        Some(s) => s,
+        None => return Ok(false), // nothing on the remote yet
+    };
+    if remote <= local_at {
+        return Ok(false); // remote hasn't advanced since our last merge
+    }
+    let bytes = get_bytes(&cfg, REMOTE_DB)?;
+    let tmp = std::env::temp_dir().join(format!("cortex-pull-{remote}.db"));
+    std::fs::write(&tmp, &bytes).map_err(Error::Io)?;
+    {
+        let c = state.db.lock().unwrap();
+        merge_attached(&c, &tmp)?;
+        // We now hold the remote version; the launch push uploads the union
+        // back with a fresh, higher stamp.
+        repo::set_setting(&c, K_LAST_AT, &remote.to_string())?;
+    }
+    let _ = std::fs::remove_file(&tmp);
+    Ok(true)
 }
 
 /// Whether a `settings` key is a device-independent PREFERENCE that's safe to
@@ -652,54 +658,103 @@ pub async fn sync_test(url: String, user: String, pass: String) -> Result<bool> 
 /// half of live sync — called debounced from the frontend after changes).
 #[tauri::command]
 pub async fn sync_push(app: AppHandle) -> Result<i64> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<i64> {
-        let state = app.state::<AppState>();
-        let db_path = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| Error::Other(e.to_string()))?
-            .join("cortex.db");
-        let cfg = {
-            let c = state.db.lock().unwrap();
-            read_cfg_manual(&c).ok_or_else(|| {
-                Error::Other(
-                    "Sync target not set — add a Homelab URL (or sync URL) in Settings → Integrations.".into(),
-                )
-            })?
-        };
-        // Checkpoint the WAL into the main file, then copy a clean snapshot.
-        let ts = now_ms();
-        let tmp = std::env::temp_dir().join(format!("cortex-sync-{ts}.db"));
-        {
-            let c = state.db.lock().unwrap();
-            let _: std::result::Result<String, _> =
-                c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0));
-            std::fs::copy(&db_path, &tmp).map_err(Error::Io)?;
+    tauri::async_runtime::spawn_blocking(move || push_blocking(&app))
+        .await
+        .map_err(|e| Error::Other(format!("sync push task failed: {e}")))?
+}
+
+/// Blocking body of `sync_push`, shared with the background sync loop. Uploads a
+/// fresh whole-DB snapshot (credentials sealed) plus the binary vault to the homelab.
+fn push_blocking(app: &AppHandle) -> Result<i64> {
+    let state = app.state::<AppState>();
+    let db_path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| Error::Other(e.to_string()))?
+        .join("cortex.db");
+    let cfg = {
+        let c = state.db.lock().unwrap();
+        read_cfg_manual(&c).ok_or_else(|| {
+            Error::Other(
+                "Sync target not set — add a Homelab URL (or sync URL) in Settings → Integrations.".into(),
+            )
+        })?
+    };
+    // Checkpoint the WAL into the main file, then copy a clean snapshot.
+    let ts = now_ms();
+    let tmp = std::env::temp_dir().join(format!("cortex-sync-{ts}.db"));
+    {
+        let c = state.db.lock().unwrap();
+        let _: std::result::Result<String, _> =
+            c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0));
+        std::fs::copy(&db_path, &tmp).map_err(Error::Io)?;
+    }
+    // Encrypt every credential value in the snapshot copy before it leaves the
+    // device, keyed by the sync password (the live DB keeps plaintext).
+    seal_snapshot_credentials(&tmp, &cfg.pass)?;
+    let bytes = std::fs::read(&tmp).map_err(Error::Io)?;
+    let _ = std::fs::remove_file(&tmp);
+    put(&cfg, REMOTE_DB, bytes)?;
+    put(&cfg, REMOTE_STAMP, ts.to_string().into_bytes())?;
+    {
+        let c = state.db.lock().unwrap();
+        repo::set_setting(&c, K_LAST_AT, &ts.to_string())?;
+    }
+    // Sync the binary vault (originals + recordings), both directions, no
+    // deletes — then re-point source paths to the local copies. Best-effort:
+    // a file/WebDAV hiccup must not fail the DB push that already succeeded.
+    if let Some(data_dir) = db_path.parent() {
+        sync_files(&cfg, data_dir, "sources");
+        sync_files(&cfg, data_dir, "recordings");
+        let c = state.db.lock().unwrap();
+        let _ = repoint_source_files(&c, &data_dir.join("sources"));
+    }
+    Ok(ts)
+}
+
+// ---- background sync loop ---------------------------------------------------
+//
+// The frontend (store.svelte.ts) only syncs while a window is open — it dies when
+// the window closes. This tick is called from a dedicated OS thread (spawned in
+// lib.rs::run setup) on an interval, so the homelab stays connected and in sync for
+// as long as the PROCESS lives. On desktop that's until "Quit": close-to-tray keeps
+// the process alive with the window hidden, so a closed-window device still pulls and
+// pushes. (On mobile the OS suspends the process when backgrounded, so it runs while
+// the app is alive and resumes promptly on foreground — true terminated-app sync would
+// need platform background-task APIs.) Every step is best-effort and silent.
+
+/// Seconds between background sync ticks.
+pub const BACKGROUND_INTERVAL_SECS: u64 = 300;
+
+/// Set while a background tick is mid-sync so a slow tick never stacks on the next
+/// one. The frontend serialises its own syncs via `syncState`; an occasional overlap
+/// between the two is benign (pushes are last-writer-wins by stamp, merges are
+/// union-newest-wins, so nothing is lost and the next tick reconverges).
+static SYNC_BUSY: AtomicBool = AtomicBool::new(false);
+
+/// Resets `SYNC_BUSY` on drop so a panic in any step can't wedge the loop "busy".
+struct BusyGuard;
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        SYNC_BUSY.store(false, Ordering::Release);
+    }
+}
+
+/// One background pass: warm the homelab origin cache (so first foreground use isn't a
+/// cold probe), then pull+merge anything newer and push our union back — the same order
+/// as the frontend's launch sync. No-ops when sync is unconfigured/unreachable.
+pub fn background_tick(app: &AppHandle) {
+    if SYNC_BUSY.swap(true, Ordering::AcqRel) {
+        return; // a prior tick is still running
+    }
+    let _guard = BusyGuard;
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(c) = state.db.lock() {
+            homelab::warm(&c);
         }
-        // Encrypt every credential value in the snapshot copy before it leaves the
-        // device, keyed by the sync password (the live DB keeps plaintext).
-        seal_snapshot_credentials(&tmp, &cfg.pass)?;
-        let bytes = std::fs::read(&tmp).map_err(Error::Io)?;
-        let _ = std::fs::remove_file(&tmp);
-        put(&cfg, REMOTE_DB, bytes)?;
-        put(&cfg, REMOTE_STAMP, ts.to_string().into_bytes())?;
-        {
-            let c = state.db.lock().unwrap();
-            repo::set_setting(&c, K_LAST_AT, &ts.to_string())?;
-        }
-        // Sync the binary vault (originals + recordings), both directions, no
-        // deletes — then re-point source paths to the local copies. Best-effort:
-        // a file/WebDAV hiccup must not fail the DB push that already succeeded.
-        if let Some(data_dir) = db_path.parent() {
-            sync_files(&cfg, data_dir, "sources");
-            sync_files(&cfg, data_dir, "recordings");
-            let c = state.db.lock().unwrap();
-            let _ = repoint_source_files(&c, &data_dir.join("sources"));
-        }
-        Ok(ts)
-    })
-    .await
-    .map_err(|e| Error::Other(format!("sync push task failed: {e}")))?
+    }
+    let _ = pull_blocking(app);
+    let _ = push_blocking(app);
 }
 
 // ---- binary file sync (WebDAV) ---------------------------------------------
