@@ -78,6 +78,11 @@ jobs:
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$plist"
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
             /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Cortex records lectures and uploads the audio to your homelab for transcription." "$plist" 2>/dev/null || true
+            # Export compliance: Cortex uses only standard/mass-market crypto (HTTPS +
+            # ChaCha20-Poly1305 for credential sync), which qualifies for the exemption — set
+            # this so App Store Connect doesn't ask the encryption question on every build.
+            /usr/libexec/PlistBuddy -c "Delete :ITSAppUsesNonExemptEncryption" "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$plist" 2>/dev/null || true
             /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VER" "$plist"
             /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILD_NUM}" "$plist"
             echo "patched (v$VER): $plist"
@@ -158,6 +163,11 @@ jobs:
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$plist"
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
             /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Cortex records lectures and uploads the audio to your homelab for transcription." "$plist" 2>/dev/null || true
+            # Export compliance: Cortex uses only standard/mass-market crypto (HTTPS +
+            # ChaCha20-Poly1305 for credential sync), which qualifies for the exemption — set
+            # this so App Store Connect doesn't ask the encryption question on every build.
+            /usr/libexec/PlistBuddy -c "Delete :ITSAppUsesNonExemptEncryption" "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$plist" 2>/dev/null || true
             /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VER" "$plist"
             /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILD_NUM}" "$plist"
             echo "patched (v$VER): $plist"
@@ -385,6 +395,11 @@ jobs:
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$plist"
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
             /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Cortex records lectures and uploads the audio to your homelab for transcription." "$plist" 2>/dev/null || true
+            # Export compliance: Cortex uses only standard/mass-market crypto (HTTPS +
+            # ChaCha20-Poly1305 for credential sync), which qualifies for the exemption — set
+            # this so App Store Connect doesn't ask the encryption question on every build.
+            /usr/libexec/PlistBuddy -c "Delete :ITSAppUsesNonExemptEncryption" "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$plist" 2>/dev/null || true
             /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VER" "$plist"
             /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILD_NUM}" "$plist"
             echo "patched (v$VER): $plist"
