@@ -245,8 +245,6 @@ src-tauri/src/
 - **Storage:** a single SQLite database in the OS app-data dir, with WAL mode and versioned migrations. Embeddings are stored as little-endian `f32` BLOBs — exactly sqlite-vec's compact format — so retrieval ranks in SQL via `vec_distance_cosine` (with a Rust cosine scan as a transparent fallback).
 - **Privacy:** all content, embeddings, and generated material stay in that local DB. The only outbound calls are to the AI provider you configured and (optionally) your own SearXNG.
 
-See [`CORTEX_DESIGN_BRIEF.md`](CORTEX_DESIGN_BRIEF.md) for the full product vision and the locked architecture decisions.
-
 ## Tech stack
 
 **Tauri 2** · **Rust** · **SQLite + sqlite-vec** · **Svelte 5** (runes) · **TypeScript** · **Tailwind CSS** · **Vite**
