@@ -21,6 +21,8 @@ Local-first and bring-your-own-keys: your sources, embeddings, and generated stu
 
 [Why Cortex?](#why-cortex) · [Preview](#preview) · [Features](#features) · [Download](#download--install) · [Build from source](#build-from-source) · [Configuration](#configuration) · [How it works](#how-it-works) · [Roadmap](#roadmap) · [Contributing](#contributing)
 
+**🌐 [Website](https://pndaman.github.io/cortex-website/) · 📖 [Docs](https://pndaman.github.io/cortex-website/Docs.html) · 🔒 [Privacy Policy](https://pndaman.github.io/cortex/privacy.html) · 💬 [Support](https://pndaman.github.io/cortex/support.html)**
+
 </div>
 
 ---
