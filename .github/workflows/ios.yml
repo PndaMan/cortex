@@ -396,25 +396,33 @@ jobs:
           echo "tauri.ios.conf.json version → $VER"; cat "$cfg"
 
       - name: Force manual App Store signing
-        # The generated Xcode project defaults to AUTOMATIC signing, so xcodebuild tries to
-        # fetch a *Development* profile via a logged-in Apple account the runner doesn't have
-        # → "No Accounts" / "No profiles for 'study.cortex.app' were found". Pin MANUAL signing
-        # to the imported Apple Distribution identity + the installed App Store profile so it
-        # uses exactly our cert + profile (same pbxproj-patch technique as the device-ipa job).
+        # Tauri's generated project signs for DEVELOPMENT via an SDK-specific key
+        # (CODE_SIGN_IDENTITY[sdk=iphoneos*] = "iPhone Developer"), which overrides any plain
+        # CODE_SIGN_IDENTITY and makes the build demand an "iOS Development" cert we don't have.
+        # So repoint EVERY identity variant (generic + [sdk=...]) to our Apple Distribution cert
+        # IN PLACE, then strip + re-add the style/team/profile keys (avoids duplicate pbxproj
+        # keys) so the build signs with exactly our distribution cert + App Store profile.
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           PROFILE="$HOME/Library/MobileDevice/Provisioning Profiles/cortex.mobileprovision"
           security cms -D -i "$PROFILE" > /tmp/pp.plist
-          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/pp.plist)
           PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /tmp/pp.plist)
           IDENTITY=$(security find-identity -v -p codesigning build.keychain \
             | sed -nE 's/.*"(Apple Distribution[^"]*|iPhone Distribution[^"]*)".*/\1/p' | head -1)
+          if [ -z "$IDENTITY" ]; then echo "::error::no distribution identity in keychain"; exit 1; fi
           echo "identity=$IDENTITY"
-          echo "profile=$PROFILE_NAME ($PROFILE_UUID)"
+          echo "profile=$PROFILE_NAME"
           for pbx in src-tauri/gen/apple/*.xcodeproj/project.pbxproj; do
-            perl -0pi -e "s/(buildSettings = \{)/\$1\n\t\t\t\tCODE_SIGN_STYLE = Manual;\n\t\t\t\tDEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\";\n\t\t\t\tCODE_SIGN_IDENTITY = \"$IDENTITY\";\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"$PROFILE_NAME\";/g" "$pbx"
+            perl -0pi -e "
+              s/(CODE_SIGN_IDENTITY(?:\[[^\]]*\])?\s*=\s*)\"[^\"]*\"/\${1}\"$IDENTITY\"/g;
+              s/^[ \t]*CODE_SIGN_STYLE[ \t]*=[^;]*;[ \t]*\r?\n//mg;
+              s/^[ \t]*DEVELOPMENT_TEAM(?:\[[^\]]*\])?[ \t]*=[^;]*;[ \t]*\r?\n//mg;
+              s/^[ \t]*PROVISIONING_PROFILE_SPECIFIER(?:\[[^\]]*\])?[ \t]*=[^;]*;[ \t]*\r?\n//mg;
+              s/^[ \t]*PROVISIONING_PROFILE(?:\[[^\]]*\])?[ \t]*=[^;]*;[ \t]*\r?\n//mg;
+              s/(buildSettings = \{)/\$1\n\t\t\t\tCODE_SIGN_STYLE = Manual;\n\t\t\t\tDEVELOPMENT_TEAM = $APPLE_TEAM_ID;\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"$PROFILE_NAME\";/g;
+            " "$pbx"
             echo "manual signing patched: $pbx"
           done
 
