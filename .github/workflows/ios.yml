@@ -288,7 +288,10 @@ jobs:
   testflight:
     name: iOS TestFlight (signed)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.sign == true }}
-    runs-on: macos-15
+    # macos-26 ships Xcode 26 (iOS 26 SDK). App Store Connect now REJECTS uploads built
+    # with anything older ("must be built with the iOS 26 SDK or later"), so the signed
+    # TestFlight build must run here — the sideload jobs stay on macos-15 (LiveContainer).
+    runs-on: macos-26
     environment: Production
     steps:
       - uses: actions/checkout@v4
