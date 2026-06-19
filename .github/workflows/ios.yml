@@ -426,10 +426,41 @@ jobs:
             echo "manual signing patched: $pbx"
           done
 
-      - name: Build signed IPA (App Store)
+      - name: Build & export signed IPA (App Store)
+        # Tauri must DRIVE the build — its Xcode Rust build-phase needs the tauri-managed
+        # xcodebuild invocation (a raw xcodebuild panics on the missing server-addr file).
+        # The archive succeeds, but Tauri's auto-generated export options omit the manual
+        # `provisioningProfiles` map → "exportArchive … requires a provisioning profile".
+        # So let Tauri build+archive (ignore its export failure), then export ourselves with
+        # a correct ExportOptions.plist that names our App Store profile for the bundle id.
         env:
           APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
-        run: cargo tauri ios build --export-method app-store-connect --ci
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -uo pipefail
+          cargo tauri ios build --export-method app-store-connect --ci || true
+          ARCHIVE=$(find src-tauri/gen/apple "$HOME/Library/Developer/Xcode/DerivedData" \
+            -name '*.xcarchive' -print 2>/dev/null | grep -iv simulator | head -1)
+          if [ -z "$ARCHIVE" ]; then echo "::error::Tauri build produced no .xcarchive"; exit 1; fi
+          echo "archive: $ARCHIVE"
+          security cms -D -i "$HOME/Library/MobileDevice/Provisioning Profiles/cortex.mobileprovision" > /tmp/pp.plist
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /tmp/pp.plist)
+          PL=/tmp/ExportOptions.plist
+          printf '%s' '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict></dict></plist>' > "$PL"
+          /usr/libexec/PlistBuddy -c "Add :method string app-store-connect" "$PL"
+          /usr/libexec/PlistBuddy -c "Add :destination string export" "$PL"
+          /usr/libexec/PlistBuddy -c "Add :teamID string $APPLE_TEAM_ID" "$PL"
+          /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" "$PL"
+          /usr/libexec/PlistBuddy -c "Add :signingCertificate string Apple Distribution" "$PL"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$PL"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:study.cortex.app string $PROFILE_NAME" "$PL"
+          /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool true" "$PL"
+          echo "--- ExportOptions.plist ---"; cat "$PL"; echo
+          OUT=src-tauri/gen/apple/build/ipa
+          rm -rf "$OUT"; mkdir -p "$OUT"
+          xcodebuild -exportArchive -archivePath "$ARCHIVE" \
+            -exportOptionsPlist "$PL" -exportPath "$OUT" -allowProvisioningUpdates
+          echo "--- exported ---"; find "$OUT" -name '*.ipa' -print
 
       - name: Upload to App Store Connect (TestFlight)
         env:
