@@ -17,6 +17,21 @@ src-tauri/gen/
 !.env.example
 *.local
 
+# ── Signing certs & private keys (NEVER commit — base64 into CI secrets instead) ─
+*.p12
+*.pfx
+*.cer
+*.crt
+*.pem
+*.der
+*.key
+*.csr
+*.keystore
+*.jks
+*.p8
+*.mobileprovision
+*.provisionprofile
+
 # ── Local databases / dumps ───────────────────────────────────
 *.sqlite
 *.sqlite3
