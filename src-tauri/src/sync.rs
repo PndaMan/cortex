@@ -749,9 +749,12 @@ pub fn background_tick(app: &AppHandle) {
     }
     let _guard = BusyGuard;
     if let Some(state) = app.try_state::<AppState>() {
-        if let Ok(c) = state.db.lock() {
-            homelab::warm(&c);
-        }
+        // warm() takes a SHORT lock to read config, then releases it before the network
+        // probe. NEVER hold the DB mutex across a reachability check: a synchronous
+        // command (e.g. get_all_settings) runs on the event-loop thread and would block
+        // on the same lock for the whole probe — freezing the UI. (Root cause of the
+        // "Application Not Responding" on opening Settings while sync was probing.)
+        homelab::warm(state.inner());
     }
     let _ = pull_blocking(app);
     let _ = push_blocking(app);
@@ -1024,7 +1027,7 @@ mod tests {
 /// copy of its file (named `{id}.{ext}`). Deliberately does NOT touch
 /// `updated_at` — a path is local state, not a user edit; bumping it would make
 /// the row look "newer" and ping-pong the path between devices forever.
-fn repoint_source_files(conn: &Connection, sources_dir: &Path) -> Result<()> {
+pub fn repoint_source_files(conn: &Connection, sources_dir: &Path) -> Result<()> {
     let Ok(rd) = std::fs::read_dir(sources_dir) else {
         return Ok(());
     };

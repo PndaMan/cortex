@@ -10,12 +10,15 @@
 
 use crate::repo;
 use rusqlite::Connection;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const TTL: Duration = Duration::from_secs(60);
 static CACHE: Mutex<Option<HashMap<String, (String, Instant)>>> = Mutex::new(None);
+// Origins with a background reachability probe in flight, so a burst of resolve()
+// calls for the same primary spawns at most one network probe.
+static PROBING: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
 /// Replace `primary`'s origin (scheme://host:port) with `base`'s, keeping the
 /// path/query. e.g. swap_origin("http://192.168.1.5:9009/v1", "http://lab.ts.net")
@@ -43,58 +46,91 @@ fn reachable(origin: &str) -> bool {
     client.get(origin).send().is_ok()
 }
 
-/// Resolve a homelab service's effective base URL given the user's Tailscale/public
-/// bases. Returns `primary` unchanged when no bases are set or nothing else is
-/// reachable. Result is cached for `TTL`.
-pub fn resolve(conn: &Connection, primary: &str) -> String {
+/// Resolve a homelab service's effective base URL (local → Tailscale → public),
+/// preferring the first REACHABLE origin.
+///
+/// NON-BLOCKING by contract. Callers run on hot paths — including *synchronous* Tauri
+/// commands, which execute on the GTK/event-loop thread (e.g. `verify_provider` →
+/// `read_keys`). Probing the network inline there froze the whole UI ("Application Not
+/// Responding") whenever the cache was cold and a base was unreachable (~60s timeout).
+/// So this NEVER does network I/O on the caller's thread: it returns the cached origin
+/// if known (even slightly stale) or the primary otherwise, and refreshes the cache from
+/// a BACKGROUND probe. The sync loop's `warm` pre-populates the cache, so steady-state
+/// callers get the reachable origin directly; the worst case is one request against the
+/// primary before the background probe lands.
+pub fn resolve(primary: &str, ts: Option<&str>, pubb: Option<&str>) -> String {
     let primary = primary.trim().trim_end_matches('/').to_string();
     if primary.is_empty() {
         return primary;
     }
-    let ts = repo::get_setting(conn, "homelab_tailscale_base")
-        .ok()
-        .flatten()
-        .filter(|s| !s.trim().is_empty());
-    let pubb = repo::get_setting(conn, "homelab_public_base")
-        .ok()
-        .flatten()
-        .filter(|s| !s.trim().is_empty());
+    let ts = ts.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let pubb = pubb.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     if ts.is_none() && pubb.is_none() {
-        return primary; // no fallbacks configured — nothing to do
+        return primary; // no fallbacks configured — nothing to probe
     }
 
-    {
+    let cached = {
         let mut guard = CACHE.lock().unwrap();
-        let map = guard.get_or_insert_with(HashMap::new);
-        if let Some((url, at)) = map.get(&primary) {
-            if at.elapsed() < TTL {
-                return url.clone();
-            }
+        guard
+            .get_or_insert_with(HashMap::new)
+            .get(&primary)
+            .map(|(url, at)| (url.clone(), at.elapsed() < TTL))
+    };
+    match cached {
+        Some((url, true)) => url, // fresh — trust it
+        Some((url, false)) => {
+            spawn_probe(primary, ts, pubb); // stale — refresh in the background...
+            url // ...but hand back the last-good origin NOW, never block
+        }
+        None => {
+            spawn_probe(primary.clone(), ts, pubb);
+            primary // unknown — best guess is the primary; probe in the background
         }
     }
+}
 
-    let mut candidates = vec![primary.clone()];
-    if let Some(t) = &ts {
-        if let Some(u) = swap_origin(&primary, t) {
+/// Kick off a single background reachability probe for `primary` (deduped: at most one
+/// in flight per origin), updating the cache when it lands. Blocking network lives ONLY
+/// here, on a throwaway thread — never on a caller's thread.
+fn spawn_probe(primary: String, ts: Option<String>, pubb: Option<String>) {
+    {
+        let mut guard = PROBING.lock().unwrap();
+        if !guard.get_or_insert_with(HashSet::new).insert(primary.clone()) {
+            return; // a probe for this origin is already running
+        }
+    }
+    std::thread::spawn(move || {
+        let chosen = probe(&primary, ts.as_deref(), pubb.as_deref());
+        CACHE
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(primary.clone(), (chosen, Instant::now()));
+        if let Some(set) = PROBING.lock().unwrap().as_mut() {
+            set.remove(&primary);
+        }
+    });
+}
+
+/// Pick the first reachable origin among local/Tailscale/public. BLOCKING (network) —
+/// only ever called off the hot path: the background probe and `warm`, never inline.
+fn probe(primary: &str, ts: Option<&str>, pubb: Option<&str>) -> String {
+    let mut candidates = vec![primary.to_string()];
+    if let Some(t) = ts {
+        if let Some(u) = swap_origin(primary, t) {
             candidates.push(u);
         }
     }
-    if let Some(p) = &pubb {
-        if let Some(u) = swap_origin(&primary, p) {
+    if let Some(p) = pubb {
+        if let Some(u) = swap_origin(primary, p) {
             candidates.push(u);
         }
     }
-    let chosen = candidates
+    candidates
         .iter()
         .find(|c| reachable(c))
         .cloned()
-        .unwrap_or_else(|| primary.clone());
-
-    let mut guard = CACHE.lock().unwrap();
-    guard
-        .get_or_insert_with(HashMap::new)
-        .insert(primary, (chosen.clone(), Instant::now()));
-    chosen
+        .unwrap_or_else(|| primary.to_string())
 }
 
 /// Proactively resolve every homelab service so the reachable origin is cached
@@ -104,10 +140,66 @@ pub fn resolve(conn: &Connection, primary: &str) -> String {
 /// back to its primary, exactly as on-demand resolution would. Under the unified
 /// `homelab_base` all services share one origin, so this is a single probe round
 /// (the first resolve caches the base; the rest hit the cache).
-pub fn warm(conn: &Connection) {
-    for key in ["sync_url", "ollama_url", "whisper_url", "searxng_url", "ingest_url"] {
-        let _ = resolved_setting(conn, key);
+/// CRITICAL: this must NOT hold the DB lock while probing the network. `reachable()`
+/// is pure network (it never touches the DB), but the SQLite connection lives behind a
+/// single `Mutex`; holding that mutex across a multi-second reachability probe blocks
+/// every other DB access — including the *synchronous* `get_all_settings` command, which
+/// runs on the GTK/event-loop thread. That blocked the whole UI ("Application Not
+/// Responding") until the probe timed out (~60s on an unreachable Tailscale/public base).
+/// So: snapshot the config under a SHORT lock, release it, THEN probe lock-free.
+pub fn warm(state: &crate::db::AppState) {
+    let (ts, pubb, primaries) = {
+        let Ok(c) = state.db.lock() else {
+            return;
+        };
+        let ts = repo::get_setting(&c, "homelab_tailscale_base").ok().flatten();
+        let pubb = repo::get_setting(&c, "homelab_public_base").ok().flatten();
+        let mut primaries: Vec<String> = Vec::new();
+        for key in ["sync_url", "ollama_url", "whisper_url", "searxng_url", "ingest_url"] {
+            if let Some(p) = warm_primary(&c, key) {
+                if !primaries.contains(&p) {
+                    primaries.push(p);
+                }
+            }
+        }
+        (ts, pubb, primaries)
+    }; // <-- DB lock released here, before any network probe
+    // We're on the background sync thread, so a blocking probe is fine here — it
+    // populates the cache directly, so hot-path resolve() returns the reachable origin
+    // without ever probing inline.
+    for primary in primaries {
+        let chosen = probe(&primary, ts.as_deref(), pubb.as_deref());
+        CACHE
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(primary, (chosen, Instant::now()));
     }
+}
+
+/// The origin `resolve()` should probe for a service, computed WITHOUT any network: the
+/// explicit per-service URL if set, else the first configured homelab base. Mirrors the
+/// resolve targets in [`resolved_setting`] so `warm` pre-populates the same cache keys.
+fn warm_primary(conn: &Connection, key: &str) -> Option<String> {
+    if let Some(raw) = repo::get_setting(conn, key)
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+    {
+        return Some(raw);
+    }
+    if service_path(key).is_some() {
+        return ["homelab_base", "homelab_tailscale_base", "homelab_public_base"]
+            .iter()
+            .find_map(|k| {
+                repo::get_setting(conn, k)
+                    .ok()
+                    .flatten()
+                    .filter(|s| !s.trim().is_empty())
+            })
+            .map(|b| b.trim().trim_end_matches('/').to_string());
+    }
+    None
 }
 
 /// Path prefix each service lives under when the unified single-URL homelab is
@@ -175,6 +267,10 @@ mod tests {
 ///    `ollama_url`). Used as a fallback when `homelab_base` is unset, so existing
 ///    setups keep working unchanged.
 pub fn resolved_setting(conn: &Connection, key: &str) -> Option<String> {
+    // Read the fallback bases once, up front, so the (network) resolve below is
+    // connection-free — see resolve()'s contract about never probing under the DB lock.
+    let ts = repo::get_setting(conn, "homelab_tailscale_base").ok().flatten();
+    let pubb = repo::get_setting(conn, "homelab_public_base").ok().flatten();
     // An explicit per-service URL wins (override) — keeps existing setups working
     // and lets a service live somewhere other than the unified homelab.
     if let Some(raw) = repo::get_setting(conn, key)
@@ -182,7 +278,7 @@ pub fn resolved_setting(conn: &Connection, key: &str) -> Option<String> {
         .flatten()
         .filter(|s| !s.trim().is_empty())
     {
-        return Some(resolve(conn, &raw));
+        return Some(resolve(&raw, ts.as_deref(), pubb.as_deref()));
     }
     // Otherwise derive it from a homelab base URL + the service's path. Prefer the LAN
     // base, but fall back to the Tailscale/public base when that's all the user set —
@@ -197,7 +293,7 @@ pub fn resolved_setting(conn: &Connection, key: &str) -> Option<String> {
                     .filter(|s| !s.trim().is_empty())
             });
         if let Some(base) = base {
-            let resolved = resolve(conn, base.trim().trim_end_matches('/'));
+            let resolved = resolve(base.trim().trim_end_matches('/'), ts.as_deref(), pubb.as_deref());
             return Some(format!("{resolved}{path}"));
         }
     }

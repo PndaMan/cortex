@@ -32,6 +32,7 @@ pub fn detect_kind(input: &AddSourceInput) -> String {
             "pdf" => "pdf",
             "docx" | "doc" => "docx",
             "pptx" | "ppt" => "pptx",
+            "epub" => "epub",
             "md" | "markdown" => "md",
             "txt" | "text" | "" => "txt",
             "png" | "jpg" | "jpeg" | "webp" => "image",
@@ -84,6 +85,13 @@ pub fn parse(kind: &str, input: &AddSourceInput) -> Result<(String, Option<Strin
                 _ => libreoffice_to_text(p),
             }
         }
+        "epub" => {
+            let p = input
+                .path
+                .as_deref()
+                .ok_or_else(|| Error::Other("epub source needs a file path".into()))?;
+            epub_to_text(p)
+        }
         "yt" => {
             let url = input
                 .url
@@ -102,12 +110,24 @@ pub fn parse(kind: &str, input: &AddSourceInput) -> Result<(String, Option<Strin
 pub fn html_to_text(html: &str) -> String {
     // The `regex` crate has no backreferences, so drop each non-content element
     // with its own pattern rather than a captured-group close tag.
+    // Compile the strip patterns once (was recompiled on every call — html_to_text
+    // runs per web page and per EPUB chapter).
+    static BLOCK_RES: std::sync::OnceLock<Vec<regex::Regex>> = std::sync::OnceLock::new();
+    static TAG_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static WS_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    // The `regex` crate has no backreferences, so drop each non-content element
+    // with its own pattern rather than a captured-group close tag.
+    let block_res = BLOCK_RES.get_or_init(|| {
+        ["script", "style", "head", "nav", "footer"]
+            .iter()
+            .map(|tag| regex::Regex::new(&format!(r"(?is)<{tag}\b[^>]*>.*?</{tag}>")).unwrap())
+            .collect()
+    });
     let mut stripped = html.to_string();
-    for tag in ["script", "style", "head", "nav", "footer"] {
-        let re = regex::Regex::new(&format!(r"(?is)<{tag}\b[^>]*>.*?</{tag}>")).unwrap();
+    for re in block_res {
         stripped = re.replace_all(&stripped, " ").into_owned();
     }
-    let re_tag = regex::Regex::new(r"(?s)<[^>]+>").unwrap();
+    let re_tag = TAG_RE.get_or_init(|| regex::Regex::new(r"(?s)<[^>]+>").unwrap());
     let text = re_tag.replace_all(&stripped, " ").into_owned();
     let text = decode_entities(&text);
     // Drop zero-width / BOM characters that make extracted web text look garbled.
@@ -115,7 +135,7 @@ pub fn html_to_text(html: &str) -> String {
         .chars()
         .filter(|&c| !matches!(c, '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{feff}' | '\u{ad}'))
         .collect();
-    let re_ws = regex::Regex::new(r"\s+").unwrap();
+    let re_ws = WS_RE.get_or_init(|| regex::Regex::new(r"\s+").unwrap());
     re_ws.replace_all(text.trim(), " ").to_string()
 }
 
@@ -201,7 +221,8 @@ fn decode_entities(s: &str) -> String {
         .replace("&lsquo;", "‘")
         .replace("&ldquo;", "“")
         .replace("&rdquo;", "”");
-    let re_num = regex::Regex::new(r"&#(x?[0-9A-Fa-f]+);").unwrap();
+    static NUM_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re_num = NUM_RE.get_or_init(|| regex::Regex::new(r"&#(x?[0-9A-Fa-f]+);").unwrap());
     re_num
         .replace_all(&named, |caps: &regex::Captures| {
             let raw = &caps[1];
@@ -464,6 +485,151 @@ pub fn ooxml_to_text(path: &str) -> Result<String> {
         out.push_str("\n\n"); // blank line between slides / the document body
     }
     Ok(out.trim().to_string())
+}
+
+/// Extract reading-order text from an EPUB natively — it's a zip of XHTML
+/// documents, so the same dependency-light approach as `ooxml_to_text` applies
+/// (no epub crate, no external tool; works keyless on every OS incl. mobile).
+/// We read `META-INF/container.xml` to locate the OPF package, follow its
+/// `<spine>` for chapter order, resolve each chapter's href against the package
+/// directory, and strip the XHTML to text with `html_to_text`. If the package
+/// or spine can't be parsed we fall back to every `.xhtml`/`.html` entry in name
+/// order, so even a malformed e-book yields its prose rather than nothing.
+pub fn epub_to_text(path: &str) -> Result<(String, Option<String>)> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)?;
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|e| Error::Other(format!("{path} is not a valid EPUB (zip) file: {e}")))?;
+
+    // Read a zip entry to a String by name (None if absent/unreadable).
+    fn read_entry(zip: &mut zip::ZipArchive<std::fs::File>, name: &str) -> Option<String> {
+        let mut s = String::new();
+        zip.by_name(name).ok()?.read_to_string(&mut s).ok()?;
+        Some(s)
+    }
+
+    // Resolve the spine to an ordered list of XHTML entry paths via the manifest.
+    let ordered: Vec<String> = (|| {
+        let container = read_entry(&mut zip, "META-INF/container.xml")?;
+        let opf_path = regex::Regex::new(r#"(?is)full-path\s*=\s*["']([^"']+)["']"#)
+            .unwrap()
+            .captures(&container)
+            .map(|c| percent_decode(&c[1]))?;
+        let opf = read_entry(&mut zip, &opf_path)?;
+        let opf_dir = opf_path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+
+        // Pull a quoted attribute value out of a single start-tag. One shared regex,
+        // compiled once — was recompiled per attribute per <item> (per-book hot loop).
+        let attr = |tag: &str, want: &str| {
+            static ATTR_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+            ATTR_RE
+                .get_or_init(|| regex::Regex::new(r#"(?is)([\w:-]+)\s*=\s*["']([^"']*)["']"#).unwrap())
+                .captures_iter(tag)
+                .find(|c| c[1].eq_ignore_ascii_case(want))
+                .map(|c| c[2].to_string())
+        };
+
+        // manifest: id -> (href, media-type)
+        let mut manifest: std::collections::HashMap<String, (String, String)> =
+            std::collections::HashMap::new();
+        for m in regex::Regex::new(r"(?is)<item\b[^>]*>").unwrap().find_iter(&opf) {
+            let tag = m.as_str();
+            if let (Some(id), Some(href)) = (attr(tag, "id"), attr(tag, "href")) {
+                manifest.insert(id, (href, attr(tag, "media-type").unwrap_or_default()));
+            }
+        }
+        // spine: ordered idrefs → manifest hrefs (XHTML content documents only)
+        let mut order = Vec::new();
+        for m in regex::Regex::new(r"(?is)<itemref\b[^>]*>").unwrap().find_iter(&opf) {
+            if let Some(idref) = attr(m.as_str(), "idref") {
+                if let Some((href, mtype)) = manifest.get(&idref) {
+                    if is_xhtml(href, mtype) {
+                        order.push(zip_join(opf_dir, &percent_decode(href)));
+                    }
+                }
+            }
+        }
+        if order.is_empty() {
+            None
+        } else {
+            Some(order)
+        }
+    })()
+    .unwrap_or_else(|| {
+        // Fallback: every (x)html document in the archive, in name order.
+        let mut names: Vec<String> = (0..zip.len())
+            .filter_map(|i| zip.by_index(i).ok().map(|f| f.name().to_string()))
+            .filter(|n| is_xhtml(n, ""))
+            .collect();
+        names.sort();
+        names
+    });
+
+    let mut out = String::new();
+    for name in &ordered {
+        if let Some(html) = read_entry(&mut zip, name) {
+            let text = html_to_text(&html);
+            if !text.trim().is_empty() {
+                out.push_str(text.trim());
+                out.push_str("\n\n");
+            }
+        }
+    }
+    let out = out.trim().to_string();
+    if out.is_empty() {
+        Ok((String::new(), Some("warning: no readable text found in EPUB".into())))
+    } else {
+        Ok((out, None))
+    }
+}
+
+/// Is this href / media-type an (X)HTML content document worth extracting?
+fn is_xhtml(href: &str, media_type: &str) -> bool {
+    let h = href.to_lowercase();
+    media_type.contains("xhtml")
+        || media_type == "text/html"
+        || h.ends_with(".xhtml")
+        || h.ends_with(".html")
+        || h.ends_with(".htm")
+}
+
+/// Join an EPUB-internal href onto its package directory, resolving `.`/`..`
+/// segments and dropping any `#fragment`/`?query`. Zip entry names always use
+/// forward slashes, so this stays slash-based on every OS.
+fn zip_join(base_dir: &str, href: &str) -> String {
+    let href = href.split(['#', '?']).next().unwrap_or(href);
+    let mut segs: Vec<&str> = base_dir.split('/').filter(|s| !s.is_empty()).collect();
+    for part in href.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                segs.pop();
+            }
+            p => segs.push(p),
+        }
+    }
+    segs.join("/")
+}
+
+/// Decode `%XX` escapes in an OPF href so it matches the raw zip entry name
+/// (a space is `%20` in the href but literal in the archive). Leaves a trailing
+/// or malformed `%` untouched.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// A `-env:UserInstallation` arg pointing at a throwaway profile inside `outdir`.
@@ -913,6 +1079,59 @@ mod tests {
         let doc = dir.join("legacy.doc");
         std::fs::write(&doc, b"\xD0\xCF\x11\xE0 not a zip").unwrap();
         assert!(ooxml_to_text(doc.to_str().unwrap()).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn epub_text_extraction_no_tools() {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let dir = std::env::temp_dir().join(format!("cortex-epub-test-{}", crate::db::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let epub = dir.join("book.epub");
+        {
+            let mut zw = zip::ZipWriter::new(std::fs::File::create(&epub).unwrap());
+            let opts = SimpleFileOptions::default();
+            zw.start_file("META-INF/container.xml", opts).unwrap();
+            zw.write_all(
+                br#"<?xml version="1.0"?>
+                <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
+                <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+                </container>"#,
+            ).unwrap();
+            zw.start_file("OEBPS/content.opf", opts).unwrap();
+            zw.write_all(
+                br#"<?xml version="1.0"?>
+                <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                <manifest>
+                <item id="c1" href="text/1.xhtml" media-type="application/xhtml+xml"/>
+                <item id="c2" href="text/2.xhtml" media-type="application/xhtml+xml"/>
+                <item id="css" href="style.css" media-type="text/css"/>
+                </manifest>
+                <spine><itemref idref="c1"/><itemref idref="c2"/></spine>
+                </package>"#,
+            ).unwrap();
+            zw.start_file("OEBPS/text/1.xhtml", opts).unwrap();
+            zw.write_all(br#"<html><body><h1>First chapter</h1><p>Cats &amp; dogs</p></body></html>"#).unwrap();
+            zw.start_file("OEBPS/text/2.xhtml", opts).unwrap();
+            zw.write_all(br#"<html><body><p>Second chapter</p></body></html>"#).unwrap();
+            zw.finish().unwrap();
+        }
+
+        let (text, warn) = epub_to_text(epub.to_str().unwrap()).unwrap();
+        assert!(warn.is_none(), "unexpected warning: {warn:?}");
+        assert!(text.contains("First chapter"), "epub text: {text:?}");
+        assert!(text.contains("Second chapter"), "epub text: {text:?}");
+        assert!(text.contains("Cats & dogs"), "entity decode: {text:?}");
+        // The CSS item is not a content document and must be skipped.
+        assert!(!text.contains("style.css"), "non-content leaked: {text:?}");
+        // Spine order (c1 before c2) must be honored.
+        assert!(
+            text.find("First").unwrap() < text.find("Second").unwrap(),
+            "reading order: {text:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

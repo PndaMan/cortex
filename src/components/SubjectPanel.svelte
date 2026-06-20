@@ -158,7 +158,7 @@
       const picked = await open({
         multiple: false,
         directory: false,
-        filters: [{ name: "Documents", extensions: ["pdf", "docx", "pptx", "doc", "ppt", "txt", "md", "png", "jpg", "jpeg"] }],
+        filters: [{ name: "Documents", extensions: ["pdf", "epub", "docx", "pptx", "doc", "ppt", "txt", "md", "png", "jpg", "jpeg"] }],
       });
       const path = typeof picked === "string" ? picked : picked?.[0] ?? null;
       if (!path) return;

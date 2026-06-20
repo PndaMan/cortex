@@ -247,8 +247,23 @@
   let readFont      = $state("mono");
   let density       = $state("regular");
 
-  $effect(() => { document.documentElement.setAttribute("data-read", readFont); });
-  $effect(() => { document.documentElement.setAttribute("data-density", density === "compact" ? "compact" : "regular"); });
+  // Settings is the ONLY view that mutates the <html> root. Writing an attribute on
+  // documentElement invalidates styles for the ENTIRE document, forcing WebKit
+  // (WebKitGTK / iOS WKWebView) to re-match every element against the large global
+  // stylesheet (~1740 rules) — ~2× slower than Blink, which is why only Settings
+  // freezes/lags on WebKit. The store already applies these on boot, so these were
+  // redundant no-op writes that still triggered a full-document recalc every open.
+  // Only write when the value actually changes (a getAttribute read is cheap and
+  // does NOT force layout); live appearance changes still apply instantly.
+  $effect(() => {
+    const el = document.documentElement;
+    if (el.getAttribute("data-read") !== readFont) el.setAttribute("data-read", readFont);
+  });
+  $effect(() => {
+    const el = document.documentElement;
+    const v = density === "compact" ? "compact" : "regular";
+    if (el.getAttribute("data-density") !== v) el.setAttribute("data-density", v);
+  });
 
   // persist appearance on change
   $effect(() => {
@@ -1489,22 +1504,6 @@ Notes: {about}</pre>
         <!-- Follow-Omarchy mirrors the desktop's Omarchy palette — meaningless on a phone. -->
         {#if !isMobile}
         <section class="set-group">
-          <div class="set-group-h"><h3 class="set-group-t">Display</h3></div>
-          <div class="set-card">
-            <div class="set-row">
-              <div class="set-row-l">
-                <div class="set-row-t">UI scale</div>
-                <div class="set-row-d">Make everything larger or smaller — helps on high-resolution displays.</div>
-              </div>
-              <div class="row-inline">
-                <input type="range" min="80" max="150" step="5" value={app.uiScale} oninput={(e) => app.setUiScale(+e.currentTarget.value)} aria-label="UI scale" />
-                <span class="mono" style="min-width:42px;text-align:right">{app.uiScale}%</span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="set-group">
           <div class="set-group-h"><h3 class="set-group-t">Theme</h3></div>
           <div class="set-card">
             <div class="set-row">
@@ -1607,6 +1606,22 @@ Notes: {about}</pre>
               </div>
               <div class="set-row-r">
                 <button type="button" class={"st-toggle" + (closeToTray ? " on" : "")} onclick={toggleCloseToTray} role="switch" aria-checked={closeToTray} aria-label="close to tray"><span class="st-knob"></span></button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <div class="set-group-h"><h3 class="set-group-t">Display</h3></div>
+          <div class="set-card">
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">UI scale</div>
+                <div class="set-row-d">Make everything larger or smaller — helps on high-resolution displays.</div>
+              </div>
+              <div class="row-inline">
+                <input class="ui-scale" type="range" min="80" max="150" step="1" value={app.uiScale} oninput={(e) => app.setUiScale(+e.currentTarget.value)} aria-label="UI scale" />
+                <span class="mono" style="min-width:42px;text-align:right">{app.uiScale}%</span>
               </div>
             </div>
           </div>

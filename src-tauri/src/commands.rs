@@ -49,6 +49,11 @@ fn truncate(s: &str, n: usize) -> String {
 /// network-touching commands (web_search, ping_url) and ingest's web fetch.
 pub fn http_client(timeout_secs: u64) -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder()
+        // Bound the TCP/TLS connect separately so a black-holed host (unreachable
+        // homelab / bad custom URL) fails in seconds instead of stalling for the
+        // full request timeout — keeps reachability probes and the background sync
+        // snappy. Capped at 8s; connecting to any live host is sub-second.
+        .connect_timeout(std::time::Duration::from_secs(timeout_secs.min(8)))
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .unwrap_or_default()
@@ -141,26 +146,32 @@ fn ollama_base(c: &Connection) -> Option<String> {
 /// unreachable or has nothing pulled — the model picker uses "no models" to render an
 /// empty Ollama option set rather than offering models that aren't installed.
 #[tauri::command]
-pub fn ollama_models(state: State<AppState>) -> Vec<String> {
+pub async fn ollama_models(state: State<'_, AppState>) -> Result<Vec<String>> {
     let base = {
         let c = state.db.lock().unwrap();
         ollama_base(&c)
     };
-    let Some(base) = base else { return Vec::new() };
-    let url = format!("{base}/api/tags");
-    let Ok(resp) = http_client(6).get(&url).send() else { return Vec::new() };
-    if !resp.status().is_success() {
-        return Vec::new();
-    }
-    let Ok(json) = resp.json::<serde_json::Value>() else { return Vec::new() };
-    json["models"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|m| m["name"].as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
+    let Some(base) = base else { return Ok(Vec::new()) };
+    // Off the event-loop thread: probing an unreachable Ollama/homelab URL would
+    // otherwise block the GTK thread and freeze the UI (this runs on Settings open).
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        let url = format!("{base}/api/tags");
+        let Ok(resp) = http_client(6).get(&url).send() else { return Vec::new() };
+        if !resp.status().is_success() {
+            return Vec::new();
+        }
+        let Ok(json) = resp.json::<serde_json::Value>() else { return Vec::new() };
+        json["models"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m["name"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default())
 }
 
 /// Result of a provider connection check (Settings → API keys "verify").
@@ -194,18 +205,32 @@ fn verify_outcome(req: reqwest::blocking::RequestBuilder) -> VerifyResult {
 /// "connected / invalid" badge in Settings → API keys. `provider` is one of
 /// gemini | openrouter | openai | claude | custom | ollama.
 #[tauri::command]
-pub fn verify_provider(state: State<AppState>, provider: String) -> VerifyResult {
+pub async fn verify_provider(state: State<'_, AppState>, provider: String) -> Result<VerifyResult> {
     let (keys, ollama) = {
         let c = state.db.lock().unwrap();
         let keys = match read_keys(&c) {
             Ok(k) => k,
-            Err(e) => return VerifyResult { ok: false, detail: e.to_string() },
+            Err(e) => return Ok(VerifyResult { ok: false, detail: e.to_string() }),
         };
         (keys, ollama_base(&c))
     };
+    // Run the blocking provider probe OFF the GTK/event-loop thread. A synchronous
+    // command runs on that thread, so a slow/unreachable endpoint (or a DNS hang on a
+    // bad custom URL) froze the whole UI — the "Settings hangs for minutes" ANR, worst
+    // with several keys verified at once on open. spawn_blocking keeps it off-thread.
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        verify_provider_blocking(&provider, &keys, ollama)
+    })
+    .await
+    .unwrap_or(VerifyResult { ok: false, detail: "verification did not complete".into() }))
+}
+
+/// Blocking provider reachability probe — only ever called via `spawn_blocking`,
+/// never on the event-loop thread (see [`verify_provider`]).
+fn verify_provider_blocking(provider: &str, keys: &llm::Keys, ollama: Option<String>) -> VerifyResult {
     let nonempty = |o: &Option<String>| o.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     let client = http_client(10);
-    match provider.as_str() {
+    match provider {
         "gemini" => match nonempty(&keys.gemini) {
             Some(k) => verify_outcome(client.get(format!(
                 "https://generativelanguage.googleapis.com/v1beta/models?key={k}"
@@ -1090,10 +1115,13 @@ pub async fn add_source(
     // 4. store chunks (locked)
     emit_progress(&app, &source_id, "storing", "writing vectors", 85);
     {
-        let c = state.db.lock().unwrap();
+        let mut c = state.db.lock().unwrap();
+        // One transaction for all chunk inserts + finalize: a 200-chunk PDF was 200
+        // separate auto-commits (one WAL fsync each) — batching cuts that to one.
+        let tx = c.transaction()?;
         for (i, (chunk, vec)) in chunks.iter().zip(vectors.iter()).enumerate() {
             repo::insert_chunk(
-                &c,
+                &tx,
                 &source_id,
                 &input.subject_id,
                 input.topic_id.as_deref(),
@@ -1104,7 +1132,7 @@ pub async fn add_source(
                 &f32s_to_blob(vec),
             )?;
         }
-        let chunk_count = repo::count_chunks(&c, &source_id)?;
+        let chunk_count = repo::count_chunks(&tx, &source_id)?;
         let status = if chunks.is_empty() { "draft" } else { "ready" };
         let meta = if chunks.is_empty() {
             warning.clone().unwrap_or_else(|| "no extractable text".into())
@@ -1112,13 +1140,14 @@ pub async fn add_source(
             format!("{chunk_count} chunks · {chars} chars")
         };
         repo::finalize_source(
-            &c,
+            &tx,
             &source_id,
             status,
             Some(&meta),
             Some(&text),
             warning.as_deref(),
         )?;
+        tx.commit()?;
     }
 
     // Content-based auto-rename (best-effort, before we return so the refreshed
@@ -1144,8 +1173,8 @@ pub async fn add_source(
 
 /// Embed a query and return cosine top-k chunks (foundation for scoped chat).
 #[tauri::command]
-pub fn search_chunks(
-    state: State<AppState>,
+pub async fn search_chunks(
+    state: State<'_, AppState>,
     query: String,
     subject_id: Option<String>,
     k: Option<usize>,
@@ -1158,10 +1187,14 @@ pub fn search_chunks(
             crate::homelab::resolved_setting(&c, "ollama_url"),
         )
     };
-    let embedder = embed::from_settings(&provider, gemini_key.as_deref(), ollama_url.as_deref());
-    let qvec = embedder
-        .embed(&[query])
-        .map(|mut v| v.pop().unwrap_or_default())?;
+    // Embed off the event-loop thread — embed() is a blocking network call, and a
+    // sync command runs on the GTK thread (it would freeze the UI for the round-trip).
+    let qvec = tauri::async_runtime::spawn_blocking(move || {
+        let embedder = embed::from_settings(&provider, gemini_key.as_deref(), ollama_url.as_deref());
+        embedder.embed(&[query]).map(|mut v| v.pop().unwrap_or_default())
+    })
+    .await
+    .map_err(|e| Error::Other(format!("embed task failed: {e}")))??;
     let c = state.db.lock().unwrap();
     repo::search_chunks(&c, subject_id.as_deref(), &qvec, k.unwrap_or(8))
 }
@@ -1170,7 +1203,7 @@ pub fn search_chunks(
 /// vector index) + plain-text matches over sources, notes, events and
 /// materials. Returns a flat, deduplicated hit list the overlay groups by kind.
 #[tauri::command]
-pub fn global_search(state: State<AppState>, query: String) -> Result<Vec<SearchHit>> {
+pub async fn global_search(state: State<'_, AppState>, query: String) -> Result<Vec<SearchHit>> {
     let query = query.trim().to_string();
     if query.is_empty() {
         return Ok(Vec::new());
@@ -1192,35 +1225,52 @@ pub fn global_search(state: State<AppState>, query: String) -> Result<Vec<Search
     }
 
     // Semantic over the vector index, appended AFTER the exact matches so the
-    // default Enter target is always a predictable name hit. Skipped entirely
-    // on the stub embedder — its hash vectors rank essentially at random, which
-    // made every search "navigate" to whichever subject was ingested first.
-    let embedder = embed::from_settings(&provider, gemini_key.as_deref(), ollama_url.as_deref());
-    if embedder.name() != "stub" {
-        if let Ok(mut v) = embedder.embed(&[query.clone()]) {
-            let qvec = v.pop().unwrap_or_default();
-            let c = state.db.lock().unwrap();
-            if let Ok(mut chunks) = repo::search_chunks(&c, None, &qvec, 8) {
-                chunks.sort_by(|a, b| b.score.total_cmp(&a.score));
-                for h in chunks {
-                    // Junk floor: weakly-related chunks aren't navigation targets.
-                    if h.score < 0.3 {
-                        continue;
-                    }
-                    // A name match for the same source may already be present.
-                    if hits.iter().any(|x| x.kind == "source" && x.id == h.source_id) {
-                        continue;
-                    }
-                    let subject = repo::get_source(&c, &h.source_id).ok().map(|s| s.subject_id);
-                    hits.push(SearchHit {
-                        kind: "chunk".into(),
-                        id: h.source_id.clone(),
-                        subject_id: subject,
-                        title: h.source_name,
-                        snippet: h.text.chars().take(160).collect(),
-                        score: h.score,
-                    });
+    // default Enter target is always a predictable name hit. The query embed is a
+    // blocking network call, so it runs OFF the event-loop thread (spawn_blocking) —
+    // a sync command would freeze the UI for the round-trip. Skipped on the stub
+    // embedder — its hash vectors rank essentially at random.
+    let q = query.clone();
+    let qvec: Option<Vec<f32>> = tauri::async_runtime::spawn_blocking(move || {
+        let embedder = embed::from_settings(&provider, gemini_key.as_deref(), ollama_url.as_deref());
+        if embedder.name() == "stub" {
+            return None;
+        }
+        embedder.embed(&[q]).ok().and_then(|mut v| v.pop())
+    })
+    .await
+    .map_err(|e| Error::Other(format!("embed task failed: {e}")))?;
+
+    if let Some(qvec) = qvec {
+        let c = state.db.lock().unwrap();
+        if let Ok(mut chunks) = repo::search_chunks(&c, None, &qvec, 8) {
+            chunks.sort_by(|a, b| b.score.total_cmp(&a.score));
+            for h in chunks {
+                // Junk floor: weakly-related chunks aren't navigation targets.
+                if h.score < 0.3 {
+                    continue;
                 }
+                // A name match for the same source may already be present.
+                if hits.iter().any(|x| x.kind == "source" && x.id == h.source_id) {
+                    continue;
+                }
+                // Only subject_id is needed — query it directly instead of get_source(),
+                // which loads the whole `content` blob (full document text) per hit.
+                let subject = c
+                    .query_row(
+                        "SELECT subject_id FROM sources WHERE id=?1",
+                        [&h.source_id],
+                        |r| r.get::<_, Option<String>>(0),
+                    )
+                    .ok()
+                    .flatten();
+                hits.push(SearchHit {
+                    kind: "chunk".into(),
+                    id: h.source_id.clone(),
+                    subject_id: subject,
+                    title: h.source_name,
+                    snippet: h.text.chars().take(160).collect(),
+                    score: h.score,
+                });
             }
         }
     }
@@ -1906,11 +1956,18 @@ pub async fn export_pdf(html: String, dest: String) -> Result<()> {
 /// Reclaim disk space: checkpoint the WAL and VACUUM the database. Wired to the
 /// Settings "Optimize storage" action (was a cosmetic no-op before).
 #[tauri::command]
-pub fn optimize_db(state: State<AppState>) -> Result<()> {
-    let c = state.db.lock().unwrap();
-    c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
-    c.execute("VACUUM", [])?;
-    Ok(())
+pub async fn optimize_db(app: AppHandle) -> Result<()> {
+    // VACUUM rewrites the whole DB file and can take seconds — never on the
+    // event-loop thread (it would freeze the UI). Off-thread, like export_database.
+    tauri::async_runtime::spawn_blocking(move || -> Result<()> {
+        let state = app.state::<AppState>();
+        let c = state.db.lock().unwrap();
+        c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        c.execute("VACUUM", [])?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| Error::Other(format!("optimize task failed: {e}")))?
 }
 
 /// Export the entire database to a single portable SQLite file at `dest` (the
@@ -2144,20 +2201,17 @@ fn synthesize_bucket(
     let user =
         format!("Subject: {scope_label}\n\nSOURCE MATERIAL:\n{material}\n\nProduce the cheatsheet JSON now.");
     let raw = model.complete(system, &user)?;
-    let mut sections = parse_cheatsheet(&raw);
+    let sections = parse_cheatsheet(&raw);
     if sections.is_empty() {
-        // A real model returned something unparseable — surface it rather than fail silently.
-        sections = vec![CsSection {
-            id: "notes".into(),
-            title: "Notes".into(),
-            state: "draft-pending".into(),
-            items: vec![CsItem {
-                t: "Model returned unstructured output".into(),
-                d: truncate(&raw, 600),
-            }],
-            image: None,
-            image_query: None,
-        }];
+        // The model returned something unparseable. Do NOT fabricate a placeholder
+        // sheet here: the caller persists this result via save_cheatsheet, which
+        // DELETEs the existing sheet (often a good one, possibly synced from another
+        // device) before inserting. Saving a failure would destroy the real sheet
+        // AND, with a fresh updated_at, win sync's newest-wins on every peer. Surface
+        // the error instead so the stored sheet is left intact.
+        return Err(Error::Other(
+            "model returned unstructured output; try again".into(),
+        ));
     }
     Ok((sections, used))
 }
@@ -3228,7 +3282,7 @@ pub struct FolderFile {
 #[tauri::command]
 pub fn list_folder_sources(dir: String) -> Result<Vec<FolderFile>> {
     const EXTS: &[&str] = &[
-        "pdf", "docx", "pptx", "doc", "ppt", "txt", "md", "png", "jpg", "jpeg", "webp",
+        "pdf", "epub", "docx", "pptx", "doc", "ppt", "txt", "md", "png", "jpg", "jpeg", "webp",
     ];
     fn walk(dir: &Path, out: &mut Vec<FolderFile>, depth: usize) {
         if depth > 8 || out.len() >= 500 {

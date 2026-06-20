@@ -109,7 +109,19 @@ pub fn run() {
             // panic-caught so a transient poisoned-lock/network error can't kill the loop.
             {
                 let handle = app.handle().clone();
+                let sources_dir = dir.join("sources");
                 std::thread::spawn(move || {
+                    // Re-point each source's stored_path against the current sources dir —
+                    // moved OFF the setup() critical path (it was a synchronous fs scan + N
+                    // DB writes before first paint). iOS rotates the app-container UUID on
+                    // every reinstall/update, invalidating absolute stored_paths (asset://
+                    // then 403s) when no sync has run since; idempotent + never bumps
+                    // updated_at, so deferring it a moment past first paint is safe.
+                    if let Some(state) = handle.try_state::<AppState>() {
+                        if let Ok(c) = state.db.lock() {
+                            let _ = sync::repoint_source_files(&c, &sources_dir);
+                        }
+                    }
                     // Let the frontend's launch sync go first on a normal foreground start.
                     std::thread::sleep(std::time::Duration::from_secs(30));
                     loop {

@@ -102,7 +102,7 @@
       const picked = await open({
         multiple: true,
         directory: false,
-        filters: [{ name: "Documents", extensions: ["pdf", "docx", "pptx", "doc", "ppt", "txt", "md"] }],
+        filters: [{ name: "Documents", extensions: ["pdf", "epub", "docx", "pptx", "doc", "ppt", "txt", "md"] }],
       });
       const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
       if (paths.length === 0) return;
@@ -253,7 +253,7 @@
         un = await getCurrentWebview().onDragDropEvent((event) => {
           if (event.payload.type !== "drop") return;
           if (!guardSubject()) return;
-          const docExts = ["pdf", "docx", "pptx", "doc", "ppt", "txt", "md"];
+          const docExts = ["pdf", "epub", "docx", "pptx", "doc", "ppt", "txt", "md"];
           const imgExts = ["png", "jpg", "jpeg", "webp"];
           const dropped = event.payload.paths.filter((p) => {
             const e = (p.split(".").pop() ?? "").toLowerCase();

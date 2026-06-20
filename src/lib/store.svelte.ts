@@ -248,6 +248,9 @@ class PomoTimer {
   }
   pomoPause() {
     this.running = false;
+    // Stop the 250ms tick while paused — pomoStart() re-arms it on resume. Without
+    // this a paused timer keeps waking 4x/sec doing nothing (idle CPU for no gain).
+    this.#stopInterval();
   }
   pomoToggle() {
     this.running ? this.pomoPause() : this.pomoStart();
@@ -523,14 +526,16 @@ class AppStore {
             resolve();
             return;
           }
-          i += 3;
+          i += 6;
           this.chatStreaming = body.slice(0, i);
           if (i >= body.length) {
             this.#clearChatIv();
             this.#finishAssistant(subjectId, body, imgs, sugg);
             resolve();
           }
-        }, 16);
+          // ~30fps (6 chars/33ms) reveals at the same speed as 3 chars/16ms but
+          // halves the re-render wakeups during streaming.
+        }, 33);
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1378,7 +1383,12 @@ class AppStore {
    *  disabled) + mirror to localStorage so the next launch paints at the right size. */
   applyUiScale() {
     const z = Math.max(70, Math.min(160, this.uiScale)) / 100;
-    document.documentElement.style.zoom = String(z);
+    // CSS `zoom` on the document root drives a WebKitGTK compositor path that can
+    // hard-freeze the webview when a large view (e.g. Settings) mounts under it.
+    // At 100% (z === 1) the zoom is a visual no-op, so leave the root un-zoomed
+    // entirely rather than establishing a zoom context for nothing.
+    if (z === 1) document.documentElement.style.removeProperty("zoom");
+    else document.documentElement.style.zoom = String(z);
     try { localStorage.setItem("cortex-ui-scale", String(this.uiScale)); } catch { /* storage off */ }
   }
   setUiScale(v: number) {

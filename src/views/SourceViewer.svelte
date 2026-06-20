@@ -68,7 +68,7 @@
   const isAudio = $derived(app.activeSource?.kind === "audio" && !!assetUrl);
   // Readable text: explicit text-ish kinds, or any source with no stored file
   // but extracted content to show.
-  const TEXT_KINDS = ["txt", "md", "web", "url"];
+  const TEXT_KINDS = ["txt", "md", "web", "url", "epub"];
   const isText = $derived(
     !!app.activeSource &&
       !isPdfDoc &&

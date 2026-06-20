@@ -24,7 +24,12 @@ try {
 // pre-paint from the localStorage mirror; the store reconciles it from settings on init.
 try {
   const sc = localStorage.getItem("cortex-ui-scale");
-  if (sc && /^\d{2,3}$/.test(sc)) document.documentElement.style.zoom = String(Number(sc) / 100);
+  // Only establish a root zoom context when actually scaling. CSS `zoom` on the
+  // document root drives a WebKitGTK/WKWebView full-document relayout path, so a
+  // no-op zoom:1 at 100% is pure cost (and arms that path for every later mount).
+  // Leave the root un-zoomed at default scale — mirrors the guard in applyUiScale.
+  const z = sc && /^\d{2,3}$/.test(sc) ? Number(sc) / 100 : 1;
+  if (z !== 1) document.documentElement.style.zoom = String(z);
 } catch { /* storage unavailable */ }
 
 // Tag the root on phones (and when the dev force-mobile flag is on) so the mobile
