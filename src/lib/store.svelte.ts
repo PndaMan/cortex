@@ -1076,6 +1076,16 @@ class AppStore {
     this.activeSource = src;
     this.sourceJumpLoc = loc?.trim() || null;
     this.view = "source";
+    // The subject tree/list carries source metadata only (no heavy `content`
+    // blob) to stay light, so fetch the full source in the background — the
+    // readable viewer needs its extracted text. Metadata renders instantly; for
+    // PDF/image sources content is unused, so the extra fetch is harmless.
+    void api
+      .getSource(src.id)
+      .then((full) => {
+        if (full && this.activeSource?.id === src.id) this.activeSource = full;
+      })
+      .catch(() => {});
   }
   // Open the add-source view with a topic preselected (per-topic + button).
   newSourceInTopic(topicId: string) {

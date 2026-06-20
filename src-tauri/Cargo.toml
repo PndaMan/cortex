@@ -74,6 +74,9 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [profile.release]
 # panic stays "unwind": a panicking command thread shouldn't kill the whole app.
-lto = "thin"
+# fat LTO over thin: a few % smaller binary at no runtime cost (often slightly
+# faster). opt-level is left at the default 3 on purpose — "s"/"z" would shrink
+# the binary but slow the cosine-scan / ingest hot loops, hurting responsiveness.
+lto = "fat"
 codegen-units = 1
 strip = true

@@ -347,7 +347,7 @@ pub fn list_topics(conn: &Connection, subject_id: &str) -> Result<Vec<Topic>> {
 
     // All topic-filed sources of this subject in one query instead of one per topic.
     let sql = format!(
-        "SELECT {SOURCE_COLS} FROM sources \
+        "SELECT {SOURCE_LIST_COLS} FROM sources \
          WHERE subject_id=?1 AND topic_id IS NOT NULL ORDER BY created_at"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -370,7 +370,7 @@ fn topics_grouped(conn: &Connection) -> Result<HashMap<String, Vec<Topic>>> {
     let topics: Vec<Topic> = rows.collect::<rusqlite::Result<_>>()?;
 
     let sql = format!(
-        "SELECT {SOURCE_COLS} FROM sources WHERE topic_id IS NOT NULL ORDER BY created_at"
+        "SELECT {SOURCE_LIST_COLS} FROM sources WHERE topic_id IS NOT NULL ORDER BY created_at"
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], map_source)?;
@@ -424,6 +424,13 @@ fn map_source(r: &rusqlite::Row) -> rusqlite::Result<Source> {
 
 const SOURCE_COLS: &str =
     "id, subject_id, topic_id, name, kind, status, meta, origin, error, content, stored_path, created_at, updated_at";
+/// Same columns as `SOURCE_COLS` but with `content` blanked. The subject tree,
+/// sidebar and source lists only render metadata, so loading every source's full
+/// extracted text there is wasted RAM/IO (it scaled with total library text). The
+/// `'' AS content` keeps the column shape identical so `map_source` is shared; the
+/// viewer hydrates real content via `get_source` when a source is actually opened.
+const SOURCE_LIST_COLS: &str =
+    "id, subject_id, topic_id, name, kind, status, meta, origin, error, '' AS content, stored_path, created_at, updated_at";
 
 pub fn insert_source(
     conn: &Connection,
@@ -479,7 +486,7 @@ pub fn get_source(conn: &Connection, id: &str) -> Result<Source> {
 
 pub fn list_sources(conn: &Connection, subject_id: &str) -> Result<Vec<Source>> {
     let sql = format!(
-        "SELECT {SOURCE_COLS} FROM sources WHERE subject_id=?1 ORDER BY created_at DESC"
+        "SELECT {SOURCE_LIST_COLS} FROM sources WHERE subject_id=?1 ORDER BY created_at DESC"
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![subject_id], map_source)?;
