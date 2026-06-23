@@ -875,7 +875,7 @@
   .chat-stop { border-color: var(--border-strong); }
   /* Shrinkable so a narrow (resized) chat dock keeps the action buttons visible
      instead of pushing them off the right edge — the picker truncates instead. */
-  .chat-model-pick { max-width: 200px; min-width: 44px; flex: 0 1 auto; font-size: 11px; }
+  .chat-model-pick { width: 190px; min-width: 160px; flex: 0 0 auto; font-size: 11px; }
 
   /* ── scope selector (the reworked top bar: one clean clickable control) ─── */
   .scope-pick {
@@ -909,6 +909,22 @@
   .scope-pick .sp-name.sp-dim { color: var(--fg-muted); }
   .scope-pick .sp-sep { flex: none; color: var(--fg-faint); }
 
+  @container (max-width: 430px) {
+    .chatdock-inner :global(.chat-head) {
+      height: auto;
+      min-height: 44px;
+      flex-wrap: wrap;
+      padding-top: 6px;
+      padding-bottom: 6px;
+    }
+    .chat-model-pick {
+      order: 10;
+      width: 100%;
+      min-width: 0;
+      flex-basis: 100%;
+    }
+  }
+
   /* ── fit-to-page: the panel always fills its container as a flex column.
      header (fixed) · messages (flex:1, scroll) · composer (fixed). This makes
      the messages region grow to fill the page in the full "Chats" tab while
@@ -919,6 +935,7 @@
     height: 100%;
     min-height: 0;
     position: relative; /* anchor the scope-switcher overlay */
+    container-type: inline-size;
   }
   /* top drag handle for vertical resize */
   .chat-resize {
