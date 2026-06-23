@@ -50,6 +50,13 @@
     if (!allowCustom || !id) return "";
     return options.some((o) => o.id === id) ? "" : id;
   });
+  const searchPlaceholder = $derived(
+    loading
+      ? "Loading models…"
+      : allowCustom
+        ? "Search models or type your own name…"
+        : "Search models…"
+  );
 
   function toggle() {
     if (!open) {
@@ -115,7 +122,7 @@
           bind:value={q}
           onkeydown={onSearchKey}
           class="ms-input mono"
-          placeholder={loading ? "Loading models…" : "Search models…"}
+          placeholder={searchPlaceholder}
           spellcheck="false"
           autocomplete="off"
         />

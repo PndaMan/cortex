@@ -140,9 +140,7 @@
       { id: "qwen2.5:32b",   label: "Qwen 2.5 32B — local" },
       { id: "llama3.3:70b",  label: "Llama 3.3 70B — local, heavy" },
     ] },
-    { id: "custom", label: "Custom endpoint", models: [
-      { id: "custom-model", label: "custom-model (type your own slug)" },
-    ] },
+    { id: "custom", label: "Custom endpoint", models: [] },
   ];
   const EMBED_PROVIDERS: { id: string; label: string; models: Model[] }[] = [
     { id: "gemini",  label: "Gemini",        models: [{ id: "text-embedding-004", label: "text-embedding-004" }] },
