@@ -220,16 +220,31 @@
   }
 
   // ---- keys state ----
-  let keys = $state({ openrouter: "", gemini: "", claude: "", openai: "", custom: "" });
+  let keys = $state({
+    openrouter: "",
+    gemini: "",
+    claude: "",
+    openai: "",
+    custom_endpoint: "",
+    custom_api_key: "",
+  });
   const keyMeta = [
     { id: "openrouter", label: "OpenRouter",              note: "openrouter.ai/keys",    placeholder: "sk-or-…" },
     { id: "gemini",     label: "Gemini",                  note: "Google AI Studio",       placeholder: "AIza…" },
     { id: "claude",     label: "Claude",                  note: "console.anthropic.com",  placeholder: "sk-ant-…" },
     { id: "openai",     label: "OpenAI",                  note: "platform.openai.com",    placeholder: "sk-…" },
-    { id: "custom",     label: "Custom / OpenAI-compatible", note: "self-hosted gateway", placeholder: "https://… + token" },
+    { id: "custom_endpoint", label: "Custom endpoint URL", note: "OpenAI-compatible base URL", placeholder: "https://…/v1" },
+    { id: "custom_api_key", label: "Custom endpoint API key", note: "Bearer token for the custom endpoint", placeholder: "sk-…" },
   ] as const;
   // show/hide per key
-  let showKey = $state<Record<string, boolean>>({ openrouter: false, gemini: false, claude: false, openai: false, custom: false });
+  let showKey = $state<Record<string, boolean>>({
+    openrouter: false,
+    gemini: false,
+    claude: false,
+    openai: false,
+    custom_endpoint: false,
+    custom_api_key: false,
+  });
 
   // ---- appearance state ----
   const THEME_OPTS: { id: Theme; n: string; c: string; b: string }[] = [
@@ -895,7 +910,8 @@
       if (s.gemini_api_key)     keys = { ...keys, gemini: s.gemini_api_key };
       if (s.claude_api_key)     keys = { ...keys, claude: s.claude_api_key };
       if (s.openai_api_key)     keys = { ...keys, openai: s.openai_api_key };
-      if (s.custom_endpoint)    keys = { ...keys, custom: s.custom_endpoint };
+      if (s.custom_endpoint)    keys = { ...keys, custom_endpoint: s.custom_endpoint };
+      if (s.custom_api_key)     keys = { ...keys, custom_api_key: s.custom_api_key };
 
       // Models
       for (const taskId of ["chat","cheatsheet","audio","quiz","flashcard","embedding"] as TaskId[]) {
@@ -999,7 +1015,8 @@
       gemini_api_key:     keys.gemini,
       claude_api_key:     keys.claude,
       openai_api_key:     keys.openai,
-      custom_endpoint:    keys.custom,
+      custom_endpoint:    keys.custom_endpoint,
+      custom_api_key:     keys.custom_api_key,
     }).then(() => app.pushToast({ kind: "success", title: "Keys saved", body: "Stored in the system keychain." }))
       .catch(() => app.pushToast({ kind: "error", title: "Save failed" }));
   }
@@ -1094,10 +1111,13 @@
     "key-status " + (v === "checking" ? "checking" : v ? (v.ok ? "ok" : "bad") : "off");
   const statusLabel = (v: VerifyState, isSet = false) =>
     v === "checking" ? "checking…" : v ? (v.ok ? "connected" : v.detail) : (isSet ? "not checked" : "not set");
+  const verifyIdForKey = (id: string) =>
+    id === "custom_endpoint" || id === "custom_api_key" ? "custom" : id;
   async function verifyKey(id: string) {
-    verify = { ...verify, [id]: "checking" };
-    try { verify = { ...verify, [id]: await api.verifyProvider(id) }; }
-    catch (e) { verify = { ...verify, [id]: { ok: false, detail: String(e) } }; }
+    const vid = verifyIdForKey(id);
+    verify = { ...verify, [vid]: "checking" };
+    try { verify = { ...verify, [vid]: await api.verifyProvider(vid) }; }
+    catch (e) { verify = { ...verify, [vid]: { ok: false, detail: String(e) } }; }
   }
   // Verify every provider that has a stored key (run on load + after Save keys).
   function verifyAllKeys() {
@@ -1380,7 +1400,7 @@ Notes: {about}</pre>
           <div class="set-card">
             {#each keyMeta as k}
               {@const isSet = !!keys[k.id as keyof typeof keys]}
-              {@const v = verify[k.id]}
+              {@const v = verify[verifyIdForKey(k.id)]}
               <div class="set-row stacked">
                 <div class="set-row-l">
                   <div class="set-row-t">
