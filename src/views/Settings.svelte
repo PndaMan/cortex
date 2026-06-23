@@ -1028,7 +1028,7 @@
     const np = provList.find((x) => x.id === p) ?? provList[0];
     // Ollama → default to the first INSTALLED model (empty if none pulled, which leaves
     // the picker blank as intended). Others → the provider's first curated model.
-    const firstModel = p === "ollama" ? (ollamaInstalled[0] ?? "") : (np.models[0]?.id ?? "");
+    const firstModel = p === "ollama" || p === "custom" ? "" : (np.models[0]?.id ?? "");
     setTask(taskId, { provider: p, model: firstModel });
     const kv: Record<string, string> = { [`model_${taskId}`]: p + ":" + firstModel };
     if (taskId === "embedding") kv.embed_provider = p;
@@ -1306,7 +1306,7 @@ Notes: {about}</pre>
 
     <!-- ===== MODELS ===== -->
     {:else if tab === "models"}
-      <div class="set-pane">
+      <div class="set-pane set-pane--models">
         <header class="set-head">
           <div class="eyebrow">Models</div>
           <h1 class="set-title">A model for every task</h1>
@@ -1324,6 +1324,7 @@ Notes: {about}</pre>
             {@const prov = allProv.find((p) => p.id === a.provider) ?? provList[0]}
             {@const isOr = a.provider === "openrouter"}
             {@const isOllama = a.provider === "ollama"}
+            {@const isCustom = a.provider === "custom"}
             <div class="mt-row">
               <div class="mt-task">
                 <div class="mt-task-t">{t.label}</div>
@@ -1343,7 +1344,8 @@ Notes: {about}</pre>
                 options={modelOptionsFor(prov)}
                 loading={isOr && orLoading}
                 onOpen={isOr ? ensureOrModels : (isOllama ? ensureOllamaModels : undefined)}
-                placeholder={isOr ? "Search OpenRouter…" : (isOllama ? (ollamaInstalled.length ? "Pick an installed model" : "No models installed") : undefined)}
+                allowCustom={isCustom}
+                placeholder={isCustom ? "Type model id, e.g. qwen-plus" : (isOr ? "Search OpenRouter…" : (isOllama ? (ollamaInstalled.length ? "Pick an installed model" : "No models installed") : undefined))}
               />
               {#if t.id === "embedding"}
                 <span class="mono faint mt-budget-na">n/a</span>
