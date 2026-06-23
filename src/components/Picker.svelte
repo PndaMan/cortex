@@ -19,6 +19,7 @@
   let open = $state(false);
   let menuPos = $state<MenuPos | null>(null);
   let btnEl = $state<HTMLButtonElement | null>(null);
+  let menuEl = $state<HTMLDivElement | null>(null);
 
   const cur = $derived(options.find((o) => o.id === value));
 
@@ -32,7 +33,11 @@
   // A fixed menu doesn't follow the page — close it if the user scrolls.
   $effect(() => {
     if (!open) return;
-    const close = () => (open = false);
+    const close = (e: Event) => {
+      const target = e.target;
+      if (menuEl && target instanceof Node && menuEl.contains(target)) return;
+      open = false;
+    };
     window.addEventListener("scroll", close, true);
     return () => window.removeEventListener("scroll", close, true);
   });
@@ -55,7 +60,7 @@
   </button>
   {#if open && menuPos}
     <div class="picker-back" role="presentation" onclick={() => (open = false)}></div>
-    <div class="picker-menu" style={menuStyle(menuPos)}>
+    <div bind:this={menuEl} class="picker-menu" style={menuStyle(menuPos)}>
       {#each options as o}
         <button
           type="button"

@@ -983,7 +983,7 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
 .sb-settings { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 14px; background: none; border: none; border-top: 1px solid var(--border); color: var(--fg-muted); font-family: var(--font-mono); font-size: var(--t-sm); cursor: pointer; flex: none; text-align: left; }
 .sb-settings:hover { background: var(--surface); color: var(--fg-bright); }
 
-.settings { flex: 1; display: grid; grid-template-columns: 220px 1fr; min-height: 0; overflow: hidden; }
+.settings { flex: 1; display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 0; overflow: hidden; }
 .set-nav { border-right: 1px solid var(--border); background: var(--bg-sunken); padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
 .set-nav-h { display: flex; align-items: center; gap: 9px; padding: 4px 6px 12px; }
 .set-nav-item { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 11px; background: none; border: none; border-radius: var(--rad-2); color: var(--fg-muted); font-family: var(--font-mono); font-size: var(--t-sm); cursor: pointer; text-align: left; }
@@ -992,8 +992,9 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
 .set-nav-item.on svg { color: var(--accent); }
 .set-nav-foot { margin-top: auto; padding: 12px 8px 4px; font-size: var(--t-2xs); }
 
-.set-body { overflow-y: auto; min-height: 0; }
+.set-body { overflow-y: auto; min-height: 0; min-width: 0; }
 .set-pane { max-width: 720px; margin: 0 auto; padding: var(--sp-8) var(--sp-7) var(--sp-9); }
+.set-pane--models { max-width: 980px; }
 .set-head { margin-bottom: var(--sp-6); }
 /* .set-title styled by the shared .page-title rule above. */
 .set-sub { font-size: var(--t-md); color: var(--fg-muted); line-height: 1.5; max-width: 560px; }
@@ -1051,9 +1052,9 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
 .tag-chip-add.on { color: var(--accent); border-color: var(--accent-dim); border-style: solid; background: color-mix(in oklab, var(--accent) 10%, transparent); }
 
 /* model table */
-.set-table { padding: 0; }
-.mt-head { display: grid; grid-template-columns: 1.6fr 1fr 1.4fr 0.9fr; gap: 12px; padding: 11px 16px; font-size: var(--t-2xs); letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-faint); border-bottom: 1px solid var(--border); background: var(--bg-sunken); }
-.mt-row { display: grid; grid-template-columns: 1.6fr 1fr 1.4fr 0.9fr; gap: 12px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border); }
+.set-table { padding: 0; container-type: inline-size; }
+.mt-head { display: grid; grid-template-columns: minmax(150px, 1.3fr) minmax(150px, 0.9fr) minmax(280px, 1.8fr) minmax(112px, 0.7fr); gap: 12px; padding: 11px 16px; font-size: var(--t-2xs); letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-faint); border-bottom: 1px solid var(--border); background: var(--bg-sunken); }
+.mt-row { display: grid; grid-template-columns: minmax(150px, 1.3fr) minmax(150px, 0.9fr) minmax(280px, 1.8fr) minmax(112px, 0.7fr); gap: 12px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border); }
 .mt-row:first-of-type { border-top: none; }
 /* Grid cells default to min-width:auto, so a long model name (its value is white-space:nowrap)
    sizes the cell to the full text width and pushes the row off-screen — the picker's ellipsis
@@ -1106,6 +1107,13 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
   .mt-row { grid-template-columns: 1fr; gap: 8px; }
   .set-row { flex-direction: column; align-items: stretch; gap: 9px; }
   .set-row-r { min-width: 0; }
+}
+
+@container (max-width: 760px) {
+  .mt-head { display: none; }
+  .mt-row { grid-template-columns: 1fr; gap: 8px; }
+  .mt-budget { text-align: left; }
+  .mt-budget-na { text-align: left; }
 }
 
 /* ============ POINTER-BASED REORDER FEEDBACK ============ */

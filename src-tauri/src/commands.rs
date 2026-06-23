@@ -119,6 +119,7 @@ pub(crate) fn read_keys(c: &Connection) -> Result<llm::Keys> {
         openrouter: key("openrouter_api_key")?,
         openai: key("openai_api_key")?,
         claude: key("claude_api_key")?,
+        custom_api_key: key("custom_api_key")?,
         custom_endpoint: key("custom_endpoint")?,
         // Resolve through the homelab fallback chain so Ollama chat also works
         // over Tailscale/public, not just on the LAN.
@@ -262,7 +263,7 @@ fn verify_provider_blocking(provider: &str, keys: &llm::Keys, ollama: Option<Str
             Some(base) => {
                 let url = format!("{}/models", base.trim_end_matches('/'));
                 let mut rb = client.get(url);
-                if let Some(k) = nonempty(&keys.openai) {
+                if let Some(k) = nonempty(&keys.custom_api_key) {
                     rb = rb.header("Authorization", format!("Bearer {k}"));
                 }
                 verify_outcome(rb)

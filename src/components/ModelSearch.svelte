@@ -16,6 +16,7 @@
     placeholder,
     loading = false,
     onOpen,
+    allowCustom = false,
   }: {
     value: string;
     onChange: (id: string) => void;
@@ -24,6 +25,7 @@
     placeholder?: string;
     loading?: boolean;
     onOpen?: () => void;
+    allowCustom?: boolean;
   } = $props();
 
   const CAP = 60; // render at most this many rows; keep typing to narrow
@@ -43,6 +45,18 @@
     );
   });
   const shown = $derived(filtered.slice(0, CAP));
+  const customCandidate = $derived.by(() => {
+    const id = q.trim();
+    if (!allowCustom || !id) return "";
+    return options.some((o) => o.id === id) ? "" : id;
+  });
+  const searchPlaceholder = $derived(
+    loading
+      ? "Loading models…"
+      : allowCustom
+        ? "Search models or type your own name…"
+        : "Search models…"
+  );
 
   function toggle() {
     if (!open) {
@@ -69,7 +83,15 @@
   }
   function onSearchKey(e: KeyboardEvent) {
     if (e.key === "Escape") { e.preventDefault(); open = false; }
-    else if (e.key === "Enter" && shown.length) { e.preventDefault(); pick(shown[0].id); }
+    else if (e.key === "Enter") {
+      if (customCandidate) {
+        e.preventDefault();
+        pick(customCandidate);
+      } else if (shown.length) {
+        e.preventDefault();
+        pick(shown[0].id);
+      }
+    }
   }
 </script>
 
@@ -100,7 +122,7 @@
           bind:value={q}
           onkeydown={onSearchKey}
           class="ms-input mono"
-          placeholder={loading ? "Loading models…" : "Search models…"}
+          placeholder={searchPlaceholder}
           spellcheck="false"
           autocomplete="off"
         />
@@ -111,6 +133,19 @@
         {:else if shown.length === 0}
           <div class="ms-empty">No models match “{q}”</div>
         {:else}
+          {#if customCandidate}
+            <button
+              type="button"
+              class="picker-item ms-item ms-custom"
+              onclick={() => pick(customCandidate)}
+            >
+              <Icon name="plus" size={11} color="var(--accent)" />
+              <span class="grow ms-text">
+                <span class="ms-label">Use “{customCandidate}”</span>
+                <span class="ms-sub mono">Custom model id</span>
+              </span>
+            </button>
+          {/if}
           {#each shown as o (o.id)}
             <button
               type="button"
@@ -164,6 +199,7 @@
   }
   .ms-list { overflow-y: auto; padding: 4px; }
   .ms-item { height: auto; min-height: 30px; padding-top: 4px; padding-bottom: 4px; }
+  .ms-custom { color: var(--fg-bright); border-bottom: 1px solid var(--border); margin-bottom: 3px; }
   .ms-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; text-align: left; }
   .ms-label { color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ms-sub { font-size: var(--t-2xs); color: var(--fg-faint); }

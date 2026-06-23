@@ -140,9 +140,7 @@
       { id: "qwen2.5:32b",   label: "Qwen 2.5 32B — local" },
       { id: "llama3.3:70b",  label: "Llama 3.3 70B — local, heavy" },
     ] },
-    { id: "custom", label: "Custom endpoint", models: [
-      { id: "custom-model", label: "custom-model (type your own slug)" },
-    ] },
+    { id: "custom", label: "Custom endpoint", models: [] },
   ];
   const EMBED_PROVIDERS: { id: string; label: string; models: Model[] }[] = [
     { id: "gemini",  label: "Gemini",        models: [{ id: "text-embedding-004", label: "text-embedding-004" }] },
@@ -220,16 +218,31 @@
   }
 
   // ---- keys state ----
-  let keys = $state({ openrouter: "", gemini: "", claude: "", openai: "", custom: "" });
+  let keys = $state({
+    openrouter: "",
+    gemini: "",
+    claude: "",
+    openai: "",
+    custom_endpoint: "",
+    custom_api_key: "",
+  });
   const keyMeta = [
     { id: "openrouter", label: "OpenRouter",              note: "openrouter.ai/keys",    placeholder: "sk-or-…" },
     { id: "gemini",     label: "Gemini",                  note: "Google AI Studio",       placeholder: "AIza…" },
     { id: "claude",     label: "Claude",                  note: "console.anthropic.com",  placeholder: "sk-ant-…" },
     { id: "openai",     label: "OpenAI",                  note: "platform.openai.com",    placeholder: "sk-…" },
-    { id: "custom",     label: "Custom / OpenAI-compatible", note: "self-hosted gateway", placeholder: "https://… + token" },
+    { id: "custom_endpoint", label: "Custom endpoint URL", note: "OpenAI-compatible base URL", placeholder: "https://…/v1" },
+    { id: "custom_api_key", label: "Custom endpoint API key", note: "Bearer token for the custom endpoint", placeholder: "sk-…" },
   ] as const;
   // show/hide per key
-  let showKey = $state<Record<string, boolean>>({ openrouter: false, gemini: false, claude: false, openai: false, custom: false });
+  let showKey = $state<Record<string, boolean>>({
+    openrouter: false,
+    gemini: false,
+    claude: false,
+    openai: false,
+    custom_endpoint: false,
+    custom_api_key: false,
+  });
 
   // ---- appearance state ----
   const THEME_OPTS: { id: Theme; n: string; c: string; b: string }[] = [
@@ -910,7 +923,8 @@
       if (s.gemini_api_key)     keys = { ...keys, gemini: s.gemini_api_key };
       if (s.claude_api_key)     keys = { ...keys, claude: s.claude_api_key };
       if (s.openai_api_key)     keys = { ...keys, openai: s.openai_api_key };
-      if (s.custom_endpoint)    keys = { ...keys, custom: s.custom_endpoint };
+      if (s.custom_endpoint)    keys = { ...keys, custom_endpoint: s.custom_endpoint };
+      if (s.custom_api_key)     keys = { ...keys, custom_api_key: s.custom_api_key };
 
       // Models
       for (const taskId of ["chat","cheatsheet","audio","quiz","flashcard","embedding"] as TaskId[]) {
@@ -1014,7 +1028,8 @@
       gemini_api_key:     keys.gemini,
       claude_api_key:     keys.claude,
       openai_api_key:     keys.openai,
-      custom_endpoint:    keys.custom,
+      custom_endpoint:    keys.custom_endpoint,
+      custom_api_key:     keys.custom_api_key,
     }).then(() => app.pushToast({ kind: "success", title: "Keys saved", body: "Stored in the system keychain." }))
       .catch(() => app.pushToast({ kind: "error", title: "Save failed" }));
   }
@@ -1043,7 +1058,7 @@
     const np = provList.find((x) => x.id === p) ?? provList[0];
     // Ollama → default to the first INSTALLED model (empty if none pulled, which leaves
     // the picker blank as intended). Others → the provider's first curated model.
-    const firstModel = p === "ollama" ? (ollamaInstalled[0] ?? "") : (np.models[0]?.id ?? "");
+    const firstModel = p === "ollama" || p === "custom" ? "" : (np.models[0]?.id ?? "");
     setTask(taskId, { provider: p, model: firstModel });
     const kv: Record<string, string> = { [`model_${taskId}`]: p + ":" + firstModel };
     if (taskId === "embedding") kv.embed_provider = p;
@@ -1109,10 +1124,13 @@
     "key-status " + (v === "checking" ? "checking" : v ? (v.ok ? "ok" : "bad") : "off");
   const statusLabel = (v: VerifyState, isSet = false) =>
     v === "checking" ? "checking…" : v ? (v.ok ? "connected" : v.detail) : (isSet ? "not checked" : "not set");
+  const verifyIdForKey = (id: string) =>
+    id === "custom_endpoint" || id === "custom_api_key" ? "custom" : id;
   async function verifyKey(id: string) {
-    verify = { ...verify, [id]: "checking" };
-    try { verify = { ...verify, [id]: await api.verifyProvider(id) }; }
-    catch (e) { verify = { ...verify, [id]: { ok: false, detail: String(e) } }; }
+    const vid = verifyIdForKey(id);
+    verify = { ...verify, [vid]: "checking" };
+    try { verify = { ...verify, [vid]: await api.verifyProvider(vid) }; }
+    catch (e) { verify = { ...verify, [vid]: { ok: false, detail: String(e) } }; }
   }
   // Verify every provider that has a stored key (run on load + after Save keys).
   function verifyAllKeys() {
@@ -1321,7 +1339,7 @@ Notes: {about}</pre>
 
     <!-- ===== MODELS ===== -->
     {:else if tab === "models"}
-      <div class="set-pane">
+      <div class="set-pane set-pane--models">
         <header class="set-head">
           <div class="eyebrow">Models</div>
           <h1 class="set-title">A model for every task</h1>
@@ -1339,6 +1357,7 @@ Notes: {about}</pre>
             {@const prov = allProv.find((p) => p.id === a.provider) ?? provList[0]}
             {@const isOr = a.provider === "openrouter"}
             {@const isOllama = a.provider === "ollama"}
+            {@const isCustom = a.provider === "custom"}
             <div class="mt-row">
               <div class="mt-task">
                 <div class="mt-task-t">{t.label}</div>
@@ -1358,7 +1377,8 @@ Notes: {about}</pre>
                 options={modelOptionsFor(prov)}
                 loading={isOr && orLoading}
                 onOpen={isOr ? ensureOrModels : (isOllama ? ensureOllamaModels : undefined)}
-                placeholder={isOr ? "Search OpenRouter…" : (isOllama ? (ollamaInstalled.length ? "Pick an installed model" : "No models installed") : undefined)}
+                allowCustom={isCustom}
+                placeholder={isCustom ? "Type model id, e.g. qwen-plus" : (isOr ? "Search OpenRouter…" : (isOllama ? (ollamaInstalled.length ? "Pick an installed model" : "No models installed") : undefined))}
               />
               {#if t.id === "embedding"}
                 <span class="mono faint mt-budget-na">n/a</span>
@@ -1393,7 +1413,7 @@ Notes: {about}</pre>
           <div class="set-card">
             {#each keyMeta as k}
               {@const isSet = !!keys[k.id as keyof typeof keys]}
-              {@const v = verify[k.id]}
+              {@const v = verify[verifyIdForKey(k.id)]}
               <div class="set-row stacked">
                 <div class="set-row-l">
                   <div class="set-row-t">

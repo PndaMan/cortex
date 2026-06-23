@@ -872,6 +872,7 @@ mod tests {
         // Provider API keys & device endpoints must NEVER sync across devices.
         for k in [
             "gemini_api_key", "openrouter_api_key", "openai_api_key", "claude_api_key",
+            "custom_api_key",
             "custom_endpoint", "ollama_url", "searxng_url",
             "whisper_url", "sync_url", "sync_enabled", "google_calendar_token",
             "last_subject_id", "offline_mode",

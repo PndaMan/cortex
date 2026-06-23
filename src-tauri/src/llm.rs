@@ -447,6 +447,7 @@ pub struct Keys {
     pub openrouter: Option<String>,
     pub openai: Option<String>,
     pub claude: Option<String>,
+    pub custom_api_key: Option<String>,
     pub custom_endpoint: Option<String>,
     /// Ollama base URL (e.g. http://localhost:11434) — local, keyless.
     pub ollama_url: Option<String>,
@@ -493,7 +494,7 @@ pub fn from_spec(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
         "custom" => nonempty(&keys.custom_endpoint).map(|base| {
             Box::new(OpenAiCompatLlm {
                 base_url: base.to_string(),
-                api_key: nonempty(&keys.openai).unwrap_or("").to_string(),
+                api_key: nonempty(&keys.custom_api_key).unwrap_or("").to_string(),
                 model,
                 label: "custom",
                 max_tokens: None,
