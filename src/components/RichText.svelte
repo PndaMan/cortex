@@ -5,19 +5,26 @@
   // (no innerHTML) so it's safe and the citations stay interactive.
   import { app } from "../lib/store.svelte";
   import { safeImgSrc } from "../lib/url";
-  import katex from "katex";
-  import "katex/dist/katex.min.css";
+  import { katex } from "../lib/katex.svelte";
 
   let { text }: { text: string } = $props();
 
-  // Render a LaTeX string to KaTeX HTML. throwOnError:false → invalid math shows as
-  // its source rather than crashing. KaTeX emits its own sanitized markup (it never
-  // passes through arbitrary HTML), so {@html} of the result stays safe.
+  function escapeHtml(src: string): string {
+    return src.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
+  }
+
+  // Render a LaTeX string to KaTeX HTML via the shared lazy loader. Until KaTeX has
+  // loaded, math shows as its (escaped) source; once it lands, `katex.ensure()`'s
+  // reactive read re-renders this subtree into typeset math. throwOnError:false →
+  // invalid math shows as its source rather than crashing. KaTeX emits its own
+  // sanitized markup (never arbitrary HTML), so {@html} of the result stays safe.
   function renderMath(src: string, display: boolean): string {
+    const k = katex.ensure();
+    if (!k) return escapeHtml(src);
     try {
-      return katex.renderToString(src, { displayMode: display, throwOnError: false });
+      return k.renderToString(src, { displayMode: display, throwOnError: false });
     } catch {
-      return src.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
+      return escapeHtml(src);
     }
   }
 

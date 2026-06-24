@@ -4,35 +4,16 @@
   import { safeUrl, safeImgSrc } from "../lib/url";
   import Icon from "./Icon.svelte";
   import RichText from "./RichText.svelte";
-  import Picker from "./Picker.svelte";
+  import ModelSearch from "./ModelSearch.svelte";
   import type { Source } from "../lib/api";
   import * as api from "../lib/api";
+  import { loadOpenRouterModels, type OrModel } from "../lib/openrouter";
 
-  let { compact = false, onClose, onFullscreen }: { compact?: boolean; onClose?: () => void; onFullscreen?: () => void } = $props();
-
-  // ── vertical resize ────────────────────────────────────────────────────────
-  // A thin grab bar on the panel's top edge drags to change its height. Dragging
-  // up (negative dy) grows the panel; clamped between 240px and 90vh. Applied to
-  // the root so both the docked instance and the pop-out resize.
-  let panelHeight = $state<number | null>(null);
-  function startResize(e: PointerEvent) {
-    e.preventDefault();
-    const startY = e.clientY;
-    const startH = panelHeight ?? (e.currentTarget instanceof HTMLElement
-      ? e.currentTarget.parentElement?.getBoundingClientRect().height ?? 480
-      : 480);
-    const maxH = window.innerHeight * 0.9;
-    const onMove = (ev: PointerEvent) => {
-      const next = startH + (startY - ev.clientY);
-      panelHeight = Math.max(240, Math.min(maxH, next));
-    };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  }
+  // `popout` = the floating overlay chat (Ask-c / source viewer). The model picker
+  // is hidden there to keep the compact header clean; it stays in the full-screen
+  // chat (Chats tab + mobile full sheet).
+  let { compact = false, popout = false, onClose, onFullscreen }:
+    { compact?: boolean; popout?: boolean; onClose?: () => void; onFullscreen?: () => void } = $props();
 
   // ── scope state ──────────────────────────────────────────────────────────
   type Level = "subject" | "topic" | "source" | "sources";
@@ -57,18 +38,15 @@
   const suggestions = $derived(app.chatGenSubject === null ? app.chatSuggestions : []);
   let queued = $state<string[]>([]); // messages sent while a response is streaming
 
-  // In-chat model picker (writes the same model_chat setting Settings uses).
-  const CHAT_MODELS = [
-    "openrouter:deepseek/deepseek-v4-flash",
-    "openrouter:openai/gpt-4o-mini",
-    "openrouter:openai/gpt-4o",
-    "openrouter:anthropic/claude-3.5-sonnet",
-    "openrouter:google/gemini-2.0-flash-001",
-    "openrouter:deepseek/deepseek-chat",
-    "gemini:gemini-2.5-flash",
-    "gemini:gemini-2.5-pro",
-    "openai:gpt-4o-mini",
-    "claude:claude-3-5-sonnet-20241022",
+  // In-chat model picker (writes the same model_chat setting Settings uses). Mirrors
+  // the Settings picker: a searchable ModelSearch over the live OpenRouter catalog
+  // (price/context per row), with a few non-OpenRouter quick picks. The stored value
+  // is always a "provider:model" spec.
+  const CHAT_FALLBACK = [
+    { id: "gemini:gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+    { id: "gemini:gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { id: "openai:gpt-4o-mini", label: "GPT-4o mini" },
+    { id: "claude:claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet" },
   ];
   let chatModel = $state("");
   let chatModelLoaded = false;
@@ -77,12 +55,36 @@
     chatModelLoaded = true;
     api.getSetting("model_chat").then((v) => { if (v) chatModel = v; }).catch(() => {});
   });
-  const modelOptions = $derived(
-    Array.from(new Set([...(chatModel ? [chatModel] : []), ...CHAT_MODELS])).map((spec) => ({
-      id: spec,
-      label: spec.includes(":") ? spec.split(":").slice(1).join(":") : spec,
-    }))
-  );
+
+  // Live OpenRouter catalog — fetched once, the first time the picker is opened.
+  let orModels = $state<OrModel[]>([]);
+  let orLoading = $state(false);
+  let orTried = false;
+  function ensureOrModels() {
+    if (orTried) return;
+    orTried = true;
+    orLoading = true;
+    loadOpenRouterModels()
+      .then((m) => { orModels = m; })
+      .catch(() => {})
+      .finally(() => { orLoading = false; });
+  }
+
+  const modelOptions = $derived.by(() => {
+    const opts: { id: string; label: string; sub?: string; recommended?: boolean }[] = [
+      ...orModels.map((m) => ({
+        id: "openrouter:" + m.id, label: m.label, sub: m.sub, recommended: m.recommended,
+      })),
+      ...CHAT_FALLBACK,
+    ];
+    // Always show the current selection, even if it isn't in either list.
+    if (chatModel && !opts.some((o) => o.id === chatModel)) {
+      const label = chatModel.includes(":") ? chatModel.split(":").slice(1).join(":") : chatModel;
+      opts.unshift({ id: chatModel, label });
+    }
+    return opts;
+  });
+
   function setChatModel(spec: string) {
     chatModel = spec;
     api.setSetting("model_chat", spec).catch(() => {});
@@ -497,26 +499,9 @@
      never receives keydown unless focused). panelKey ignores it while typing. -->
 <svelte:window onkeydown={panelKey} />
 
-<div class="chatdock-inner" class:is-full={!onClose} style:height={onClose && panelHeight ? panelHeight + "px" : null}>
-  <!-- ── top drag handle: vertical resize of the whole panel ──────────────── -->
-  <!-- Only meaningful for the docked instance (which passes onClose). In the
-       fullscreen Chats tab the panel already fills the page, so the grab bar is
-       hidden — it otherwise looked like a stray strip and let you shrink the
-       full-page chat for no reason. -->
-  {#if onClose}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="chat-resize"
-      role="separator"
-      aria-orientation="horizontal"
-      aria-label="Resize chat panel"
-      title="Drag to resize"
-      onpointerdown={startResize}
-    ></div>
-  {/if}
-
+<div class="chatdock-inner" class:is-full={!onClose}>
   <!-- ── header ─────────────────────────────────────────────────────────── -->
-  <div class="chat-head">
+  <div class="chat-head" class:is-popout={popout}>
     {#if app.activeSubject}
       <!-- One clean clickable scope selector (opens the switcher). Shows the
            current scope path; no redundant chevrons or banner. -->
@@ -538,9 +523,19 @@
     {/if}
 
     <div class="grow"></div>
-    <div class="chat-model-pick" title="Chat model">
-      <Picker value={chatModel} onChange={setChatModel} options={modelOptions} icon="bolt" placeholder="Model" />
-    </div>
+    {#if !popout}
+      <div class="chat-model-pick" title="Chat model">
+        <ModelSearch
+          value={chatModel}
+          onChange={setChatModel}
+          options={modelOptions}
+          icon="bolt"
+          placeholder="Model"
+          loading={orLoading && orModels.length === 0}
+          onOpen={ensureOrModels}
+        />
+      </div>
+    {/if}
     <button class="btn btn--icon btn--sm btn--ghost" title="Chat history" onclick={openHistory}>
       <Icon name="book" size={13} />
     </button>
@@ -884,6 +879,8 @@
     gap: 6px;
     max-width: 100%;
     min-width: 0;
+    flex: 0 1 auto; /* shrink (truncating the label) before the action buttons give up space */
+    overflow: hidden;
     padding: 5px 10px;
     border: 1px solid var(--border-strong);
     border-radius: var(--r-md, 8px);
@@ -908,6 +905,13 @@
   }
   .scope-pick .sp-name.sp-dim { color: var(--fg-muted); }
   .scope-pick .sp-sep { flex: none; color: var(--fg-faint); }
+
+  /* The floating pop-out chat must never wrap its header — at the panel's minimum
+     width the scope label truncates so the action buttons stay fixed on one row,
+     instead of the buttons stacking onto a second line. (The full-screen / mobile
+     chat keeps the @container rule below, which drops the model picker to its own
+     row where there's a real keyboard-friendly reason to.) */
+  .chatdock-inner :global(.chat-head.is-popout) { flex-wrap: nowrap; }
 
   @container (max-width: 430px) {
     .chatdock-inner :global(.chat-head) {
@@ -936,27 +940,6 @@
     min-height: 0;
     position: relative; /* anchor the scope-switcher overlay */
     container-type: inline-size;
-  }
-  /* top drag handle for vertical resize */
-  .chat-resize {
-    flex: none;
-    height: 7px;
-    cursor: ns-resize;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    touch-action: none;
-  }
-  .chat-resize::before {
-    content: "";
-    width: 34px;
-    height: 3px;
-    border-radius: 999px;
-    background: var(--border-strong);
-    transition: background 0.12s ease;
-  }
-  .chat-resize:hover::before {
-    background: var(--accent);
   }
   .chatdock-inner :global(.chat-head) {
     flex: none;

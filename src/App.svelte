@@ -381,6 +381,7 @@
             />
           {/if}
           <ChatPanel
+            popout
             onClose={() => (app.chatOpen = false)}
             onFullscreen={() => { app.setView("subject"); app.subjectTab = "chats"; }}
           />
