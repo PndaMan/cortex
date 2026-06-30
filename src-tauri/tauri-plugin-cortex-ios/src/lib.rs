@@ -50,7 +50,11 @@ fn forward<R: Runtime, T: Serialize, U: DeserializeOwned>(
     payload: T,
 ) -> Result<U> {
     let state = app.state::<CortexIos<R>>();
-    state.0.run_mobile_plugin(cmd, payload).map_err(Into::into)
+    // run_mobile_plugin returns PluginInvokeError (no From impl on our Error) — stringify it.
+    state
+        .0
+        .run_mobile_plugin(cmd, payload)
+        .map_err(|e| Error::Msg(e.to_string()))
 }
 
 #[cfg(not(target_os = "ios"))]
