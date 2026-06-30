@@ -119,15 +119,44 @@ ext.build_configurations.each do |cfg|
   s['LD_RUNPATH_SEARCH_PATHS']     = ['$(inherited)', '@executable_path/Frameworks', '@executable_path/../../Frameworks']
 end
 
-# 6) App target: App-Group entitlements + raise deployment target to iOS 16 (CortexShared floor).
+# Ensure the App-Group entitlement is present in an entitlements FILE (Tauri generates its own
+# app entitlements WITHOUT the group — the provisioning profile having it is not enough; the
+# entitlements baked into the binary must declare it, or the app gets no shared-container access
+# at runtime and every widget falls back to placeholder data). Merge it in with PlistBuddy.
+def ensure_app_group(ent_abs, group = 'group.study.cortex.app')
+  unless File.exist?(ent_abs)
+    File.write(ent_abs, <<~PLIST)
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+      </dict>
+      </plist>
+    PLIST
+  end
+  pb = '/usr/libexec/PlistBuddy'
+  esc = ent_abs.gsub('"', '\"')
+  key = ':com.apple.security.application-groups'
+  has_arr = system(%(#{pb} -c "Print #{key}" "#{esc}" >/dev/null 2>&1))
+  system(%(#{pb} -c "Add #{key} array" "#{esc}" >/dev/null 2>&1)) unless has_arr
+  has_grp = system(%(#{pb} -c "Print #{key}" "#{esc}" 2>/dev/null | grep -q "#{group}"))
+  system(%(#{pb} -c "Add #{key}:0 string #{group}" "#{esc}" >/dev/null 2>&1)) unless has_grp
+  puts "→ ensured App Group '#{group}' in #{ent_abs}"
+end
+
+# 6) App target: App-Group entitlement (CRITICAL for the widget data bridge) + raise deployment
+#    target to iOS 16 (CortexShared floor).
 app_target.build_configurations.each do |cfg|
   s = cfg.build_settings
   existing = s['CODE_SIGN_ENTITLEMENTS']
-  if existing.nil? || existing.to_s.strip.empty?
-    s['CODE_SIGN_ENTITLEMENTS'] = rel(app_entl, proj_dir)
-  else
-    puts "ℹ︎ app already has entitlements (#{existing}); ensure it contains group.study.cortex.app"
-  end
+  ent_abs =
+    if existing && !existing.to_s.strip.empty?
+      File.expand_path(existing.to_s, proj_dir.to_s)
+    else
+      s['CODE_SIGN_ENTITLEMENTS'] = rel(app_entl, proj_dir)
+      File.expand_path(rel(app_entl, proj_dir), proj_dir.to_s)
+    end
+  ensure_app_group(ent_abs)
   cur = s['IPHONEOS_DEPLOYMENT_TARGET'].to_f
   s['IPHONEOS_DEPLOYMENT_TARGET'] = DEPLOYMENT if cur.zero? || cur < DEPLOYMENT.to_f
 end

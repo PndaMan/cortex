@@ -178,34 +178,21 @@ let draining = false;
  */
 export async function drainBackgroundRecordings(): Promise<void> {
   if (!isIOS || draining) return;
+  if (app.pendingRecording) return; // one already awaiting review
   draining = true;
   try {
     const files = await listInbox();
     if (!files.length) return;
-    const subjects = app.subjects ?? [];
-    if (!subjects.length) return; // not loaded yet — a later retry will catch it
-    let saved = 0;
-    for (const f of files) {
-      try {
-        const subj = subjects.find((s) => s.name === f.subject) ?? subjects[0];
-        if (!subj) continue;
-        const bytes = await readRecordingBytes(f.path);
-        if (!bytes.length) { await deleteRecording(f.path); continue; }
-        const name = f.name.replace(/\.m4a$/i, "").replace(/^lecture-/i, "Lecture ");
-        await api.saveRecording(subj.id, name, bytes, undefined, "m4a");
-        await deleteRecording(f.path);
-        saved++;
-      } catch {
-        /* leave this file for a later attempt */
-      }
-    }
-    if (saved > 0) {
-      try { await app.refresh(); } catch { /* ignore */ }
-      const title = saved === 1 ? "Background lecture saved" : `${saved} background lectures saved`;
-      app.pushToast?.({ kind: "success", title, body: "Recorded from your Lock Screen and transcribed." });
-      notifyNow("transcribed", `✅ ${title}`, "Recorded from your Lock Screen and transcribed.");
-      void refreshWidgets(true);
-    }
+    // Take the most recent finished recording and open the recorder so the user picks WHERE to save
+    // it (subject/topic) — we never auto-assign a subject. Remaining files are handled on a later pass.
+    const f = files[files.length - 1];
+    const bytes = await readRecordingBytes(f.path);
+    await deleteRecording(f.path);
+    if (!bytes.length) return;
+    const name = f.name.replace(/\.m4a$/i, "").replace(/^lecture-/i, "Lecture ");
+    app.pendingRecording = { bytes, name };
+    app.setView?.("recorder");
+    notifyNow("transcribed", "Lecture ready to save", "Open Cortex to choose where to save your recording.");
   } catch {
     /* plugin unavailable — ignore */
   } finally {

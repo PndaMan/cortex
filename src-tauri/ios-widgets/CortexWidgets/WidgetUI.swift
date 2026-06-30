@@ -46,24 +46,26 @@ struct RingView: View {
     }
 }
 
-/// The signature record button — accent gradient disc with a soft glow + centred dot/glyph.
+/// The record button — accent disc with a mic (idle) or a red disc with a stop square (recording).
 struct RecordButton: View {
     let theme: CortexTheme
     var isRecording: Bool = false
-    var diameter: CGFloat = 54
+    var diameter: CGFloat = 58
+    private var recColor: Color { Color(hex: "#ff5345") }
     var body: some View {
         ZStack {
             Circle()
-                .fill(theme.accentGradient)
-                .shadow(color: theme.accent.opacity(0.55), radius: 10, y: 2)
+                .fill(isRecording ? AnyShapeStyle(recColor) : AnyShapeStyle(theme.accentGradient))
+                .overlay(Circle().strokeBorder(.white.opacity(0.18), lineWidth: 1))
+                .shadow(color: (isRecording ? recColor : theme.accent).opacity(0.5), radius: 9, y: 2)
             if isRecording {
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(theme.bg)
-                    .frame(width: diameter * 0.3, height: diameter * 0.3)
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(.white)
+                    .frame(width: diameter * 0.30, height: diameter * 0.30)
             } else {
-                Circle()
-                    .fill(theme.bg)
-                    .frame(width: diameter * 0.34, height: diameter * 0.34)
+                Image(systemName: "mic.fill")
+                    .font(.system(size: diameter * 0.42, weight: .bold))
+                    .foregroundStyle(theme.bg)
             }
         }
         .frame(width: diameter, height: diameter)

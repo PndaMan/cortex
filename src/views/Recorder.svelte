@@ -40,16 +40,20 @@
   let reviewBytes: number[] = [];             // the assembled audio (number[] for the IPC contract)
   let reviewExt = "webm";                     // container of reviewBytes ("webm" | "wav")
   let reviewName = $state("");                // editable file/source name
+  let reviewSubjectId = $state("");           // chosen subject to save into
   let reviewTopicId = $state("");             // chosen topic ("" → no topic)
   let reviewDuration = $state("00:00");       // captured length, mm:ss
   let reviewTranscript = $state("");          // live transcript preview (if any was produced)
   let reviewSourceLabel = $state("");         // "captured" vs "Uploaded audio" — for the success toast
 
-  // Topic options for the review Picker: the active subject's topics + a "no topic" sentinel.
+  // Subject + topic options for the review step. Subject is chosen here (not pre-assigned) so a
+  // recording started from a widget can be filed anywhere; topics follow the chosen subject.
   const NO_TOPIC = "__none__";
+  const subjectOptions = $derived((app.subjects ?? []).map((s) => ({ id: s.id, label: s.name })));
+  const reviewSubject = $derived(app.subjects?.find((s) => s.id === reviewSubjectId) ?? null);
   const topicOptions = $derived([
     { id: NO_TOPIC, label: "— no topic —" },
-    ...(app.activeSubject?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),
+    ...(reviewSubject?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),
   ]);
 
   // ---- live (interim) transcription, where the platform supports SpeechRecognition ----
@@ -603,14 +607,12 @@
     paused = false;
     nativeTick?.unregister(); nativeTick = null;
     void notif.cancelLongRecording();
-    const subj = app.activeSubject;
     let res: nr.RecordingPath;
     try {
       res = await nr.stopNative();
     } catch (e) {
       errorMsg = String(e); status = "ready"; return;
     }
-    if (!subj) { status = "ready"; return; }
     if (!res.path) {
       errorMsg = "Nothing was captured — the microphone produced no audio. Check the app's microphone permission in Settings, then try again.";
       status = "ready"; return;
@@ -664,34 +666,38 @@
   }
 
   // Move into the review & save step: stash the audio + sensible defaults and let the user edit.
+  // The SUBJECT is chosen here (defaults to the active one), so a recording started from a widget
+  // — with no subject context — can be filed wherever the user wants.
   function enterReview(bytes: number[], name: string, duration: string, sourceLabel: string, transcript = "") {
-    const subj = app.activeSubject;
-    if (!subj) { status = "ready"; return; }
     reviewBytes = bytes;
     reviewName = name;
     reviewDuration = duration;
     reviewSourceLabel = sourceLabel;
     reviewTranscript = transcript;
-    // Default to the first topic when the subject has any, otherwise "no topic".
-    reviewTopicId = subj.topics[0]?.id ?? NO_TOPIC;
+    reviewSubjectId = app.activeSubject?.id ?? app.subjects[0]?.id ?? "";
+    const subj = app.subjects.find((s) => s.id === reviewSubjectId);
+    reviewTopicId = subj?.topics[0]?.id ?? NO_TOPIC;
     errorMsg = null;
     status = "review";
   }
 
-  // Commit the reviewed recording: transcribe + save, then navigate as the old finalize did.
+  // Commit the reviewed recording: transcribe + save into the chosen subject/topic.
   async function confirmSave() {
-    const subj = app.activeSubject;
-    if (!subj) { status = "ready"; return; }
+    if (!reviewSubjectId) {
+      app.pushToast({ kind: "error", title: "Pick a subject", body: "Choose a subject to save this recording into." });
+      return;
+    }
     const name = reviewName.trim() || "Untitled recording";
     const topicId = reviewTopicId && reviewTopicId !== NO_TOPIC ? reviewTopicId : undefined;
     const capturedLabel = `${reviewDuration} ${reviewSourceLabel}`;
-    await saveAudio(reviewBytes, name, capturedLabel, topicId);
+    await saveAudio(reviewSubjectId, reviewBytes, name, capturedLabel, topicId);
   }
 
   // Discard the reviewed audio and reset the recorder to idle.
   function discardReview() {
     reviewBytes = [];
     reviewName = "";
+    reviewSubjectId = "";
     reviewTopicId = "";
     reviewTranscript = "";
     reviewDuration = "00:00";
@@ -702,15 +708,12 @@
   }
 
   // Shared save/transcribe pipeline for both live recordings and uploaded files.
-  async function saveAudio(bytes: number[], name: string, capturedLabel: string, topicId?: string) {
-    const subj = app.activeSubject;
-    if (!subj) { status = "ready"; return; }
-
+  async function saveAudio(subjectId: string, bytes: number[], name: string, capturedLabel: string, topicId?: string) {
     status = "transcribing";
     errorMsg = null;
     unlisten = await api.onIngestProgress((p) => { note = p.detail; });
     try {
-      const res = await api.saveRecording(subj.id, name, bytes, topicId, reviewExt);
+      const res = await api.saveRecording(subjectId, name, bytes, topicId, reviewExt);
       await app.refresh();
       void refreshWidgets(true); // a new source may change due/streak the widgets show
       status = "done";
@@ -724,6 +727,7 @@
         });
         notif.notifyNow("transcribed", `✅ ${name} transcribed`, `${capturedLabel} · ${res.chunk_count} chunks indexed.`);
       }
+      app.activeSubjectId = subjectId; // land on the subject we just saved into
       app.setView("subject");
       app.setTab("sources");
     } catch (e) {
@@ -780,6 +784,16 @@
   // view opens, adopt it so the UI reflects reality and Stop/Pause work.
   $effect(() => {
     if (!useNative) return;
+    // A lecture recorded in the background (Stop opened the app) → jump straight to review/save so
+    // the user picks the subject/topic. Takes priority over adopting an in-progress recording.
+    if (app.pendingRecording && status !== "review") {
+      const p = app.pendingRecording;
+      app.pendingRecording = null;
+      reviewExt = "m4a";
+      const stamp = new Date().toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      enterReview(p.bytes, p.name || `Lecture ${stamp}`, "—:—", "captured", "");
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -840,6 +854,16 @@
             autofocus
             bind:value={reviewName}
             placeholder="Untitled recording"
+          />
+        </div>
+
+        <div class="field" style:margin-top="16px">
+          <span class="onb-label mono">SUBJECT <span class="faint">where to save this recording</span></span>
+          <Picker
+            value={reviewSubjectId}
+            onChange={(id) => { reviewSubjectId = id; const s = app.subjects.find((x) => x.id === id); reviewTopicId = s?.topics[0]?.id ?? NO_TOPIC; }}
+            options={subjectOptions}
+            placeholder="Choose a subject"
           />
         </div>
 

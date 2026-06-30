@@ -38,10 +38,12 @@ public struct StartRecordingLaunchIntent: AppIntent {
 
 // MARK: - Stop (works in the background from the Live Activity)
 
-@available(iOS 16.2, *)
-public struct StopRecordingIntent: LiveActivityIntent {
+@available(iOS 16.0, *)
+public struct StopRecordingIntent: AppIntent {
     public static var title: LocalizedStringResource = "Stop Recording"
-    public static var description = IntentDescription("Stop the current lecture recording.")
+    public static var description = IntentDescription("Stop recording and open Cortex to save it.")
+    // Open the app so the user chooses the subject/topic to save into (no auto-assign).
+    public static var openAppWhenRun: Bool = true
     public init() {}
     public func perform() async throws -> some IntentResult {
         _ = RecordingController.shared.stop()

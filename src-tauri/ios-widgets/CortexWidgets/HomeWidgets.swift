@@ -26,42 +26,45 @@ struct QuickRecordView: View {
     let entry: CortexEntry
     var theme: CortexTheme { entry.theme }
     var rec: RecordingState { RecordingState.current }
+    private var recColor: Color { Color(hex: "#ff5345") }
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack {
-                Eyebrow(text: rec.isRecording ? "Recording" : "Record", theme: theme)
+        VStack(spacing: 9) {
+            HStack(spacing: 5) {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(rec.isRecording ? recColor : theme.accent)
+                Eyebrow(text: rec.isRecording ? "Recording" : "Record Lecture", theme: theme)
                 Spacer()
-                BrandMark(theme: theme)
             }
             Spacer(minLength: 0)
             if rec.isRecording {
                 if let started = rec.startedAt {
                     Text(started, style: .timer)
-                        .font(theme.mono(20, weight: .semibold))
+                        .font(theme.mono(21, weight: .bold))
                         .foregroundStyle(theme.fgBright)
                         .monospacedDigit()
                         .lineLimit(1)
-                        .minimumScaleFactor(0.6)
+                        .minimumScaleFactor(0.5)
                 }
                 RecordStopControl(theme: theme)
+                Text("Tap to stop & save")
+                    .font(theme.mono(8)).foregroundStyle(theme.fgMuted).lineLimit(1)
             } else {
-                RecordStartControl(theme: theme, subject: entry.snapshot.activeSubject)
-                Text(entry.snapshot.activeSubject ?? "Tap to record")
-                    .font(theme.mono(9))
-                    .foregroundStyle(theme.fgMuted)
-                    .lineLimit(1)
+                RecordStartControl(theme: theme)
+                Text("Tap to record")
+                    .font(theme.rounded(12, weight: .semibold)).foregroundStyle(theme.fg)
             }
             Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity)
         .padding(14)
     }
 }
 
-/// The start button — chooses the correct intent per iOS version, deep-links on iOS 16.
+/// The start button — chooses the correct intent per iOS version (subject is chosen on save, not here).
 struct RecordStartControl: View {
     let theme: CortexTheme
-    let subject: String?
     var body: some View {
         if #available(iOS 18.0, *) {
             Button(intent: StartRecordingIntent()) { RecordButton(theme: theme) }

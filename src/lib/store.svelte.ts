@@ -285,6 +285,9 @@ class AppStore {
   subjects = $state<Subject[]>([]);
   activeSubjectId = $state<string | null>(null);
   activeSource = $state<Source | null>(null);
+  // A lecture recorded in the background (from a widget / Live Activity) waiting for the user to
+  // pick where to save it. Set on launch when the recorder view opens to review it. (iOS)
+  pendingRecording = $state<{ bytes: number[]; name: string } | null>(null);
   loading = $state(true);
 
   // navigation
@@ -1388,6 +1391,9 @@ class AppStore {
     // before the async settings read returns (kills the osaka-jade flash).
     // The settings table stays the source of truth; this is just a hint.
     try { localStorage.setItem("cortex-theme", t); } catch { /* storage off */ }
+    // iOS: re-push the widget snapshot so the Home/Lock-screen widgets re-skin to the new palette.
+    // Deferred a tick so the CSS vars for the new theme are computed before we read them.
+    setTimeout(() => { void import("./widgets").then((w) => w.refreshWidgets(true)).catch(() => {}); }, 60);
   }
   setTheme(t: Theme) {
     this.theme = t;
