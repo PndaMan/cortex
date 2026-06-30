@@ -4,7 +4,18 @@
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
   import { isMobile } from "../lib/platform";
+  import * as nr from "../lib/nativeRecorder";
+  import { refreshWidgets } from "../lib/widgets";
+  import * as notif from "../lib/notifications";
   import type { UnlistenFn } from "@tauri-apps/api/event";
+
+  // On iOS we capture with the NATIVE recorder (AVAudioSession + the `audio` background mode)
+  // so a lecture keeps recording when the screen locks or the app is backgrounded, and the
+  // Live Activity / record widgets can drive it. The UI below is unchanged — native ticks feed
+  // the same waveform + timer, and the captured file goes through the SAME saveRecording path.
+  const useNative = nr.nativeRecorderAvailable;
+  let nativeLevel = $state(0); // latest mic level (0–1) from native ticks → waveform
+  let nativeTick: { unregister: () => void } | null = null;
 
   // ---- state ----
   let recording = $state(false);
@@ -210,8 +221,31 @@
     ctx2d.globalAlpha = 1;
   }
   $effect(() => {
-    if (!live || !analyser) {
+    if (!live) {
       drawWave(null); // idle baseline
+      return;
+    }
+    // Native (iOS): no Web Audio analyser — animate the bars from the single mic level the
+    // native recorder ticks us. Reads `nativeLevel` live inside the rAF each frame.
+    if (useNative) {
+      const levels = new Float32Array(WAVE_N);
+      let rafId = 0;
+      let skip = false;
+      const tick = () => {
+        rafId = requestAnimationFrame(tick);
+        skip = !skip;
+        if (skip) return;
+        for (let i = 0; i < WAVE_N; i++) {
+          const seed = (Math.sin(i * 1.7) + 1) / 2;
+          levels[i] = Math.max(0.06, Math.min(1, nativeLevel * (0.5 + seed * 0.9) + 0.04));
+        }
+        drawWave(levels);
+      };
+      rafId = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(rafId);
+    }
+    if (!analyser) {
+      drawWave(null);
       return;
     }
     const freq = new Uint8Array(analyser.frequencyBinCount);
@@ -433,6 +467,29 @@
       return;
     }
     errorMsg = null;
+
+    // iOS: hand off to the native background recorder (keeps the same UI/state machine).
+    if (useNative) {
+      const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+      try {
+        const res = await nr.startNative(app.activeSubject.name, accent || undefined);
+        if (!res || !res.path) throw new Error("recorder did not start (check microphone permission)");
+      } catch (e) {
+        errorMsg = "Couldn't start recording: " + String(e);
+        return;
+      }
+      recording = true;
+      paused = false;
+      status = "recording";
+      secs = 0;
+      tags = [];
+      liveFinal = ""; liveInterim = ""; liveBackendText = ""; whisperMissing = false;
+      nativeTick?.unregister();
+      nativeTick = await nr.onTick((t) => { nativeLevel = t.level; });
+      notif.scheduleLongRecording(); // safety nudge if it runs >2h
+      return;
+    }
+
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
@@ -490,6 +547,11 @@
   }
 
   function togglePause() {
+    if (useNative) {
+      if (paused) { void nr.resumeNative(); paused = false; }
+      else { void nr.pauseNative(); paused = true; }
+      return;
+    }
     if (!mediaRecorder && captureMode !== "wav") return;
     if (paused) {
       // WAV engine gates on `paused` inside onaudioprocess — nothing to resume.
@@ -528,9 +590,47 @@
   }
 
   function stop() {
+    if (useNative) { void stopNativeFlow(); return; }
     if (captureMode === "wav") { void finalize(); return; }
     if (!mediaRecorder) return;
     mediaRecorder.stop(); // triggers onstop → finalize()
+  }
+
+  // iOS native stop: end capture, read the file's bytes, and route them through the SAME
+  // review → saveRecording pipeline the desktop recorder uses (so the save UI is identical).
+  async function stopNativeFlow() {
+    recording = false;
+    paused = false;
+    nativeTick?.unregister(); nativeTick = null;
+    void notif.cancelLongRecording();
+    const subj = app.activeSubject;
+    let res: nr.RecordingPath;
+    try {
+      res = await nr.stopNative();
+    } catch (e) {
+      errorMsg = String(e); status = "ready"; return;
+    }
+    if (!subj) { status = "ready"; return; }
+    if (!res.path) {
+      errorMsg = "Nothing was captured — the microphone produced no audio. Check the app's microphone permission in Settings, then try again.";
+      status = "ready"; return;
+    }
+    let bytes: number[];
+    try {
+      bytes = await nr.readRecordingBytes(res.path);
+    } catch (e) {
+      errorMsg = "Couldn't read the recording: " + String(e); status = "ready"; return;
+    }
+    if (bytes.length === 0) {
+      errorMsg = "The recording was empty."; status = "ready"; return;
+    }
+    reviewExt = "m4a";
+    const stamp = new Date().toLocaleString(undefined, {
+      month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+    });
+    enterReview(bytes, `Lecture ${stamp}`, `${mm}:${ss}`, "captured", "");
+    // The bytes now live in JS; drop the native file (also clears it from the widget inbox).
+    nr.deleteRecording(res.path).catch(() => {});
   }
 
   async function finalize() {
@@ -612,6 +712,7 @@
     try {
       const res = await api.saveRecording(subj.id, name, bytes, topicId, reviewExt);
       await app.refresh();
+      void refreshWidgets(true); // a new source may change due/streak the widgets show
       status = "done";
       if (res.warning) {
         app.pushToast({ kind: "warning", title: "Recording saved", body: res.warning });
@@ -621,11 +722,13 @@
           title: "Recording transcribed",
           body: `${capturedLabel} · ${res.chunk_count} chunks embedded.`,
         });
+        notif.notifyNow("transcribed", `✅ ${name} transcribed`, `${capturedLabel} · ${res.chunk_count} chunks indexed.`);
       }
       app.setView("subject");
       app.setTab("sources");
     } catch (e) {
       errorMsg = String(e);
+      notif.notifyNow("transcribe_failed", "⚠️ Transcription failed", "Couldn't transcribe the lecture — tap to retry in Cortex.");
       status = "review"; // back to review so the user can retry without losing the audio
     } finally {
       if (unlisten) { unlisten(); unlisten = null; }
@@ -655,12 +758,43 @@
   }
 
   function cancel() {
+    if (useNative) {
+      if (recording) {
+        void nr.stopNative().then((r) => { if (r?.path) nr.deleteRecording(r.path).catch(() => {}); }).catch(() => {});
+      }
+      void notif.cancelLongRecording();
+      nativeTick?.unregister(); nativeTick = null;
+      recording = false; paused = false; secs = 0; tags = []; status = "ready";
+      liveFinal = ""; liveInterim = ""; liveBackendText = ""; whisperMissing = false;
+      app.setView("subject");
+      return;
+    }
     if (mediaRecorder && recording) { mediaRecorder.onstop = null; mediaRecorder.stop(); }
     cleanupStream();
     recording = false; paused = false; secs = 0; tags = []; status = "ready";
     liveFinal = ""; liveInterim = ""; liveBackendText = ""; whisperMissing = false;
     app.setView("subject");
   }
+
+  // iOS: if a recording is ALREADY running (started from a Home/Lock-screen widget) when this
+  // view opens, adopt it so the UI reflects reality and Stop/Pause work.
+  $effect(() => {
+    if (!useNative) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await nr.recordingState();
+        if (cancelled || !s.isRecording || recording) return;
+        recording = true;
+        paused = s.isPaused;
+        status = "recording";
+        secs = Math.round(s.elapsed);
+        nativeTick?.unregister();
+        nativeTick = await nr.onTick((t) => { nativeLevel = t.level; });
+      } catch { /* not recording / off-iOS */ }
+    })();
+    return () => { cancelled = true; nativeTick?.unregister(); nativeTick = null; };
+  });
 
   // keyboard: space toggles start/pause, enter stops, m tags
   $effect(() => {

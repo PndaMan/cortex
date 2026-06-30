@@ -18,6 +18,7 @@ mod models;
 mod moodle;
 mod mpv;
 mod notes;
+mod notify;
 mod repo;
 mod review;
 mod sync;
@@ -56,6 +57,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
+        // Native iOS bridge (background recorder + Live Activity + widget snapshots). Registered
+        // on all targets but only functional on iOS; its commands return an error elsewhere and
+        // the frontend only calls them on iOS.
+        .plugin(tauri_plugin_cortex_ios::init())
         // Moodle SSO callback: the launch flow redirects to cortexmoodle://token=…
         // This handler receives the RAW callback URI (so the base64 token isn't
         // corrupted by URL normalization) and hands it to the moodle module.
@@ -99,6 +104,9 @@ pub fn run() {
             }
 
             app.manage(state);
+
+            // Stash the app handle so the iOS Background-App-Refresh task can sync Moodle + notify.
+            notify::set_app(app.handle().clone());
 
             // Background sync + homelab connect. The frontend (store.svelte.ts) only
             // syncs while a window is open and dies when it closes; this dedicated OS

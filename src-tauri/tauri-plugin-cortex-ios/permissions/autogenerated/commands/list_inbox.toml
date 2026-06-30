@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-list-inbox"
+description = "Enables the list_inbox command without any pre-configured scope."
+commands.allow = ["list_inbox"]
+
+[[permission]]
+identifier = "deny-list-inbox"
+description = "Denies the list_inbox command without any pre-configured scope."
+commands.deny = ["list_inbox"]

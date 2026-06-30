@@ -74,6 +74,8 @@ MEMORY/
 Plans/
 *-handoff.zip
 cortex-logo-transparent (1).png
+# iOS widgets/notifications TestFlight guide — kept local, out of git history (matched anywhere)
+IOS_WIDGETS_TESTFLIGHT.md
 
 # Bundled sidecar binaries — fetched by scripts/fetch-sidecars.mjs at build time
 src-tauri/binaries/

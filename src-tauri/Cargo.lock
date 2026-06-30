@@ -712,6 +712,7 @@ dependencies = [
  "sqlite-vec",
  "tauri",
  "tauri-build",
+ "tauri-plugin-cortex-ios",
  "tauri-plugin-dialog",
  "tauri-plugin-notification",
  "tauri-plugin-process",
@@ -4349,6 +4350,17 @@ dependencies = [
  "serde_json",
  "tauri-utils",
  "walkdir",
+]
+
+[[package]]
+name = "tauri-plugin-cortex-ios"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

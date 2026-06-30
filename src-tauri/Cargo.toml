@@ -19,6 +19,10 @@ tauri = { version = "2", features = ["protocol-asset", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-process = "2"
+# Native iOS bridge: background lecture recorder (AVAudioSession + Live Activity) and widget
+# snapshots. On desktop/Android its commands compile but return an "iOS only" error (the
+# frontend gates calls to iOS), so the desktop build links and runs unaffected.
+tauri-plugin-cortex-ios = { path = "tauri-plugin-cortex-ios" }
 base64 = "0.22"
 percent-encoding = "2"
 # Sync credential encryption: XChaCha20-Poly1305 AEAD (chacha20poly1305) with a key

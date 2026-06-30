@@ -1,0 +1,15 @@
+"$schema" = "schemas/schema.json"
+
+[default]
+description = "Enables every Cortex iOS bridge command (recorder + widget snapshots)."
+permissions = [
+    "allow-start-recording",
+    "allow-stop-recording",
+    "allow-pause-recording",
+    "allow-resume-recording",
+    "allow-recording-state",
+    "allow-read-recording-bytes",
+    "allow-list-inbox",
+    "allow-delete-recording",
+    "allow-set-widget-snapshot",
+]

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-set-widget-snapshot"
+description = "Enables the set_widget_snapshot command without any pre-configured scope."
+commands.allow = ["set_widget_snapshot"]
+
+[[permission]]
+identifier = "deny-set-widget-snapshot"
+description = "Denies the set_widget_snapshot command without any pre-configured scope."
+commands.deny = ["set_widget_snapshot"]

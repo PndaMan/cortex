@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "mobile",
+  "description": "Mobile-only capabilities: the Cortex native iOS bridge (background recorder, Live Activity, widget snapshots). Scoped to iOS/Android so the desktop ACL never requires it.",
+  "platforms": ["iOS", "android"],
+  "windows": ["main"],
+  "permissions": [
+    "cortex-ios:default"
+  ]
+}

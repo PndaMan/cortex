@@ -3,6 +3,7 @@
   import type { Theme } from "../lib/store.svelte";
   import { isMobile } from "../lib/platform";
   import * as api from "../lib/api";
+  import * as notifications from "../lib/notifications";
   import { getVersion } from "@tauri-apps/api/app";
   import type { Memory } from "../lib/api";
   import Icon from "../components/Icon.svelte";
@@ -48,6 +49,7 @@
     { id: "keybinds",   label: "Keybinds",      icon: "cmd" },
     { id: "homelab",    label: "Integrations",  icon: "globe" },
     { id: "calendar",   label: "Google Calendar", icon: "globe" },
+    { id: "notifications", label: "Notifications", icon: "bell" },
     { id: "experimental", label: "Experimental", icon: "bolt" },
     { id: "audio",      label: "Audio",         icon: "music" },
     { id: "data",       label: "Data & privacy",icon: "doc" },
@@ -56,7 +58,7 @@
 
   // Mobile is a homelab-first portable view: drop the desktop-only Keybinds tab
   // and lead with Integrations (homelab). Desktop order/contents are unchanged.
-  const MOBILE_TABS = ["homelab", "keys", "models", "appearance", "calendar", "experimental", "audio", "data", "profile", "about"];
+  const MOBILE_TABS = ["homelab", "notifications", "keys", "models", "appearance", "calendar", "experimental", "audio", "data", "profile", "about"];
   const navTabs = isMobile
     ? MOBILE_TABS.map((id) => TABS.find((t) => t.id === id)).filter((t): t is (typeof TABS)[number] => !!t)
     : TABS;
@@ -644,7 +646,40 @@
     if (tab === "calendar" && gStatus === null) loadGoogle();
     if (tab === "homelab" && depReport === null) loadDeps();
     if (tab === "data") loadArchived();
+    if (tab === "notifications" && !notifLoaded) void loadNotif();
   });
+
+  // ---- Notifications ----
+  const NOTIF_DEFS = [
+    { key: "transcribed",       label: "Lecture transcribed",     desc: "When a recorded lecture finishes transcribing." },
+    { key: "transcribe_failed", label: "Transcription failed",    desc: "When a lecture couldn't be transcribed." },
+    { key: "long_recording",    label: "Long recording running",  desc: "If a recording has been going for over 2 hours." },
+    { key: "grade",             label: "New grade released",      desc: "When Moodle posts a new grade." },
+    { key: "announcement",      label: "New announcement",        desc: "When a course posts an announcement." },
+    { key: "deadline",          label: "Deadline approaching",    desc: "24 hours and 3 hours before an assignment is due." },
+    { key: "exam",              label: "Exam approaching",        desc: "3 days and 1 day before an exam." },
+    { key: "flashcards",        label: "Flashcards due",          desc: "A daily reminder (8am) that cards are ready to review." },
+    { key: "daily_review",      label: "Daily review reminder",   desc: "A daily nudge (7pm) to study." },
+    { key: "material",          label: "Material ready",          desc: "When a generated study material finishes." },
+  ] as const;
+  let notifPrefs = $state<Record<string, boolean>>({});
+  let notifLoaded = $state(false);
+  async function loadNotif() {
+    try {
+      const all = await api.getAllSettings();
+      const p: Record<string, boolean> = {};
+      for (const d of NOTIF_DEFS) p[d.key] = all[`notif_${d.key}`] !== "false";
+      notifPrefs = p;
+    } catch { /* keep defaults */ }
+    notifLoaded = true;
+  }
+  async function toggleNotif(key: string) {
+    const on = notifPrefs[key] === false; // currently off → turning on
+    notifPrefs = { ...notifPrefs, [key]: on };
+    try { await api.setSetting(`notif_${key}`, on ? "true" : "false"); } catch { /* ignore */ }
+    await notifications.reloadNotifPrefs();
+    void notifications.rescheduleAll();
+  }
 
   // ---- external dependency status ----
   let depReport = $state<api.DependencyReport | null>(null);
@@ -2187,6 +2222,38 @@ Notes: {about}</pre>
                 <input class="input mono" type="password" bind:value={gClientSecret} onblur={saveGoogleCreds} placeholder="GOCSPX-…" />
               </div>
             </div>
+          </div>
+        </section>
+      </div>
+
+    <!-- ===== NOTIFICATIONS ===== -->
+    {:else if tab === "notifications"}
+      <div class="set-pane">
+        <header class="set-head">
+          <div class="eyebrow">Settings</div>
+          <h2 class="set-title">Notifications</h2>
+          <p class="set-sub">Choose which alerts Cortex sends. On iOS these arrive even when the app is closed; new grades &amp; announcements are also checked in the background.</p>
+        </header>
+        <section class="set-group">
+          <div class="set-card">
+            {#each NOTIF_DEFS as d (d.key)}
+              <div class="set-row">
+                <div class="set-row-l">
+                  <div class="set-row-t">{d.label}</div>
+                  <div class="set-row-d">{d.desc}</div>
+                </div>
+                <div class="set-row-r">
+                  <button
+                    type="button"
+                    class={"st-toggle" + (notifPrefs[d.key] !== false ? " on" : "")}
+                    onclick={() => toggleNotif(d.key)}
+                    role="switch"
+                    aria-checked={notifPrefs[d.key] !== false}
+                    aria-label={d.label}
+                  ><span class="st-knob"></span></button>
+                </div>
+              </div>
+            {/each}
           </div>
         </section>
       </div>

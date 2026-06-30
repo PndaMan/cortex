@@ -41,4 +41,9 @@ import App from "./App.svelte";
 
 const app = mount(App, { target: document.getElementById("root")! });
 
+// iOS: start feeding the Home/Lock-screen widgets the study snapshot, and ingest any lectures
+// recorded in the background (from a widget / Live Activity) while the app was closed. Inert
+// off-iOS; imported lazily so it never touches the desktop/web critical path.
+import("./lib/widgets").then((w) => w.startWidgetFeed()).catch(() => {});
+
 export default app;

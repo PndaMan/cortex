@@ -6,6 +6,7 @@ import * as api from "./api";
 import type { Subject, Source } from "./api";
 import { music, BUILTIN_STATION_IDS, builtinStationUrl, builtinStationUrls } from "./music";
 import { keybinds } from "./keybinds.svelte";
+import * as notif from "./notifications";
 
 export type View =
   | "dashboard"
@@ -338,6 +339,9 @@ class AppStore {
         ? await api.moodleData()
         : { courses: [], grades: [], deadlines: [], announcements: [] };
     } catch { /* not configured / offline */ }
+    // Fresh Moodle data → notify new grades/announcements + (re)schedule deadline/exam alerts (iOS).
+    void notif.checkNewMoodle();
+    void notif.rescheduleAll();
   }
 
   // Built from cached Moodle data + the subject↔course links. Announcements use
@@ -787,6 +791,8 @@ class AppStore {
     }
     void this.revealWindow(); // ensure the window shows even if settings failed
     this.startReminderPolling();
+    // iOS: request notification permission, then schedule deadline/exam/daily reminders.
+    void notif.initNotifications().then(() => { void notif.rescheduleAll(); void notif.checkNewMoodle(); });
     this.startAppTimeTracking();
     void this.loadSyncStatus(); // learn whether homelab sync is on (drives the pill)
     // Auto-retry sources that failed to ingest last time (offline, model not set

@@ -9,6 +9,7 @@
 // will see the live status, even after navigating back.
 
 import { app } from "./store.svelte";
+import { notifyNow } from "./notifications";
 
 export type JobKind =
   | "cheatsheet"
@@ -113,6 +114,9 @@ class Jobs {
           title: opts.kind === "source" ? "Source added" : "Generated",
           body: `${opts.label} is ready.`,
         });
+        if (opts.kind !== "source") {
+          notifyNow("material", `🪄 ${opts.label} ready`, "Your generated study material is ready in Cortex.");
+        }
         try {
           opts.onDone?.(result);
         } catch {
