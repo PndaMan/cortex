@@ -1,6 +1,7 @@
 import Foundation
 import Tauri
 import UIKit
+import WebKit
 import WidgetKit
 import CortexShared
 
