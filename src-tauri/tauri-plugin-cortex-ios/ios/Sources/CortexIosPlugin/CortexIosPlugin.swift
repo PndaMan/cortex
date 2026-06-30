@@ -113,13 +113,14 @@ class CortexIosPlugin: Plugin {
     }
 
     @objc private func onState(_ n: Notification) {
-        var data: [String: Any] = [
+        // Pass a dictionary LITERAL to trigger (like onTick) so it coerces to Tauri's JSObject —
+        // a pre-typed [String: Any] variable doesn't match. finishedFile is "" when absent.
+        trigger("state", data: [
             "isRecording": (n.userInfo?["isRecording"] as? Bool) ?? false,
             "isPaused": (n.userInfo?["isPaused"] as? Bool) ?? false,
             "elapsed": (n.userInfo?["elapsed"] as? Double) ?? 0,
-        ]
-        if let f = n.userInfo?["finishedFile"] as? String { data["finishedFile"] = f }
-        trigger("state", data: data)
+            "finishedFile": (n.userInfo?["finishedFile"] as? String) ?? "",
+        ])
     }
 }
 
