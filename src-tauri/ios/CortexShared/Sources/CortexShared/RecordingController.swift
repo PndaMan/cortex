@@ -181,7 +181,8 @@ public final class RecordingController: NSObject, AVAudioRecorderDelegate {
             guard let self, let rec = self.recorder, self.isRecording, !self.isPaused else { return }
             rec.updateMeters()
             // dBFS (-160…0) → 0…1 with a gentle curve so quiet rooms still show a baseline.
-            let db = rec.averagePower(forChannel: 0)
+            // averagePower returns Float; widen to Double so `level` matches the Double APIs.
+            let db = Double(rec.averagePower(forChannel: 0))
             let norm = max(0, min(1, (db + 55) / 55))
             let level = pow(norm, 1.4)
             NotificationCenter.default.post(name: .cortexRecordingTick, object: nil,
