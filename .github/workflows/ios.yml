@@ -432,9 +432,26 @@ jobs:
             echo "::error::IOS_WIDGET_PROVISIONING_PROFILE_BASE64 is not set. Add a base64-encoded .mobileprovision for study.cortex.app.CortexWidgets (App ID + App Group capability). See docs/IOS_WIDGETS_TESTFLIGHT.md."
             exit 1
           fi
-          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/cortex.mobileprovision"
-          echo "$IOS_WIDGET_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/cortex-widgets.mobileprovision"
+          PPDIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PPDIR"
+          install_pp() {
+            # $1 = base64, $2 = legacy filename, $3 = label
+            printf '%s' "$1" | base64 --decode > "$PPDIR/$2"
+            sz=$(wc -c < "$PPDIR/$2")
+            if ! security cms -D -i "$PPDIR/$2" > /tmp/pp_check.plist 2>/dev/null; then
+              echo "::error::$3: decoded profile is not a valid signed profile (size=$sz bytes). First bytes:"
+              head -c 48 "$PPDIR/$2" | xxd | head -3
+              exit 1
+            fi
+            uuid=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/pp_check.plist 2>/dev/null)
+            name=$(/usr/libexec/PlistBuddy -c "Print :Name" /tmp/pp_check.plist 2>/dev/null)
+            if [ -z "$uuid" ]; then echo "::error::$3: profile has no UUID (size=$sz)"; exit 1; fi
+            # Canonical install: modern Xcode discovers profiles named <UUID>.mobileprovision.
+            cp "$PPDIR/$2" "$PPDIR/$uuid.mobileprovision"
+            echo "$3 OK — name='$name' uuid=$uuid size=$sz bytes"
+          }
+          install_pp "$IOS_PROVISIONING_PROFILE_BASE64" "cortex.mobileprovision" "app profile"
+          install_pp "$IOS_WIDGET_PROVISIONING_PROFILE_BASE64" "cortex-widgets.mobileprovision" "widget profile"
 
       - name: Initialise the iOS project
         run: cargo tauri ios init --ci
