@@ -446,6 +446,12 @@ jobs:
             uuid=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/pp_check.plist 2>/dev/null)
             name=$(/usr/libexec/PlistBuddy -c "Print :Name" /tmp/pp_check.plist 2>/dev/null)
             if [ -z "$uuid" ]; then echo "::error::$3: profile has no UUID (size=$sz)"; exit 1; fi
+            # CMS signature check: catches a corrupted/transcribed base64 whose STRUCTURE parses but
+            # whose signed digest no longer matches the content (Xcode rejects these as "missing UUID").
+            if ! openssl smime -verify -inform DER -in "$PPDIR/$2" -noverify -out /dev/null 2>/dev/null; then
+              echo "::error::$3: profile fails CMS signature verification (corrupted base64 secret). Re-encode from the real .mobileprovision: base64 -w0 file | gh secret set <NAME> --env Production"
+              exit 1
+            fi
             # Canonical install: modern Xcode discovers profiles named <UUID>.mobileprovision.
             cp "$PPDIR/$2" "$PPDIR/$uuid.mobileprovision"
             echo "$3 OK — name='$name' uuid=$uuid size=$sz bytes"
