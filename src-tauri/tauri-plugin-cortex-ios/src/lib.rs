@@ -113,6 +113,21 @@ async fn set_widget_snapshot<R: Runtime>(app: AppHandle<R>, args: SnapshotArgs) 
     forward(&app, "setWidgetSnapshot", args)
 }
 
+#[tauri::command]
+async fn mic_permission_status<R: Runtime>(app: AppHandle<R>) -> Result<MicStatus> {
+    forward(&app, "micPermissionStatus", ())
+}
+
+#[tauri::command]
+async fn request_mic_permission<R: Runtime>(app: AppHandle<R>) -> Result<MicPermission> {
+    forward(&app, "requestMicPermission", ())
+}
+
+#[tauri::command]
+async fn open_app_settings<R: Runtime>(app: AppHandle<R>) -> Result<Ok> {
+    forward(&app, "openAppSettings", ())
+}
+
 // ── plugin init ──────────────────────────────────────────────────────────────
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
@@ -126,7 +141,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             read_recording_bytes,
             list_inbox,
             delete_recording,
-            set_widget_snapshot
+            set_widget_snapshot,
+            mic_permission_status,
+            request_mic_permission,
+            open_app_settings
         ])
         .setup(|_app, _api| {
             #[cfg(target_os = "ios")]

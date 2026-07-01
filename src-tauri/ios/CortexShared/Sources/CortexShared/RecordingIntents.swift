@@ -16,22 +16,28 @@ public struct StartRecordingIntent: AudioRecordingIntent {
     public static var description = IntentDescription("Start recording a lecture in the background.")
     public init() {}
     public func perform() async throws -> some IntentResult {
-        _ = RecordingController.shared.start()
+        // Headless start requires mic permission already granted (a background intent can't prompt).
+        // The widget routes to StartRecordingLaunchIntent when permission is missing.
+        if RecordingController.shared.hasMicPermission {
+            _ = RecordingController.shared.start()
+        }
         return .result()
     }
 }
 
-// MARK: - Start (iOS 16.1–17 fallback — opens the app to arm the session, then records)
+// MARK: - Start via the app (opens Cortex — used to request mic permission, or on iOS 16–17)
 
 @available(iOS 16.0, *)
 public struct StartRecordingLaunchIntent: AppIntent {
     public static var title: LocalizedStringResource = "Record Lecture"
     public static var description = IntentDescription("Open Cortex and start recording a lecture.")
-    // Opening the app is the only reliable way to activate an audio session pre-iOS 18.
+    // Open the app so we can prompt for mic permission (impossible from a background intent) and
+    // activate the audio session pre-iOS 18.
     public static var openAppWhenRun: Bool = true
     public init() {}
     public func perform() async throws -> some IntentResult {
-        _ = RecordingController.shared.start()
+        let granted = await RecordingController.shared.ensureMicPermission()
+        if granted { _ = RecordingController.shared.start() }
         return .result()
     }
 }

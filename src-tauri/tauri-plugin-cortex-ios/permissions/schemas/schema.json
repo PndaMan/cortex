@@ -319,6 +319,30 @@
           "markdownDescription": "Denies the list_inbox command without any pre-configured scope."
         },
         {
+          "description": "Enables the mic_permission_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-mic-permission-status",
+          "markdownDescription": "Enables the mic_permission_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the mic_permission_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-mic-permission-status",
+          "markdownDescription": "Denies the mic_permission_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_app_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-app-settings",
+          "markdownDescription": "Enables the open_app_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_app_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-app-settings",
+          "markdownDescription": "Denies the open_app_settings command without any pre-configured scope."
+        },
+        {
           "description": "Enables the pause_recording command without any pre-configured scope.",
           "type": "string",
           "const": "allow-pause-recording",
@@ -353,6 +377,18 @@
           "type": "string",
           "const": "deny-recording-state",
           "markdownDescription": "Denies the recording_state command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the request_mic_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-request-mic-permission",
+          "markdownDescription": "Enables the request_mic_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the request_mic_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-request-mic-permission",
+          "markdownDescription": "Denies the request_mic_permission command without any pre-configured scope."
         },
         {
           "description": "Enables the resume_recording command without any pre-configured scope.",
@@ -403,10 +439,10 @@
           "markdownDescription": "Denies the stop_recording command without any pre-configured scope."
         },
         {
-          "description": "Enables every Cortex iOS bridge command (recorder + widget snapshots).\n#### This default permission set includes:\n\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-pause-recording`\n- `allow-resume-recording`\n- `allow-recording-state`\n- `allow-read-recording-bytes`\n- `allow-list-inbox`\n- `allow-delete-recording`\n- `allow-set-widget-snapshot`",
+          "description": "Enables every Cortex iOS bridge command (recorder + widget snapshots).\n#### This default permission set includes:\n\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-pause-recording`\n- `allow-resume-recording`\n- `allow-recording-state`\n- `allow-read-recording-bytes`\n- `allow-list-inbox`\n- `allow-delete-recording`\n- `allow-set-widget-snapshot`\n- `allow-mic-permission-status`\n- `allow-request-mic-permission`\n- `allow-open-app-settings`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Enables every Cortex iOS bridge command (recorder + widget snapshots).\n#### This default permission set includes:\n\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-pause-recording`\n- `allow-resume-recording`\n- `allow-recording-state`\n- `allow-read-recording-bytes`\n- `allow-list-inbox`\n- `allow-delete-recording`\n- `allow-set-widget-snapshot`"
+          "markdownDescription": "Enables every Cortex iOS bridge command (recorder + widget snapshots).\n#### This default permission set includes:\n\n- `allow-start-recording`\n- `allow-stop-recording`\n- `allow-pause-recording`\n- `allow-resume-recording`\n- `allow-recording-state`\n- `allow-read-recording-bytes`\n- `allow-list-inbox`\n- `allow-delete-recording`\n- `allow-set-widget-snapshot`\n- `allow-mic-permission-status`\n- `allow-request-mic-permission`\n- `allow-open-app-settings`"
         }
       ]
     }

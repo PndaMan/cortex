@@ -30,6 +30,7 @@
   let status = $state<"ready" | "recording" | "review" | "transcribing" | "done">("ready");
   let note = $state<string>("");
   let errorMsg = $state<string | null>(null);
+  let micDenied = $state(false); // mic permission denied → offer to open Settings
   let tags = $state<{ at: string }[]>([]);
 
   // ---- review & save step ----
@@ -466,7 +467,9 @@
   }
 
   async function start() {
-    if (!app.activeSubject) {
+    // Web/desktop records into the active subject; iOS native picks the subject on save, so it can
+    // start without one.
+    if (!useNative && !app.activeSubject) {
       app.pushToast({ kind: "error", title: "Open a subject first", body: "Select a subject before recording." });
       return;
     }
@@ -474,10 +477,26 @@
 
     // iOS: hand off to the native background recorder (keeps the same UI/state machine).
     if (useNative) {
+      // Ask for microphone permission EVERY time recording is attempted while it's not enabled:
+      // prompts when undetermined; when already denied iOS won't re-prompt, so we guide to Settings.
+      micDenied = false;
+      try {
+        const perm = await nr.requestMicPermission();
+        if (!perm.granted) {
+          micDenied = perm.status === "denied";
+          errorMsg = micDenied
+            ? "Cortex doesn't have microphone access. Open Settings → Cortex → Microphone to turn it on, then try again."
+            : "Microphone access is needed to record a lecture.";
+          return;
+        }
+      } catch (e) {
+        errorMsg = "Couldn't check microphone permission: " + String(e);
+        return;
+      }
       const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
       try {
-        const res = await nr.startNative(app.activeSubject.name, accent || undefined);
-        if (!res || !res.path) throw new Error("recorder did not start (check microphone permission)");
+        const res = await nr.startNative(app.activeSubject?.name, accent || undefined);
+        if (!res || !res.path) throw new Error("recorder did not start");
       } catch (e) {
         errorMsg = "Couldn't start recording: " + String(e);
         return;
@@ -954,6 +973,9 @@
 
     {#if errorMsg}
       <div style:color="var(--err)" style:margin-top="14px" style:font-size="var(--t-sm)" style:max-width="420px" style:text-align="center">{errorMsg}</div>
+      {#if micDenied}
+        <button class="btn btn--primary btn--sm" style:margin-top="10px" onclick={() => nr.openAppSettings()}>Open Settings</button>
+      {/if}
     {/if}
 
     <!-- Fallback: upload a pre-recorded audio file (always available, emphasised on error) -->

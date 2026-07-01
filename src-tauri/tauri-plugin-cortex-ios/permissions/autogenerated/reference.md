@@ -13,6 +13,9 @@ Enables every Cortex iOS bridge command (recorder + widget snapshots).
 - `allow-list-inbox`
 - `allow-delete-recording`
 - `allow-set-widget-snapshot`
+- `allow-mic-permission-status`
+- `allow-request-mic-permission`
+- `allow-open-app-settings`
 
 ## Permission Table
 
@@ -71,6 +74,58 @@ Enables the list_inbox command without any pre-configured scope.
 <td>
 
 Denies the list_inbox command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`cortex-ios:allow-mic-permission-status`
+
+</td>
+<td>
+
+Enables the mic_permission_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`cortex-ios:deny-mic-permission-status`
+
+</td>
+<td>
+
+Denies the mic_permission_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`cortex-ios:allow-open-app-settings`
+
+</td>
+<td>
+
+Enables the open_app_settings command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`cortex-ios:deny-open-app-settings`
+
+</td>
+<td>
+
+Denies the open_app_settings command without any pre-configured scope.
 
 </td>
 </tr>
@@ -149,6 +204,32 @@ Enables the recording_state command without any pre-configured scope.
 <td>
 
 Denies the recording_state command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`cortex-ios:allow-request-mic-permission`
+
+</td>
+<td>
+
+Enables the request_mic_permission command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`cortex-ios:deny-request-mic-permission`
+
+</td>
+<td>
+
+Denies the request_mic_permission command without any pre-configured scope.
 
 </td>
 </tr>

@@ -12,4 +12,7 @@ permissions = [
     "allow-list-inbox",
     "allow-delete-recording",
     "allow-set-widget-snapshot",
+    "allow-mic-permission-status",
+    "allow-request-mic-permission",
+    "allow-open-app-settings",
 ]

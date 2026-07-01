@@ -17,6 +17,19 @@ public enum AppGroup {
     public static let recordingFile = "recording-state.json"
     /// Folder where finished recordings are dropped for the app to ingest on next launch.
     public static let inboxDir = "RecordingInbox"
+    /// "1"/"0" mic-permission flag so the record widgets can pick a headless vs open-app intent.
+    public static let micFile = "mic-granted"
+
+    /// Whether the app currently has microphone permission (persisted by the app/plugin).
+    public static var micGranted: Bool {
+        guard let url = container?.appendingPathComponent(micFile),
+              let s = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        return s.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+    }
+
+    public static func setMicGranted(_ granted: Bool) {
+        writeRaw(granted ? "1" : "0", to: micFile)
+    }
 
     /// Root of the shared container, or nil if the entitlement is missing (e.g. unsigned sim).
     public static var container: URL? {

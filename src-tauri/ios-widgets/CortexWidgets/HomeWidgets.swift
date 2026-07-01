@@ -62,11 +62,13 @@ struct QuickRecordView: View {
     }
 }
 
-/// The start button — chooses the correct intent per iOS version (subject is chosen on save, not here).
+/// The start button. Mic granted → start headlessly in the background (+ Live Activity). Mic missing
+/// → open the app so it can prompt for permission (a background intent can't show the mic prompt).
+/// Subject is chosen on save, not here.
 struct RecordStartControl: View {
     let theme: CortexTheme
     var body: some View {
-        if #available(iOS 18.0, *) {
+        if AppGroup.micGranted, #available(iOS 18.0, *) {
             Button(intent: StartRecordingIntent()) { RecordButton(theme: theme) }
                 .buttonStyle(.plain)
         } else if #available(iOS 17.0, *) {

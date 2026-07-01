@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-request-mic-permission"
+description = "Enables the request_mic_permission command without any pre-configured scope."
+commands.allow = ["request_mic_permission"]
+
+[[permission]]
+identifier = "deny-request-mic-permission"
+description = "Denies the request_mic_permission command without any pre-configured scope."
+commands.deny = ["request_mic_permission"]

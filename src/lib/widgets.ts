@@ -5,7 +5,7 @@
 import { app } from "./store.svelte";
 import * as api from "./api";
 import { isIOS } from "./platform";
-import { setWidgetSnapshot, listInbox, readRecordingBytes, deleteRecording } from "./nativeRecorder";
+import { setWidgetSnapshot, listInbox, readRecordingBytes, deleteRecording, micPermissionStatus } from "./nativeRecorder";
 import { notifyNow } from "./notifications";
 
 interface DeadlineItem { id: string; title: string; course: string; dueAt: number; kind: string }
@@ -157,6 +157,8 @@ export async function refreshWidgets(force = false): Promise<void> {
 /** Start the widget feed: an initial push + a periodic refresh. Call once after mount. */
 export function startWidgetFeed(): void {
   if (!isIOS) return;
+  // Persist the current mic-permission status so the record widgets pick headless vs open-app.
+  void micPermissionStatus().catch(() => {});
   setTimeout(() => void refreshWidgets(true), 1500);
   setInterval(() => void refreshWidgets(true), 60_000);
   // Drain any lectures recorded entirely in the background (from a widget / the Live Activity)

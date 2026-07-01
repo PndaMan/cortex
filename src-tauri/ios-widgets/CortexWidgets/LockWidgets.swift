@@ -48,14 +48,16 @@ struct LockRecordView: View {
 
     @ViewBuilder
     private func lockButton<Content: View>(stop: Bool, @ViewBuilder _ label: () -> Content) -> some View {
-        if #available(iOS 18.0, *), !stop {
-            Button(intent: StartRecordingIntent()) { label() }.buttonStyle(.plain)
-        } else if #available(iOS 17.0, *) {
-            if stop {
+        if stop {
+            if #available(iOS 17.0, *) {
                 Button(intent: StopRecordingIntent()) { label() }.buttonStyle(.plain)
             } else {
-                Button(intent: StartRecordingLaunchIntent()) { label() }.buttonStyle(.plain)
+                label()
             }
+        } else if AppGroup.micGranted, #available(iOS 18.0, *) {
+            Button(intent: StartRecordingIntent()) { label() }.buttonStyle(.plain)   // headless
+        } else if #available(iOS 17.0, *) {
+            Button(intent: StartRecordingLaunchIntent()) { label() }.buttonStyle(.plain)  // opens app for perms
         } else {
             label() // iOS 16: tap opens the app
         }

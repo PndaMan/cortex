@@ -71,6 +71,21 @@ export async function setWidgetSnapshot(json: string): Promise<void> {
   await invoke(`plugin:${PLUGIN}|set_widget_snapshot`, { args: { json } });
 }
 
+export interface MicPermission { granted: boolean; status: string }
+/** "granted" | "denied" | "undetermined" — does NOT prompt. */
+export async function micPermissionStatus(): Promise<string> {
+  const r = await invoke<{ status: string }>(`plugin:${PLUGIN}|mic_permission_status`);
+  return r.status ?? "undetermined";
+}
+/** Request mic permission; shows the system prompt when undetermined. */
+export async function requestMicPermission(): Promise<MicPermission> {
+  return invoke<MicPermission>(`plugin:${PLUGIN}|request_mic_permission`);
+}
+/** Open this app's page in Settings (to enable Microphone after a denial). */
+export async function openAppSettings(): Promise<void> {
+  await invoke(`plugin:${PLUGIN}|open_app_settings`);
+}
+
 export async function onTick(cb: (t: Tick) => void): Promise<PluginListener> {
   return addPluginListener(PLUGIN, "tick", (e: unknown) => cb(e as Tick));
 }

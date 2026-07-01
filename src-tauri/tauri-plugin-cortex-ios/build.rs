@@ -8,6 +8,9 @@ const COMMANDS: &[&str] = &[
     "list_inbox",
     "delete_recording",
     "set_widget_snapshot",
+    "mic_permission_status",
+    "request_mic_permission",
+    "open_app_settings",
 ];
 
 fn main() {

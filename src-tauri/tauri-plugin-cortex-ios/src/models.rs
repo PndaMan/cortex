@@ -74,3 +74,18 @@ pub struct InboxList {
 pub struct Ok {
     pub ok: bool,
 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MicStatus {
+    /// "granted" | "denied" | "undetermined"
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MicPermission {
+    pub granted: bool,
+    #[serde(default)]
+    pub status: String,
+}

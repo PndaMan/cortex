@@ -3,6 +3,7 @@ import Tauri
 import UIKit
 import WebKit
 import WidgetKit
+import AVFoundation
 import CortexShared
 
 /// Tauri iOS plugin: the JS↔Swift bridge for the native lecture recorder and widget snapshots.
@@ -53,6 +54,58 @@ class CortexIosPlugin: Plugin {
     @objc public func resumeRecording(_ invoke: Invoke) throws {
         RecordingController.shared.resume()
         invoke.resolve(["ok": true])
+    }
+
+    // MARK: - Microphone permission
+
+    /// Current mic permission without prompting: "granted" | "denied" | "undetermined".
+    /// Persists the flag so the record widgets pick the right (headless vs open-app) intent.
+    @objc public func micPermissionStatus(_ invoke: Invoke) throws {
+        let s = Self.micStatusString()
+        AppGroup.setMicGranted(s == "granted")
+        WidgetCenter.shared.reloadAllTimelines()
+        invoke.resolve(["status": s])
+    }
+
+    /// Request mic permission. Shows the system prompt when undetermined; resolves with the result.
+    /// (When already denied the system won't re-prompt — the caller opens Settings instead.)
+    @objc public func requestMicPermission(_ invoke: Invoke) throws {
+        let done: (Bool) -> Void = { granted in
+            AppGroup.setMicGranted(granted)
+            WidgetCenter.shared.reloadAllTimelines()
+            invoke.resolve(["granted": granted, "status": granted ? "granted" : Self.micStatusString()])
+        }
+        if #available(iOS 17.0, *) {
+            AVAudioApplication.requestRecordPermission(completionHandler: done)
+        } else {
+            AVAudioSession.sharedInstance().requestRecordPermission(done)
+        }
+    }
+
+    /// Open this app's page in the Settings app (so the user can flip Microphone on after denying).
+    @objc public func openAppSettings(_ invoke: Invoke) throws {
+        DispatchQueue.main.async {
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            }
+        }
+        invoke.resolve(["ok": true])
+    }
+
+    private static func micStatusString() -> String {
+        if #available(iOS 17.0, *) {
+            switch AVAudioApplication.shared.recordPermission {
+            case .granted: return "granted"
+            case .denied: return "denied"
+            default: return "undetermined"
+            }
+        } else {
+            switch AVAudioSession.sharedInstance().recordPermission {
+            case .granted: return "granted"
+            case .denied: return "denied"
+            default: return "undetermined"
+            }
+        }
     }
 
     @objc public func recordingState(_ invoke: Invoke) throws {

@@ -62,6 +62,35 @@ public final class RecordingController: NSObject, AVAudioRecorderDelegate {
     private var _activity: Any?
     #endif
 
+    // MARK: - Microphone permission
+
+    /// Current permission without prompting.
+    public var hasMicPermission: Bool {
+        if #available(iOS 17.0, *) { return AVAudioApplication.shared.recordPermission == .granted }
+        return AVAudioSession.sharedInstance().recordPermission == .granted
+    }
+
+    /// Request mic permission (prompts when undetermined — foreground only). Persists the result so
+    /// the record widgets know whether they can start recording headlessly. Returns granted.
+    @discardableResult
+    public func ensureMicPermission() async -> Bool {
+        let granted: Bool
+        if hasMicPermission {
+            granted = true
+        } else if #available(iOS 17.0, *) {
+            granted = await withCheckedContinuation { c in
+                AVAudioApplication.requestRecordPermission { c.resume(returning: $0) }
+            }
+        } else {
+            granted = await withCheckedContinuation { c in
+                AVAudioSession.sharedInstance().requestRecordPermission { c.resume(returning: $0) }
+            }
+        }
+        AppGroup.setMicGranted(granted)
+        reloadWidgets()
+        return granted
+    }
+
     // MARK: - Public control
 
     /// Begin a recording. Safe to call from a background AppIntent. Returns the file URL or nil.
@@ -70,6 +99,13 @@ public final class RecordingController: NSObject, AVAudioRecorderDelegate {
         if isRecording { return currentFile }
         if let s = subjectName, !s.isEmpty { self.subjectName = s }
         if let a = accentHex, !a.isEmpty { self.accentHex = a }
+
+        // Can't record without mic permission — persist the current status (for the widgets) and
+        // bail if it's not granted. Requesting is done by ensureMicPermission() (foreground only).
+        let micOK = hasMicPermission
+        AppGroup.setMicGranted(micOK)
+        reloadWidgets()
+        if !micOK { return nil }
 
         let session = AVAudioSession.sharedInstance()
         do {
