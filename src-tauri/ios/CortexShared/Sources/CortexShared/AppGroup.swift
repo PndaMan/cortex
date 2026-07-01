@@ -36,9 +36,15 @@ public enum AppGroup {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: id)
     }
 
-    /// Inbox URL for finished recordings, created on demand.
+    /// Inbox for finished/in-progress recordings — the APP'S OWN Documents sandbox, NOT the App
+    /// Group container. Documents is always writable whether the app is App-Store-signed or
+    /// sideloaded (LiveContainer), and the record AppIntent runs in the app's process so it shares
+    /// this sandbox. Recording into the shared App-Group container is unreliable when signed — that
+    /// was why capture failed on TestFlight but worked on the unsigned sideload. The App Group is
+    /// still used for the widget snapshot / recording-state / mic flag (small JSON), not audio.
     public static var inbox: URL? {
-        guard let base = container else { return nil }
+        guard let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        else { return nil }
         let dir = base.appendingPathComponent(inboxDir, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir

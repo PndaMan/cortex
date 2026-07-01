@@ -633,7 +633,7 @@
       errorMsg = String(e); status = "ready"; return;
     }
     if (!res.path) {
-      errorMsg = "Nothing was captured — the microphone produced no audio. Check the app's microphone permission in Settings, then try again.";
+      errorMsg = "Nothing was captured — the recorder produced no audio. Please try again.";
       status = "ready"; return;
     }
     let bytes: number[];
