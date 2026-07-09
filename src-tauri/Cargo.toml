@@ -47,6 +47,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # CLI isn't present (iOS/Android, or a desktop without poppler). Handles text-layer
 # PDFs entirely in-process; scanned PDFs still need OCR (homelab ingest service).
 pdf-extract = "0.10"
+# OS-native URL opening (browser / app deep links). Unlike spawning `xdg-open`/
+# `open`, this also works on iOS/Android where child processes are forbidden.
+tauri-plugin-opener = "2"
 
 # Desktop-only deps. The system tray, single-instance guard and auto-updater don't
 # exist on iOS/Android, so they're gated to desktop targets and the mobile build

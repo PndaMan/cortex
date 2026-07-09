@@ -43,6 +43,15 @@
   const iconFor = (k: string) => (k === "announcement" ? "chat" : k === "exam" ? "star" : "calendar");
   const kindLabel = (k: string) => (k === "announcement" ? "Announcement" : k === "exam" ? "Exam" : "Deadline");
 
+  function openInMoodle() {
+    if (!d?.url) return;
+    // Surface a failed hand-off to the OS (no browser, blocked scheme, …) as a
+    // toast — an unhandled rejection here would just die silently.
+    api.openExternal(d.url).catch((e) =>
+      app.pushToast({ kind: "error", title: "Couldn't open Moodle", body: String(e) })
+    );
+  }
+
   function goToSubject() {
     if (!d?.subjectId) return;
     app.openSubject(d.subjectId);
@@ -97,7 +106,7 @@
         {/if}
         <div class="grow"></div>
         {#if d.url}
-          <button class="btn btn--sm btn--primary" onclick={() => d.url && api.openExternal(d.url)}><Icon name="external" size={12} /> Open in Moodle</button>
+          <button class="btn btn--sm btn--primary" onclick={openInMoodle}><Icon name="external" size={12} /> Open in Moodle</button>
         {/if}
       </footer>
     </div>

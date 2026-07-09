@@ -55,6 +55,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         // Moodle SSO callback: the launch flow redirects to cortexmoodle://token=…
         // This handler receives the RAW callback URI (so the base64 token isn't

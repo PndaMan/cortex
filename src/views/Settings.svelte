@@ -2291,7 +2291,7 @@ Notes: {about}</pre>
                         <li>
                           <span class="md-up-date mono">{new Date(d.due_at * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span>
                           {#if d.url}
-                            <button class="md-up-name md-up-link" onclick={() => d.url && api.openExternal(d.url)} title={d.name}>{d.name}</button>
+                            <button class="md-up-name md-up-link" onclick={() => d.url && api.openExternal(d.url).catch(() => {})} title={d.name}>{d.name}</button>
                           {:else}
                             <span class="md-up-name" title={d.name}>{d.name}</span>
                           {/if}

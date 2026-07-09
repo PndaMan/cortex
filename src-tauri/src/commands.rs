@@ -429,31 +429,26 @@ pub fn list_archived_subjects(state: State<AppState>) -> Result<Vec<Subject>> {
     repo::list_archived_subjects(&c)
 }
 
-/// Open a URL in the system's default browser. Used for "Open in Moodle" and
-/// other external links — a webview `<a target="_blank">` is a no-op in Tauri,
-/// so links must round-trip through the OS opener.
+/// Open a URL in the system's default browser (or matching app). Used for
+/// "Open in Moodle" and other external links — a webview `<a target="_blank">`
+/// is a no-op in Tauri, so links must round-trip through the OS opener. Goes
+/// through tauri-plugin-opener because spawning `xdg-open`/`open` doesn't exist
+/// on iOS/Android (child processes are forbidden there).
 #[tauri::command]
-pub fn open_external(url: String) -> Result<()> {
+pub fn open_external(app: tauri::AppHandle, url: String) -> Result<()> {
     let url = url.trim();
-    // Only allow real web links — never hand arbitrary strings to the shell.
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
+    // Web links plus the Moodle app's deep-link scheme (phones) — never hand
+    // arbitrary strings to the OS opener.
+    if !(url.starts_with("http://")
+        || url.starts_with("https://")
+        || url.starts_with("moodlemobile://"))
+    {
         return Err(Error::Other("refusing to open a non-http(s) URL".into()));
     }
-    use std::process::Command;
-    #[cfg(target_os = "linux")]
-    let cmds: &[&str] = &["xdg-open"];
-    #[cfg(target_os = "macos")]
-    let cmds: &[&str] = &["open"];
-    #[cfg(target_os = "windows")]
-    let cmds: &[&str] = &["explorer"];
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    let cmds: &[&str] = &["xdg-open", "open"];
-    for c in cmds {
-        if Command::new(c).arg(url).spawn().is_ok() {
-            return Ok(());
-        }
-    }
-    Err(Error::Other("couldn't launch a browser".into()))
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| Error::Other(format!("couldn't open the link: {e}")))
 }
 
 // ---- topics ------------------------------------------------------------

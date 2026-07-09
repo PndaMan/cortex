@@ -44,10 +44,21 @@
       : null
   );
   // On a phone, deep-link into the Moodle mobile app (custom scheme) instead of a
-  // browser tab; desktop opens the web URL.
-  function openCourse() {
+  // browser tab; desktop opens the web URL. When the app isn't installed (the
+  // scheme has no handler) fall back to the plain web URL in the browser.
+  async function openCourse() {
     if (!courseUrl) return;
-    api.openExternal(isMobile ? `moodlemobile://link=${encodeURIComponent(courseUrl)}` : courseUrl);
+    try {
+      if (isMobile) {
+        try {
+          await api.openExternal(`moodlemobile://link=${encodeURIComponent(courseUrl)}`);
+          return;
+        } catch { /* no Moodle app — use the browser below */ }
+      }
+      await api.openExternal(courseUrl);
+    } catch (e) {
+      app.pushToast({ kind: "error", title: "Couldn't open Moodle", body: String(e) });
+    }
   }
   const courseGrades = $derived(
     linkedCourseId ? mdData.grades.filter((g) => g.course_id === linkedCourseId) : []

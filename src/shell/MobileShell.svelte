@@ -97,6 +97,8 @@
   // shows the hamburger, not a back chevron) with nothing open, the same swipe OPENS
   // the drawer — so the menu is reachable by gesture, mirroring the back gesture.
   function swipeRight() {
+    if (app.detail) { app.closeDetail(); return; }
+    if (app.notifOpen) { app.notifOpen = false; return; }
     if (app.chatOpen) { app.chatOpen = false; return; }
     if (app.searchOpen) { app.searchOpen = false; return; }
     if (app.subjectPanelOpen) { app.closeSubjectPanel(); return; }

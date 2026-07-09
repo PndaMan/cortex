@@ -124,9 +124,22 @@
     return new Uint8Array(buf);
   }
 
-  /** Swap a silent MediaRecorder for the PCM/WAV engine mid-recording. */
-  function switchToWavCapture() {
-    if (captureMode === "wav" || !audioCtx || !srcNode || !recording) return;
+  /** Kick a suspended/interrupted AudioContext back to "running".
+   *  iOS suspends contexts created outside a direct user gesture (start() creates
+   *  ours after the getUserMedia await) and again on audio-session interruptions
+   *  (calls, Siri) — a suspended context silences the waveform AND the WAV engine. */
+  function ensureAudioRunning() {
+    const ctx = audioCtx;
+    if (ctx && ctx.state !== "running" && ctx.state !== "closed") {
+      ctx.resume().catch(() => { /* retried on the next statechange/visibility tick */ });
+    }
+  }
+
+  /** Swap a silent MediaRecorder for the PCM/WAV engine mid-recording.
+   *  Returns false when the PCM engine couldn't attach either. */
+  function switchToWavCapture(): boolean {
+    if (captureMode === "wav") return true;
+    if (!audioCtx || !srcNode || !recording) return false;
     console.warn("[recorder] MediaRecorder produced no data — switching to WAV capture");
     try {
       if (mediaRecorder && mediaRecorder.state !== "inactive") {
@@ -136,15 +149,22 @@
       }
     } catch { /* noop */ }
     mediaRecorder = null;
+    ensureAudioRunning();
+    try {
+      wavProc = audioCtx.createScriptProcessor(4096, 1, 1);
+      srcNode.connect(wavProc);
+      // The processor only runs while routed to the destination — mute it.
+      const mute = audioCtx.createGain();
+      mute.gain.value = 0;
+      wavProc.connect(mute).connect(audioCtx.destination);
+    } catch (err) {
+      console.warn("[recorder] PCM capture unavailable", err);
+      wavProc = null;
+      return false;
+    }
     captureMode = "wav";
     wavChunks = [];
     wavSegStart = 0;
-    wavProc = audioCtx.createScriptProcessor(4096, 1, 1);
-    srcNode.connect(wavProc);
-    // The processor only runs while routed to the destination — mute it.
-    const mute = audioCtx.createGain();
-    mute.gain.value = 0;
-    wavProc.connect(mute).connect(audioCtx.destination);
     const rate = audioCtx.sampleRate;
     wavProc.onaudioprocess = (e) => {
       if (!recording || paused) return;
@@ -155,6 +175,7 @@
       stopBackendPoll();
       startBackendPoll();
     }
+    return true;
   }
   let recognition: any = null; // SpeechRecognition instance (if supported)
   let recognitionWantsRun = false; // keep-alive flag so onend can restart it
@@ -257,6 +278,7 @@
     if (watchdog) { clearTimeout(watchdog); watchdog = null; }
     if (wavProc) { try { wavProc.disconnect(); } catch { /* noop */ } wavProc = null; }
     stream?.getTracks().forEach((t) => t.stop());
+    if (audioCtx) audioCtx.onstatechange = null;
     audioCtx?.close().catch(() => {});
     stream = null;
     audioCtx = null;
@@ -439,24 +461,39 @@
       errorMsg = "Microphone access was denied or unavailable: " + String(e);
       return;
     }
-    // analyser for the live waveform
-    audioCtx = new AudioContext();
-    srcNode = audioCtx.createMediaStreamSource(stream);
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 256;
-    srcNode.connect(analyser);
+    try {
+      // analyser for the live waveform
+      audioCtx = new AudioContext();
+      srcNode = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      srcNode.connect(analyser);
+    } catch (e) {
+      // No Web Audio graph = no waveform and no WAV fallback, but MediaRecorder
+      // below can still work — keep going with whatever attached.
+      console.warn("[recorder] Web Audio graph unavailable", e);
+    }
+    // iOS: a context created after the getUserMedia await is outside the user
+    // gesture and starts "suspended" — resume it now and after interruptions.
+    ensureAudioRunning();
+    if (audioCtx) audioCtx.onstatechange = () => { if (recording) ensureAudioRunning(); };
 
     chunks = [];
     wavChunks = [];
     captureMode = "media";
-    // Ask for a container WebKitGTK claims to support; an unsupported default
-    // is one way recordings end up empty.
+    // Ask for a container the engine claims to support; an unsupported default
+    // is one way recordings end up empty. (iOS WebKit records audio/mp4 only.)
     const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
       .find((m) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported?.(m));
     try {
       mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
       mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
       mediaRecorder.onstop = () => void finalize();
+      // An async recorder failure (iOS audio-session hiccups) → PCM engine.
+      mediaRecorder.onerror = (e: Event) => {
+        console.warn("[recorder] MediaRecorder error", e);
+        if (recording && !switchToWavCapture()) failStart();
+      };
       mediaRecorder.start(1000);
     } catch (err) {
       console.warn("[recorder] MediaRecorder unavailable", err);
@@ -473,12 +510,19 @@
     whisperMissing = false;
     // Watchdog: if MediaRecorder is silently broken (WebKitGTK), no chunk will
     // have arrived a few seconds in — swap engines without losing the session.
+    // Engines that only deliver data on stop() would false-positive here, so
+    // first poke requestData() and give the flush a moment to land.
     if (mediaRecorder) {
       watchdog = setTimeout(() => {
-        if (recording && chunks.length === 0) switchToWavCapture();
+        if (!recording || chunks.length > 0) return;
+        try { if (mediaRecorder?.state === "recording") mediaRecorder.requestData(); } catch { /* unsupported */ }
+        watchdog = setTimeout(() => {
+          if (recording && chunks.length === 0 && !switchToWavCapture()) failStart();
+        }, 1200);
       }, 3500);
-    } else {
-      switchToWavCapture();
+    } else if (!switchToWavCapture()) {
+      failStart();
+      return;
     }
     // Live transcript alongside the recording when the toggle is on (desktop only —
     // mobile has no live transcript; the saved audio is transcribed by homelab Whisper
@@ -494,6 +538,7 @@
     if (paused) {
       // WAV engine gates on `paused` inside onaudioprocess — nothing to resume.
       if (captureMode === "media") mediaRecorder!.resume();
+      ensureAudioRunning();
       paused = false;
       if (liveTranscriptOn) {
         if (SR) startRecognition();
@@ -527,10 +572,28 @@
     if (recording) tags = [...tags, { at: `${mm}:${ss}` }];
   }
 
+  // Neither capture engine could start: tear the session down and say so,
+  // leaving the "Upload an audio file" fallback in view.
+  function failStart() {
+    cleanupStream();
+    recording = false;
+    paused = false;
+    secs = 0;
+    status = "ready";
+    errorMsg = "Couldn't start recording — the audio engine did not start. Try again, or upload an audio file instead.";
+  }
+
   function stop() {
     if (captureMode === "wav") { void finalize(); return; }
     if (!mediaRecorder) return;
-    mediaRecorder.stop(); // triggers onstop → finalize()
+    // An errored recorder is already "inactive" — stop() would throw and leave
+    // the session stuck, so finalize with whatever chunks arrived.
+    if (mediaRecorder.state === "inactive") { void finalize(); return; }
+    try {
+      mediaRecorder.stop(); // triggers onstop → finalize()
+    } catch {
+      void finalize();
+    }
   }
 
   async function finalize() {
@@ -655,12 +718,23 @@
   }
 
   function cancel() {
-    if (mediaRecorder && recording) { mediaRecorder.onstop = null; mediaRecorder.stop(); }
+    if (mediaRecorder && recording) {
+      mediaRecorder.onstop = null;
+      try { if (mediaRecorder.state !== "inactive") mediaRecorder.stop(); } catch { /* noop */ }
+    }
     cleanupStream();
     recording = false; paused = false; secs = 0; tags = []; status = "ready";
     liveFinal = ""; liveInterim = ""; liveBackendText = ""; whisperMissing = false;
     app.setView("subject");
   }
+
+  // Returning from the background mid-recording (iOS backgrounds the webview and
+  // suspends the audio session) — nudge the context back to running.
+  $effect(() => {
+    function onVis() { if (recording && !document.hidden) ensureAudioRunning(); }
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  });
 
   // keyboard: space toggles start/pause, enter stops, m tags
   $effect(() => {
