@@ -39,7 +39,10 @@ const DEFAULT_VISION_MODEL: &str = "openrouter:google/gemini-2.5-flash";
 /// model, and this matches exactly what the homelab compose pre-pulls
 /// (`WHISPER__MODEL` + the `whisper-init` one-shot), so there's no name mismatch;
 /// the 404→pull→retry path in `transcribe_remote` still covers a cold server.
-const DEFAULT_WHISPER_MODEL: &str = "Systran/faster-whisper-base";
+/// large-v3-turbo: near large-v3 accuracy at ~8× its speed — the difference between
+/// "shockingly bad" base-model transcripts and usable lecture notes. Pulled on
+/// demand by the 404→pull→retry path if the server doesn't have it yet.
+const DEFAULT_WHISPER_MODEL: &str = "deepdml/faster-whisper-large-v3-turbo-ct2";
 
 fn truncate(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
@@ -3395,7 +3398,7 @@ fn transcribe(
     if let Some(bin) = whisper_bin {
         let out = Command::new(&bin)
             .arg(file)
-            .args(["--model", "base", "--language", "en", "--output_format", "txt", "--output_dir"])
+            .args(["--model", "small", "--language", "en", "--output_format", "txt", "--output_dir"])
             .arg(&outdir)
             .output();
         if let Ok(o) = out {
@@ -3483,7 +3486,11 @@ fn transcribe(
                 },
             };
             // argv[1] = audio file, argv[2] = model cache dir (model auto-downloads here)
-            const RUNNER: &str = "import sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('base.en',device='cpu',compute_type='int8',download_root=sys.argv[2])\nsegs,_=m.transcribe(sys.argv[1],language='en')\nprint(' '.join(s.text.strip() for s in segs))";
+            // small.en over base.en (markedly better accuracy, still CPU-realtime),
+            // vad_filter=True so silences are skipped instead of hallucinated, and
+            // condition_on_previous_text=False so one bad segment can't cascade into
+            // the repetition loops that collapsed long lectures into a page of noise.
+            const RUNNER: &str = "import sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('small.en',device='cpu',compute_type='int8',download_root=sys.argv[2])\nsegs,_=m.transcribe(sys.argv[1],language='en',vad_filter=True,condition_on_previous_text=False)\nprint(' '.join(s.text.strip() for s in segs))";
             let out = Command::new(&py).arg("-c").arg(RUNNER).arg(&decodable).arg(&models_dir).output();
             match out {
                 Ok(o) if o.status.success() => {
@@ -3566,6 +3573,12 @@ fn transcribe_remote(base: &str, file: &Path, model: &str) -> std::result::Resul
             .map_err(|e| e.to_string())?;
         let mut form = reqwest::blocking::multipart::Form::new()
             .text("response_format", "text")
+            // Voice-activity detection: skip silent stretches instead of letting
+            // Whisper hallucinate text (or repetition-loop) through them — the main
+            // reason long lectures came back short and garbled. Supported by
+            // faster-whisper/speaches (the homelab server); unknown form fields are
+            // ignored by other OpenAI-compatible servers.
+            .text("vad_filter", "true")
             .part("file", part);
         if !model.is_empty() {
             form = form.text("model", model.to_string());

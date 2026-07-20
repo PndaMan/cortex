@@ -133,6 +133,8 @@
       <path d="M4 7a4 4 0 0 1 8 0c0 3 1 4 1.5 4.5h-11C3 11 4 10 4 7z" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
       <path d="M6.5 13a1.5 1.5 0 0 0 3 0" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
     </g>
+  {:else if name === "heart"}
+    <path d="M8 13.4 C4.6 10.5 2.6 8.6 2.6 6.4 C2.6 4.7 3.9 3.5 5.5 3.5 C6.6 3.5 7.5 4.1 8 5 C8.5 4.1 9.4 3.5 10.5 3.5 C12.1 3.5 13.4 4.7 13.4 6.4 C13.4 8.6 11.4 10.5 8 13.4 Z" fill="none" stroke="currentColor" stroke-width={sw} stroke-linecap="round" stroke-linejoin="round" />
   {:else}
     <!-- fallback: small square -->
     <rect x="5" y="5" width="6" height="6" fill="none" stroke="currentColor" stroke-width={sw} />

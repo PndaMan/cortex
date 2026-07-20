@@ -696,10 +696,14 @@ name = "cortex"
 version = "1.0.25"
 dependencies = [
  "base64 0.22.1",
+ "block2",
  "chacha20poly1305",
  "gdk",
  "gtk",
  "libc",
+ "objc2",
+ "objc2-avf-audio",
+ "objc2-foundation",
  "pdf-extract",
  "percent-encoding",
  "rand_core 0.6.4",
@@ -2571,6 +2575,18 @@ dependencies = [
  "block2",
  "objc2",
  "objc2-core-foundation",
+ "objc2-foundation",
+]
+
+[[package]]
+name = "objc2-avf-audio"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13a380031deed8e99db00065c45937da434ca987c034e13b87e4441f9e4090be"
+dependencies = [
+ "bitflags 2.12.1",
+ "block2",
+ "objc2",
  "objc2-foundation",
 ]
 

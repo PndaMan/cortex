@@ -23,6 +23,7 @@
   import NotificationDetail from "./components/NotificationDetail.svelte";
   import PomodoroPanel from "./components/PomodoroPanel.svelte";
   import LiveActivity from "./components/LiveActivity.svelte";
+  import RecordingActivity from "./components/RecordingActivity.svelte";
   import { keybinds } from "./lib/keybinds.svelte";
   import { isMobile } from "./lib/platform";
   import MobileShell from "./shell/MobileShell.svelte";
@@ -413,6 +414,7 @@
     <NotificationDetail />
     <PomodoroPanel />
     <LiveActivity />
+    <RecordingActivity />
     <ContextMenu />
     <ToastStack />
   </div>

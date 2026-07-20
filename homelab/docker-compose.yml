@@ -62,10 +62,11 @@ services:
     volumes:
       - whisper-models:/home/ubuntu/.cache/huggingface
     environment:
-      # The server's DEFAULT model. Cortex sends NO model field when the user hasn't
-      # picked one, so transcription always uses exactly this — no "model not installed"
-      # errors from a client/server name mismatch. whisper-init pre-pulls it below.
-      - WHISPER__MODEL=Systran/faster-whisper-base
+      # The server's DEFAULT model — matches DEFAULT_WHISPER_MODEL in the app, which
+      # always sends a model field (speaches hard-errors on a missing one). Keeping the
+      # two in sync means no cold-start pull on first transcription; whisper-init
+      # pre-pulls it below. large-v3-turbo ≈ large-v3 accuracy at ~8× the speed.
+      - WHISPER__MODEL=deepdml/faster-whisper-large-v3-turbo-ct2
 
   whisper-init:
     # One-shot: pre-download the default faster-whisper model into the shared cache so
@@ -82,10 +83,10 @@ services:
       - |
         echo "whisper-init: waiting for the whisper server…";
         until curl -sf http://whisper:8000/v1/models >/dev/null 2>&1; do sleep 2; done;
-        echo "whisper-init: pulling Systran/faster-whisper-base…";
+        echo "whisper-init: pulling deepdml/faster-whisper-large-v3-turbo-ct2…";
         curl -s -X POST http://whisper:8000/v1/models \
           -H 'Content-Type: application/json' \
-          -d '{"model":"Systran/faster-whisper-base"}' || true;
+          -d '{"model":"deepdml/faster-whisper-large-v3-turbo-ct2"}' || true;
         echo "whisper-init: done.";
 
   sync:

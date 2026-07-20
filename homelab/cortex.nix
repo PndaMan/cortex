@@ -36,7 +36,7 @@ let
   lanInterface   = "eno2";                   # interface to open hostPort on (LAN)
   hostPort  = 8080;                          # the single published Homelab URL port
   proxyPort = 8088;                          # Caddy's port INSIDE the pod (8080 is SearXNG's)
-  whisperModel = "Systran/faster-whisper-base.en";
+  whisperModel = "deepdml/faster-whisper-large-v3-turbo-ct2";
 
   # In a pod all containers share one netns, so Caddy proxies to localhost. Note
   # the Caddyfile block syntax: `{` must end the line — inline `{ directive }` is

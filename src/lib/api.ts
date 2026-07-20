@@ -425,6 +425,33 @@ export const saveRecording = (
 export const transcribePartial = (audio: number[], ext?: string) =>
   invoke<string>("transcribe_partial", { audio, ext });
 
+// ---- native (iOS) lecture recording ----
+// WKWebView's custom-scheme pages are not a secure context, so getUserMedia is
+// unavailable on iOS — capture runs natively (AVAudioRecorder) behind these
+// commands instead, and keeps recording while the phone is locked.
+export const nativeRecStart = () => invoke<void>("native_rec_start");
+export const nativeRecPause = () => invoke<void>("native_rec_pause");
+export const nativeRecResume = () => invoke<void>("native_rec_resume");
+/** Stop and return the recorded file's path + duration (secs). */
+export const nativeRecStop = () =>
+  invoke<{ path: string; secs: number }>("native_rec_stop");
+export const nativeRecCancel = () => invoke<void>("native_rec_cancel");
+/** Metering sample: input level 0..1 for the waveform + authoritative elapsed
+ * seconds (webview timers freeze while the phone is locked; the recorder's
+ * clock doesn't). */
+export const nativeRecLevel = () =>
+  invoke<{ level: number; secs: number }>("native_rec_level");
+/** Delete a stopped-but-unsaved native recording file. */
+export const nativeRecDiscardFile = (path: string) =>
+  invoke<void>("native_rec_discard", { path });
+/** Save a recording that already lives in a backend file (native capture path). */
+export const saveRecordingPath = (
+  subjectId: string,
+  name: string,
+  path: string,
+  topicId?: string
+) => invoke<IngestResult>("save_recording_path", { subjectId, name, path, topicId });
+
 // ---- settings (bulk) ----
 export const getAllSettings = () => invoke<Record<string, string>>("get_all_settings");
 export const setSettings = (values: Record<string, string>) =>

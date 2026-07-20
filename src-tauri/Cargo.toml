@@ -61,6 +61,19 @@ tauri-plugin-updater = "2"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# iOS-only: native lecture recording (AVAudioRecorder via the objc2 bindings).
+# WKWebView's custom-scheme pages aren't a secure context, so getUserMedia does
+# not exist on iOS — the mic must be captured natively (src/recorder.rs).
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "std", "NSString", "NSURL", "NSDictionary", "NSValue", "NSError", "NSObject",
+] }
+objc2-avf-audio = { version = "0.3", default-features = false, features = [
+  "std", "block2", "AVAudioRecorder", "AVAudioSession", "AVAudioSessionTypes", "AVAudioSettings",
+] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0", features = ["v2_8"] }
 # Used to intercept Ctrl+F at the GTK level (WebKitGTK's native find steals

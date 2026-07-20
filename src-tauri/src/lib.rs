@@ -18,6 +18,7 @@ mod models;
 mod moodle;
 mod mpv;
 mod notes;
+mod recorder;
 mod repo;
 mod review;
 mod sync;
@@ -325,6 +326,14 @@ pub fn run() {
             commands::verify_provider,
             commands::save_recording,
             commands::transcribe_partial,
+            recorder::save_recording_path,
+            recorder::native_rec_discard,
+            recorder::native_rec_start,
+            recorder::native_rec_pause,
+            recorder::native_rec_resume,
+            recorder::native_rec_stop,
+            recorder::native_rec_cancel,
+            recorder::native_rec_level,
             commands::web_search,
             commands::add_memory,
             commands::list_memory,

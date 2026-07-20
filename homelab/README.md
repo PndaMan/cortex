@@ -71,8 +71,10 @@ need to add TLS in front of it.
 
 - **GPU:** swap the Whisper image to `…:latest-cuda` and uncomment the Ollama
   `deploy.resources` block (needs the NVIDIA container toolkit).
-- **Whisper model:** change `WHISPER__MODEL` to a larger model (e.g.
-  `Systran/faster-whisper-large-v3`) for better accuracy at the cost of speed.
+- **Whisper model:** the default is `deepdml/faster-whisper-large-v3-turbo-ct2`
+  (near large-v3 accuracy at ~8× its speed). On a very weak CPU box drop
+  `WHISPER__MODEL` to `Systran/faster-whisper-small`; with a GPU you can afford
+  `Systran/faster-whisper-large-v3` for maximum accuracy.
 - **Pull an Ollama model** after first start:
   `docker exec -it cortex-ollama ollama pull nomic-embed-text` (embeddings) and a
   chat model like `llama3.1`.

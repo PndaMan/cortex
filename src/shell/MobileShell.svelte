@@ -28,6 +28,7 @@
   import DiffModal from "../components/DiffModal.svelte";
   import SourceMetaModal from "../components/SourceMetaModal.svelte";
   import PomodoroPanel from "../components/PomodoroPanel.svelte";
+  import RecordingActivity from "../components/RecordingActivity.svelte";
   // Subject detail / university-portal (Moodle) sheet — self-managed via
   // app.subjectPanelOpen; only mounted by the desktop App.svelte otherwise.
   import SubjectPanel from "../components/SubjectPanel.svelte";
@@ -266,6 +267,7 @@
 <DiffModal />
 <SourceMetaModal />
 <PomodoroPanel />
+<RecordingActivity />
 <SubjectPanel />
 
 <style>

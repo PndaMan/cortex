@@ -1639,9 +1639,23 @@ Notes: {about}</pre>
                 <div class="set-row-t">UI scale</div>
                 <div class="set-row-d">Make everything larger or smaller — helps on high-resolution displays.</div>
               </div>
-              <div class="row-inline">
-                <input class="ui-scale" type="range" min="80" max="150" step="1" value={app.uiScale} oninput={(e) => app.setUiScale(+e.currentTarget.value)} aria-label="UI scale" />
-                <span class="mono" style="min-width:42px;text-align:right">{app.uiScale}%</span>
+              <div class="set-row-r" style="min-width:120px">
+                <!-- Dropdown of presets (was a slider — the UI rescaling live under the
+                     thumb made the slider itself jump around while dragging). -->
+                <Picker
+                  value={String(app.uiScale)}
+                  onChange={(id) => app.setUiScale(+id)}
+                  options={[
+                    ...([80, 90, 100, 110, 125, 150].includes(app.uiScale) ? [] : [{ id: String(app.uiScale), label: `${app.uiScale}% (custom)` }]),
+                    { id: "80", label: "80%" },
+                    { id: "90", label: "90%" },
+                    { id: "100", label: "100% — default" },
+                    { id: "110", label: "110%" },
+                    { id: "125", label: "125%" },
+                    { id: "150", label: "150%" },
+                  ]}
+                  placeholder="100%"
+                />
               </div>
             </div>
           </div>
@@ -1886,8 +1900,8 @@ Notes: {about}</pre>
             {@render diagramsToggle()}
             <div class="set-row stacked">
               <div class="set-row-t">Transcription model <span class="faint">optional</span></div>
-              <input class="input mono" bind:value={whisperModel} onchange={saveWhisperModel} onblur={saveWhisperModel} placeholder="Systran/faster-whisper-base" />
-              <div class="set-row-d">The Whisper model your homelab server (faster-whisper / speaches) can load — reached at <span class="mono">/whisper</span> off the Homelab URL. Leave blank to let the server pick its own.</div>
+              <input class="input mono" bind:value={whisperModel} onchange={saveWhisperModel} onblur={saveWhisperModel} placeholder="deepdml/faster-whisper-large-v3-turbo-ct2" />
+              <div class="set-row-d">The Whisper model your homelab server (faster-whisper / speaches) loads — reached at <span class="mono">/whisper</span> off the Homelab URL. Default is <span class="mono">large-v3-turbo</span> (near large-v3 accuracy, ~8× faster); use <span class="mono">Systran/faster-whisper-small</span> on a weak CPU box.</div>
             </div>
           </div>
         </section>
@@ -2439,6 +2453,17 @@ Notes: {about}</pre>
             <div class="set-row-r">
               <button class="btn" onclick={() => app.checkForUpdates()} disabled={app.updateChecking}>
                 <Icon name="refresh" size={12} /> {app.updateChecking ? "Checking…" : "Check for updates"}
+              </button>
+            </div>
+          </div>
+          <div class="set-row">
+            <div class="set-row-l">
+              <div class="set-row-t">Support Cortex</div>
+              <div class="set-row-d">Cortex is built by one student. If it saves you time, a coffee keeps the updates coming.</div>
+            </div>
+            <div class="set-row-r">
+              <button class="btn" onclick={() => api.openExternal("https://ko-fi.com/aidanmcconnon")}>
+                <Icon name="heart" size={12} color="var(--err)" /> Support me on Ko-fi
               </button>
             </div>
           </div>
