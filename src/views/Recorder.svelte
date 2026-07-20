@@ -145,6 +145,12 @@
         else if (e.key === "Escape") { e.preventDefault(); rec.discardReview(); }
         return;
       }
+      // While the previous take is saving/transcribing, only Esc (leave) works —
+      // space must not start a fresh session over the in-flight one.
+      if (rec.status === "transcribing") {
+        if (e.key === "Escape") leave();
+        return;
+      }
       if (e.key === " ") { e.preventDefault(); rec.recording ? rec.togglePause() : void rec.start(); }
       else if (e.key === "Enter" && rec.recording) { e.preventDefault(); rec.stop(); }
       else if (e.key === "m") { e.preventDefault(); rec.tagMoment(); }

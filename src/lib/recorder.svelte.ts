@@ -129,12 +129,18 @@ class RecorderStore {
   private wavSegStart = 0;
   private watchdog: ReturnType<typeof setTimeout> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
-  private levelTimer: ReturnType<typeof setInterval> | null = null;
+  private meterPollActive = false;
   private recognition: any = null;
   private recognitionWantsRun = false;
   private segRecorder: MediaRecorder | null = null;
   private segChunks: Blob[] = [];
   private segTimer: ReturnType<typeof setTimeout> | null = null;
+  // Consecutive empty partial-transcription results. One empty answer is NOT
+  // proof that no Whisper is installed — with vad_filter on the server, a quiet
+  // opening segment legitimately comes back empty — so only give up (and show
+  // the "needs Whisper" note) after several empties in a row with no text ever.
+  private emptyStreak = 0;
+  private static readonly EMPTY_STREAK_LIMIT = 3;
 
   // ---- derived helpers ----
   get mm(): string { return String(Math.floor(this.secs / 60)).padStart(2, "0"); }
@@ -148,7 +154,9 @@ class RecorderStore {
   // ════════════════════════════ lifecycle ════════════════════════════
 
   async start(): Promise<void> {
-    if (this.recording) return;
+    // No new take while one is live OR while the previous one is still being
+    // saved/transcribed — a fresh session would trample the in-flight state.
+    if (this.recording || this.status === "transcribing") return;
     if (!app.activeSubject) {
       app.pushToast({ kind: "error", title: "Open a subject first", body: "Select a subject before recording." });
       return;
@@ -168,19 +176,29 @@ class RecorderStore {
     }
     this.native = true;
     this.beginSession();
-    // Poll the recorder's metering for the waveform ambience (~8 fps is plenty).
-    // The sample also carries the recorder's own elapsed time — the webview's JS
-    // timers freeze while the phone is locked, so the UI clock resyncs from it.
-    this.levelTimer = setInterval(() => {
-      if (!this.live) return;
-      api.nativeRecLevel()
-        .then((m) => {
+    this.meterPollActive = true;
+    void this.pollNativeMeter();
+  }
+
+  /**
+   * Native metering loop. Self-rescheduling (never stacks a second IPC call on
+   * a slow round-trip) and cadence-aware: ~8 fps while the Recorder view shows
+   * the waveform, a 1 s clock tick anywhere else (only the widget's mm:ss needs
+   * it). The sample also carries the recorder's own elapsed time — webview JS
+   * timers freeze while the phone is locked, so the UI clock resyncs from it.
+   */
+  private async pollNativeMeter(): Promise<void> {
+    while (this.meterPollActive && this.recording) {
+      if (this.live) {
+        try {
+          const m = await api.nativeRecLevel();
           this.nativeLevel = m.level;
           const authoritative = Math.floor(m.secs);
           if (Math.abs(authoritative - this.secs) > 1) this.secs = authoritative;
-        })
-        .catch(() => {});
-    }, 120);
+        } catch { /* transient IPC hiccup — next tick retries */ }
+      }
+      await new Promise((r) => setTimeout(r, app.view === "recorder" ? 120 : 1000));
+    }
   }
 
   private async startWeb(): Promise<void> {
@@ -313,7 +331,7 @@ class RecorderStore {
 
   private endTimers(): void {
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
-    if (this.levelTimer) { clearInterval(this.levelTimer); this.levelTimer = null; }
+    this.meterPollActive = false;
     this.nativeLevel = 0;
   }
 
@@ -335,7 +353,6 @@ class RecorderStore {
     this.recording = false;
     this.paused = false;
     this.endTimers();
-    const dur = `${this.mm}:${this.ss}`;
     let res: { path: string; secs: number };
     try {
       res = await api.nativeRecStop();
@@ -348,6 +365,18 @@ class RecorderStore {
     if (!res.path) {
       this.native = false;
       this.errorMsg = "Nothing was captured — the microphone produced no audio.";
+      this.status = "ready";
+      return;
+    }
+    // Duration from the RECORDER's clock, not this.secs: webview timers freeze
+    // while the phone is locked, so the JS count can lag the real length.
+    const total = Math.max(0, Math.round(res.secs));
+    this.secs = total;
+    const dur = `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+    if (!app.activeSubject) {
+      // Nothing to attach the take to — don't leak the temp file on disk.
+      api.nativeRecDiscardFile(res.path).catch(() => {});
+      this.native = false;
       this.status = "ready";
       return;
     }
@@ -430,9 +459,14 @@ class RecorderStore {
       const res = this.reviewPath
         ? await api.saveRecordingPath(subj.id, name, this.reviewPath, topicId)
         : await api.saveRecording(subj.id, name, this.reviewBytes, topicId, this.reviewExt);
-      await app.refresh();
-      this.status = "done";
+      // The take is committed (and the native temp file consumed) — clear the
+      // review state NOW so a failure in any post-save step can't bounce the
+      // user back to a review whose audio no longer exists.
+      this.reviewBytes = [];
+      this.reviewPath = "";
       this.native = false;
+      // Post-save niceties are best-effort; the recording is already saved.
+      try { await app.refresh(); } catch { /* stale list until next refresh */ }
       if (res.warning) {
         app.pushToast({ kind: "warning", title: "Recording saved", body: res.warning });
       } else {
@@ -442,8 +476,9 @@ class RecorderStore {
           body: `${capturedLabel} · ${res.chunk_count} chunks embedded.`,
         });
       }
-      this.reviewBytes = [];
-      this.reviewPath = "";
+      // Reset to a clean slate — reopening the Recorder should read READY, not
+      // the finished take's leftover clock and tags.
+      this.discardReview();
       app.setView("subject");
       app.setTab("sources");
     } catch (e) {
@@ -530,7 +565,25 @@ class RecorderStore {
     if (SR) return; // SpeechRecognition path is authoritative where available
     this.stopBackendPoll();
     this.whisperMissing = false;
+    this.emptyStreak = 0;
     this.startSegment();
+  }
+
+  /** Fold one partial-transcription answer into the live text / whisper state. */
+  private recordPartialResult(text: string): void {
+    if (text && text.trim()) {
+      this.liveBackendText = (this.liveBackendText ? this.liveBackendText + " " : "") + text.trim();
+      this.whisperMissing = false;
+      this.emptyStreak = 0;
+      return;
+    }
+    if (this.liveBackendText) return; // already transcribing fine — just a quiet stretch
+    this.emptyStreak += 1;
+    if (this.emptyStreak >= RecorderStore.EMPTY_STREAK_LIMIT) {
+      // Several empties in a row and never any text → no Whisper answering. Be honest, stop.
+      this.whisperMissing = true;
+      this.stopBackendPoll();
+    }
   }
 
   private stopBackendPoll(): void {
@@ -587,13 +640,7 @@ class RecorderStore {
     this.liveUpdating = true;
     try {
       const text = await api.transcribePartial(Array.from(encodeWav(seg)), "wav");
-      if (text && text.trim()) {
-        this.liveBackendText = (this.liveBackendText ? this.liveBackendText + " " : "") + text.trim();
-        this.whisperMissing = false;
-      } else if (!this.liveBackendText) {
-        this.whisperMissing = true;
-        this.stopBackendPoll();
-      }
+      this.recordPartialResult(text);
     } catch {
       // Backend hiccup — keep what we have; the next segment will continue.
     } finally {
@@ -616,14 +663,7 @@ class RecorderStore {
       const blob = new Blob(localChunks, { type: localChunks[0]?.type || "audio/webm" });
       const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
       const text = await api.transcribePartial(bytes);
-      if (text && text.trim()) {
-        this.liveBackendText = (this.liveBackendText ? this.liveBackendText + " " : "") + text.trim();
-        this.whisperMissing = false;
-      } else if (!this.liveBackendText) {
-        // First segment came back empty → no Whisper installed. Be honest, stop.
-        this.whisperMissing = true;
-        this.stopBackendPoll();
-      }
+      this.recordPartialResult(text);
     } catch {
       // Backend hiccup — keep what we have; the next segment will continue.
     } finally {

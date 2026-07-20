@@ -1022,9 +1022,6 @@ html[data-hints="off"] .compose-hint, html[data-hints="off"] .diff-keys, html[da
 .set-textarea { resize: vertical; padding: 10px 11px; line-height: 1.5; min-height: 84px; font-family: var(--font-read); font-size: var(--r-sm); }
 .row-inline { display: flex; gap: 8px; }
 .row-inline .input { flex: 1; }
-/* UI-scale range: fill the row, themed accent (track fill + thumb), slim track. step=1
-   in the markup gives smooth dragging; accent-color follows the active theme. */
-.ui-scale { flex: 1; align-self: center; height: 4px; cursor: pointer; accent-color: var(--accent); }
 .row-keytitle { display: inline-flex; align-items: center; gap: 9px; }
 .key-status { font-family: var(--font-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 7px; border-radius: var(--rad-pill); }
 .key-status.ok { color: var(--ok); background: color-mix(in oklab, var(--ok) 12%, transparent); border: 1px solid color-mix(in oklab, var(--ok) 35%, transparent); }

@@ -132,8 +132,10 @@ mod ios {
     }
 
     pub fn start() -> Result<()> {
-        let mut active = ACTIVE.lock().unwrap();
-        if active.is_some() {
+        // Cheap early check WITHOUT holding the lock across the permission wait —
+        // ensure_permission can block for minutes on the system dialog, and any
+        // concurrent native_rec_* call must not hang on the mutex meanwhile.
+        if ACTIVE.lock().unwrap().is_some() {
             return Err(Error::Other("A recording is already running.".into()));
         }
         unsafe {
@@ -189,6 +191,14 @@ mod ios {
                 return Err(Error::Other(
                     "The recorder failed to start — is another app holding the microphone?".into(),
                 ));
+            }
+            // Re-take the lock only for the insert; re-check in case a racing
+            // start() won while we waited on the permission dialog.
+            let mut active = ACTIVE.lock().unwrap();
+            if active.is_some() {
+                rec.stop();
+                let _ = rec.deleteRecording();
+                return Err(Error::Other("A recording is already running.".into()));
             }
             *active = Some(Handle { rec, path });
         }
@@ -268,10 +278,15 @@ fn unsupported<T>() -> Result<T> {
     ))
 }
 
+// async: start blocks waiting for the user to answer the mic-permission dialog
+// (up to two minutes) — a sync command would freeze the webview for the wait,
+// and could deadlock if the permission callback needs the main run loop.
 #[tauri::command]
-pub fn native_rec_start() -> Result<()> {
+pub async fn native_rec_start() -> Result<()> {
     #[cfg(target_os = "ios")]
-    return ios::start();
+    return tauri::async_runtime::spawn_blocking(ios::start)
+        .await
+        .map_err(|e| Error::Other(format!("recorder task failed: {e}")))?;
     #[cfg(not(target_os = "ios"))]
     unsupported()
 }

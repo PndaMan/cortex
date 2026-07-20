@@ -3395,10 +3395,14 @@ fn transcribe(
             .find(|p| p.is_file())
             .map(|p| p.to_string_lossy().into_owned())
     });
+    // Local model tiering: the ~7s live-transcript segments (allow_install=false)
+    // stay on the fast base model so the preview keeps real-time cadence; the
+    // final on-save transcription pays for the markedly more accurate small model.
+    let (cli_model, fw_model) = if allow_install { ("small", "small.en") } else { ("base", "base.en") };
     if let Some(bin) = whisper_bin {
         let out = Command::new(&bin)
             .arg(file)
-            .args(["--model", "small", "--language", "en", "--output_format", "txt", "--output_dir"])
+            .args(["--model", cli_model, "--language", "en", "--output_format", "txt", "--output_dir"])
             .arg(&outdir)
             .output();
         if let Ok(o) = out {
@@ -3486,12 +3490,13 @@ fn transcribe(
                 },
             };
             // argv[1] = audio file, argv[2] = model cache dir (model auto-downloads here)
-            // small.en over base.en (markedly better accuracy, still CPU-realtime),
+            // small.en over base.en for saves (markedly better accuracy, still
+            // CPU-realtime; live partials stay on base.en for cadence),
             // vad_filter=True so silences are skipped instead of hallucinated, and
             // condition_on_previous_text=False so one bad segment can't cascade into
             // the repetition loops that collapsed long lectures into a page of noise.
-            const RUNNER: &str = "import sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('small.en',device='cpu',compute_type='int8',download_root=sys.argv[2])\nsegs,_=m.transcribe(sys.argv[1],language='en',vad_filter=True,condition_on_previous_text=False)\nprint(' '.join(s.text.strip() for s in segs))";
-            let out = Command::new(&py).arg("-c").arg(RUNNER).arg(&decodable).arg(&models_dir).output();
+            let runner = format!("import sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('{fw_model}',device='cpu',compute_type='int8',download_root=sys.argv[2])\nsegs,_=m.transcribe(sys.argv[1],language='en',vad_filter=True,condition_on_previous_text=False)\nprint(' '.join(s.text.strip() for s in segs))");
+            let out = Command::new(&py).arg("-c").arg(&runner).arg(&decodable).arg(&models_dir).output();
             match out {
                 Ok(o) if o.status.success() => {
                     let t = String::from_utf8_lossy(&o.stdout).trim().to_string();
