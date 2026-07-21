@@ -31,15 +31,33 @@ jobs:
     if: github.ref_type == 'tag' || inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
-      - name: Find or create the release
+      - name: Reconcile to exactly one release for the tag
+        # tauri-action attaches to the FIRST release whose tag_name matches —
+        # and drafts list first. A stray duplicate draft therefore swallows
+        # uploads while the published release stays incomplete (v1.0.27 shipped
+        # macOS-only twice this way). So: delete every DRAFT carrying this tag,
+        # keep a published release if one exists, create a fresh draft only when
+        # nothing remains. After this there is exactly ONE possible target.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "release for $TAG already exists — matrix jobs will attach to it"
-          else
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(.draft)\"" > /tmp/rels
+          cat /tmp/rels || true
+          published=0
+          while read -r id draft; do
+            if [ "$draft" = "true" ]; then
+              echo "deleting stray draft release $id for $TAG"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+            else
+              published=1
+            fi
+          done < /tmp/rels
+          if [ "$published" = 1 ]; then
+            echo "published release for $TAG exists — matrix jobs will attach to it"
+          elif [ ! -s /tmp/rels ] || ! grep -q false /tmp/rels; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
               --title "Cortex $TAG" \
               --notes "See the assets below to download and install Cortex for your platform." \
