@@ -425,6 +425,11 @@ export const saveRecording = (
 export const transcribePartial = (audio: number[], ext?: string) =>
   invoke<string>("transcribe_partial", { audio, ext });
 
+// Validate the homelab Whisper setup end to end: server reachable + configured
+// model installed (downloading it on the spot if missing). Resolves to a
+// human-readable status; rejects with what to fix.
+export const checkWhisperModel = () => invoke<string>("check_whisper_model");
+
 // ---- native (iOS) lecture recording ----
 // WKWebView's custom-scheme pages are not a secure context, so getUserMedia is
 // unavailable on iOS — capture runs natively (AVAudioRecorder) behind these

@@ -326,6 +326,7 @@ pub fn run() {
             commands::verify_provider,
             commands::save_recording,
             commands::transcribe_partial,
+            commands::check_whisper_model,
             recorder::save_recording_path,
             recorder::native_rec_discard,
             recorder::native_rec_start,

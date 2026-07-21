@@ -3549,19 +3549,109 @@ fn last_line(s: &str) -> String {
     if line.len() > 240 { format!("{}…", &line[..240]) } else { line.to_string() }
 }
 
+/// Normalize a configured Whisper base to its `/v1` API root. Accepts a bare
+/// base ("http://host:9009"), a "/v1" root, or a full transcriptions endpoint.
+fn whisper_v1_url(base: &str) -> String {
+    let base = base.trim_end_matches('/');
+    if let Some(stripped) = base.strip_suffix("/audio/transcriptions") {
+        stripped.to_string()
+    } else if base.ends_with("/v1") {
+        base.to_string()
+    } else {
+        format!("{base}/v1")
+    }
+}
+
+/// Ask the Whisper server (speaches / faster-whisper-server) to download a model
+/// via `POST /v1/models`. Blocks until the download finishes (large models take
+/// minutes on first pull). Errors carry the server's own reason so a bad model
+/// id / full disk / no-internet homelab is diagnosable from the app.
+fn pull_whisper_model(base: &str, model: &str) -> std::result::Result<(), String> {
+    let models_url = format!("{}/models", whisper_v1_url(base));
+    let resp = http_client(1800)
+        .post(&models_url)
+        .json(&serde_json::json!({ "model": model }))
+        .send()
+        .map_err(|e| format!("the server couldn't be asked to download “{model}” — {e}"))?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+    let code = resp.status();
+    let body = resp.text().unwrap_or_default();
+    Err(format!(
+        "the server couldn't download “{model}” (HTTP {code}: {}). Check that the model id is a \
+         faster-whisper/CTranslate2 model on Hugging Face, and that the server has disk space \
+         and internet access",
+        last_line(&body)
+    ))
+}
+
+/// True when `model` is already installed on the Whisper server (its
+/// `GET /v1/models` lists locally-installed models).
+fn whisper_model_installed(base: &str, model: &str) -> std::result::Result<bool, String> {
+    let models_url = format!("{}/models", whisper_v1_url(base));
+    let resp = http_client(20)
+        .get(&models_url)
+        .send()
+        .map_err(|e| format!("couldn't reach the Whisper server — {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("the Whisper server answered HTTP {}", resp.status()));
+    }
+    let body: serde_json::Value = resp.json().map_err(|e| format!("unreadable model list: {e}"))?;
+    Ok(body["data"]
+        .as_array()
+        .map(|a| a.iter().any(|m| m["id"].as_str() == Some(model)))
+        .unwrap_or(false))
+}
+
+/// Settings → "Test": validate the configured homelab Whisper end to end.
+/// Checks the server is reachable, then that the configured model is actually
+/// installed — and if it isn't, asks the server to DOWNLOAD it right now (the
+/// same speaches `POST /v1/models` the transcribe path uses on a cold 404), so
+/// the first real lecture never pays the multi-minute model pull. Returns a
+/// human-readable status; errors explain what to fix.
+#[tauri::command]
+pub async fn check_whisper_model(app: AppHandle) -> Result<String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String> {
+        let state = app.state::<AppState>();
+        let Some(base) = whisper_remote_url(&state) else {
+            return Ok(
+                "No homelab Whisper server configured — recordings transcribe locally on this machine."
+                    .into(),
+            );
+        };
+        let model = whisper_model(&state);
+        match whisper_model_installed(&base, &model) {
+            Ok(true) => Ok(format!("Ready — “{model}” is installed on the server.")),
+            Ok(false) => {
+                pull_whisper_model(&base, &model).map_err(Error::Other)?;
+                // Confirm rather than assume: some servers 200 the pull request
+                // without actually having the model afterwards.
+                match whisper_model_installed(&base, &model) {
+                    Ok(true) => Ok(format!(
+                        "Downloaded — the server fetched “{model}” and is ready to transcribe."
+                    )),
+                    _ => Ok(format!(
+                        "The server accepted the download request for “{model}” — it should be \
+                         ready shortly."
+                    )),
+                }
+            }
+            Err(e) => Err(Error::Other(format!(
+                "Whisper server check failed: {e}. Check the Homelab URL / whisper service in \
+                 Settings → Integrations."
+            ))),
+        }
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+}
+
 /// Send an audio file to an OpenAI-compatible transcription endpoint
 /// (`{base}/v1/audio/transcriptions`, model `whisper-1`). Returns the text or a
 /// short error. This is how the homelab Whisper service is consumed.
 fn transcribe_remote(base: &str, file: &Path, model: &str) -> std::result::Result<String, String> {
-    let base = base.trim_end_matches('/');
-    // Accept either a bare base ("http://host:9009") or a full endpoint.
-    let url = if base.ends_with("/audio/transcriptions") {
-        base.to_string()
-    } else if base.ends_with("/v1") {
-        format!("{base}/audio/transcriptions")
-    } else {
-        format!("{base}/v1/audio/transcriptions")
-    };
+    let url = format!("{}/audio/transcriptions", whisper_v1_url(base));
     let model = model.trim();
     // Build + send a fresh transcription request. The multipart body consumes the file
     // bytes, so we re-read the file each call — which lets us retry after pulling a model.
@@ -3595,15 +3685,13 @@ fn transcribe_remote(base: &str, file: &Path, model: &str) -> std::result::Resul
     let mut resp = send()?;
     // faster-whisper / speaches answers a missing model with 404 "Model '…' is not
     // installed locally. … POST /v1/models …". Pull it on demand once, then retry, so the
-    // user doesn't have to download models by hand.
+    // user doesn't have to download models by hand. If the PULL ITSELF fails, surface
+    // that as the error — retrying into a second bare 404 told the user nothing about
+    // why their homelab couldn't fetch the model.
     if resp.status() == reqwest::StatusCode::NOT_FOUND && !model.is_empty() {
         let body = resp.text().unwrap_or_default();
         if body.contains("not installed") || body.contains("/v1/models") {
-            let models_url = format!("{}/models", url.trim_end_matches("/audio/transcriptions"));
-            let _ = http_client(900)
-                .post(&models_url)
-                .json(&serde_json::json!({ "model": model }))
-                .send(); // best-effort download; the retry surfaces any real failure
+            pull_whisper_model(base, model)?;
             resp = send()?;
         } else {
             return Err(format!("HTTP 404: {}", last_line(&body)));

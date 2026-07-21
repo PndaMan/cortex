@@ -358,6 +358,22 @@
     whisperState = "testing";
     whisperState = await testEndpoint(whisperUrl);
   }
+  // End-to-end whisper validation: server reachable AND the configured model
+  // installed — downloading it server-side on the spot when missing, so the
+  // first real lecture never pays the multi-minute cold pull.
+  let whisperCheckState = $state<null | "checking" | "ok" | "fail">(null);
+  let whisperCheckNote = $state("");
+  async function checkWhisper() {
+    whisperCheckState = "checking";
+    whisperCheckNote = "Checking the server (a first-time model download can take a few minutes)…";
+    try {
+      whisperCheckNote = await api.checkWhisperModel();
+      whisperCheckState = "ok";
+    } catch (e) {
+      whisperCheckNote = String(e);
+      whisperCheckState = "fail";
+    }
+  }
 
   // ---- unified homelab access ----
   // One base URL fronts every service (search / whisper / ollama / sync) behind
@@ -1902,6 +1918,14 @@ Notes: {about}</pre>
               <div class="set-row-t">Transcription model <span class="faint">optional</span></div>
               <input class="input mono" bind:value={whisperModel} onchange={saveWhisperModel} onblur={saveWhisperModel} placeholder="deepdml/faster-whisper-large-v3-turbo-ct2" />
               <div class="set-row-d">The Whisper model your homelab server (faster-whisper / speaches) loads — reached at <span class="mono">/whisper</span> off the Homelab URL. Default is <span class="mono">large-v3-turbo</span> (near large-v3 accuracy, ~8× faster); use <span class="mono">Systran/faster-whisper-small</span> on a weak CPU box.</div>
+              <div class="row-inline" style="margin-top:8px">
+                <button class="btn btn--sm" onclick={checkWhisper} disabled={whisperCheckState === "checking"}>
+                  {whisperCheckState === "checking" ? "Checking…" : "Verify model on server"}
+                </button>
+                {#if whisperCheckNote}
+                  <span class="set-row-d" style="color:{whisperCheckState === 'fail' ? 'var(--err)' : 'var(--ok)'}">{whisperCheckNote}</span>
+                {/if}
+              </div>
             </div>
           </div>
         </section>
