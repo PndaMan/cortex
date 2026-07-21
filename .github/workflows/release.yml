@@ -2,12 +2,20 @@ name: Release
 
 # Build signed-less release binaries for macOS, Windows, and Linux whenever a
 # version tag is pushed (e.g. `git tag v1.0.0 && git push --tags`), and attach
-# them to a GitHub Release. Can also be run manually from the Actions tab.
+# them to a GitHub Release. Can also be run manually from the Actions tab —
+# pass a `tag` (e.g. v1.0.26) to cut a FULL release from the chosen ref:
+# tauri-action creates the tag + release itself, and the AUR/Homebrew publish
+# job runs exactly as it would for a pushed tag.
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to cut (e.g. v1.0.26). Empty = throwaway v<run#> draft build, no AUR/Homebrew publish."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -154,8 +162,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', github.run_number) }}
-          releaseName: "Cortex ${{ github.ref_type == 'tag' && github.ref_name || github.run_number }}"
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag || format('v{0}', github.run_number) }}
+          releaseName: "Cortex ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag || github.run_number }}"
           releaseBody: "See the assets below to download and install Cortex for your platform."
           releaseDraft: true
           prerelease: false
@@ -167,7 +175,8 @@ jobs:
   # PKGBUILD (AUR) and Cask (tap) — zero manual checksum edits per release.
   publish-packages:
     needs: release
-    if: github.ref_type == 'tag'
+    # Tag pushes AND manual dispatches that name a real tag both publish.
+    if: github.ref_type == 'tag' || inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -176,8 +185,9 @@ jobs:
         id: meta
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
-          TAG="${GITHUB_REF_NAME}"; VER="${TAG#v}"
+          TAG="${RELEASE_TAG}"; VER="${TAG#v}"
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
           mkdir -p dl
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -D dl \
