@@ -21,7 +21,37 @@ permissions:
   contents: write
 
 jobs:
+  # Create the release ONCE before the matrix. Four parallel tauri-action jobs
+  # otherwise race to find-or-create the draft for the tag and can create
+  # DUPLICATES — assets then split across two releases and the published one
+  # ships incomplete (observed on v1.0.27: macOS assets on the published
+  # release, Linux+Windows stranded on an orphan draft).
+  prepare:
+    name: Ensure a single release exists
+    if: github.ref_type == 'tag' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find or create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release for $TAG already exists — matrix jobs will attach to it"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+              --title "Cortex $TAG" \
+              --notes "See the assets below to download and install Cortex for your platform." \
+              --target "$GITHUB_SHA"
+            echo "created single draft release for $TAG"
+          fi
+
   release:
+    # Run after prepare (or when prepare is skipped — a throwaway dispatch
+    # without a tag), but never when prepare actually failed.
+    needs: prepare
+    if: ${{ !failure() && !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -187,11 +217,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
+          set -euo pipefail
           TAG="${RELEASE_TAG}"; VER="${TAG#v}"
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
           mkdir -p dl
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -D dl \
             -p "Cortex_${VER}_amd64.deb" -p "Cortex_${VER}_aarch64.dmg" -p "Cortex_${VER}_x64.dmg"
+          # Fail LOUD on an incomplete release — an absent asset previously slid
+          # through as an EMPTY sha256, which the AUR then rejected mid-push.
+          for f in "dl/Cortex_${VER}_amd64.deb" "dl/Cortex_${VER}_aarch64.dmg" "dl/Cortex_${VER}_x64.dmg"; do
+            [ -s "$f" ] || { echo "::error::missing release asset: $f — the $TAG release is incomplete (matrix upload lost?)"; exit 1; }
+          done
           {
             echo "ver=$VER"
             echo "deb=$(sha256sum dl/Cortex_${VER}_amd64.deb | cut -d' ' -f1)"
