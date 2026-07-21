@@ -255,6 +255,31 @@ mod tests {
         // A non-service key with no value still resolves to None.
         assert_eq!(super::resolved_setting(&c, "moodle_url"), None);
     }
+
+    #[test]
+    fn homelab_token_rides_derived_urls_but_never_sync_or_overrides() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        repo::set_setting(&c, "homelab_base", "http://10.0.0.5:8080").unwrap();
+        repo::set_setting(&c, "homelab_token", "sekrit").unwrap();
+
+        // Base-derived service URLs carry the token as Basic credentials.
+        assert_eq!(
+            super::resolved_setting(&c, "whisper_url").as_deref(),
+            Some("http://cortex:sekrit@10.0.0.5:8080/whisper")
+        );
+        // /sync has its own WebDAV credentials — never the homelab token.
+        assert_eq!(
+            super::resolved_setting(&c, "sync_url").as_deref(),
+            Some("http://10.0.0.5:8080/sync")
+        );
+        // Explicit per-service overrides may point off-homelab — no token.
+        repo::set_setting(&c, "ollama_url", "http://192.168.1.9:11434").unwrap();
+        assert_eq!(
+            super::resolved_setting(&c, "ollama_url").as_deref(),
+            Some("http://192.168.1.9:11434")
+        );
+    }
 }
 
 /// Read a settings URL key and resolve it through the homelab fallback chain.
@@ -294,8 +319,44 @@ pub fn resolved_setting(conn: &Connection, key: &str) -> Option<String> {
             });
         if let Some(base) = base {
             let resolved = resolve(base.trim().trim_end_matches('/'), ts.as_deref(), pubb.as_deref());
-            return Some(format!("{resolved}{path}"));
+            return Some(inject_token(conn, key, format!("{resolved}{path}")));
         }
     }
     None
+}
+
+/// Attach the homelab access token to a homelab-DERIVED service URL as URL
+/// credentials (`cortex:<token>@host`) — reqwest turns userinfo into an
+/// `Authorization: Basic` header on every request, so one injection point here
+/// authenticates whisper/searxng/ollama/ingest calls with no per-call changes.
+/// The Caddy proxy enforces the matching `basic_auth` when CORTEX_TOKEN is set
+/// (see homelab/Caddyfile), which is what makes a PUBLIC homelab URL safe.
+///
+/// Deliberately NOT applied to:
+///  • `sync_url` — the WebDAV target has its own username/password (two Basic
+///    credentials can't coexist), so the proxy exempts /sync from token auth;
+///  • explicit per-service override URLs — those may point at non-homelab hosts
+///    (e.g. a cloud endpoint) that must never see the homelab token.
+fn inject_token(conn: &Connection, key: &str, url: String) -> String {
+    if key == "sync_url" {
+        return url;
+    }
+    let Some(token) = repo::get_setting(conn, "homelab_token")
+        .ok()
+        .flatten()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+    else {
+        return url;
+    };
+    let Ok(mut u) = reqwest::Url::parse(&url) else {
+        return url;
+    };
+    if !u.username().is_empty() || u.password().is_some() {
+        return url; // the user already put credentials in the URL — respect them
+    }
+    if u.set_username("cortex").is_err() || u.set_password(Some(&token)).is_err() {
+        return url;
+    }
+    u.to_string()
 }

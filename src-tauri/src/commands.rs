@@ -795,8 +795,8 @@ pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult>
         } else if src.kind == "audio" {
             if let Some(p) = input.path.as_deref() {
                 emit_progress(&app, &id, "parsing", "transcribing audio (Whisper)", 35);
-                let remote = whisper_remote_url(&state);
-                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref(), &whisper_model(&state));
+                let remote = whisper_remote(&state);
+                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_ref(), &whisper_model(&state));
                 if !t.trim().is_empty() {
                     text = t;
                     warning = w;
@@ -1032,8 +1032,8 @@ pub async fn add_source(
         } else if kind == "audio" {
             if let Some(p) = input.path.as_deref() {
                 emit_progress(&app, &source_id, "parsing", "transcribing audio (Whisper)", 35);
-                let remote = whisper_remote_url(&state);
-                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref(), &whisper_model(&state));
+                let remote = whisper_remote(&state);
+                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_ref(), &whisper_model(&state));
                 if t.trim().is_empty() { (text, w.or(warning)) } else { (t, w) }
             } else {
                 (text, warning)
@@ -3079,11 +3079,61 @@ pub fn set_settings(state: State<AppState>, values: std::collections::HashMap<St
 /// Transcribe an audio file with a local Whisper CLI if one is installed
 /// (openai-whisper `whisper`, or whisper.cpp `whisper-cli`/`main`). Returns
 /// `(transcript, warning)`. A missing binary is a graceful warning, not an error.
-/// The configured homelab Whisper base URL, if any (empty → None).
-fn whisper_remote_url(state: &AppState) -> Option<String> {
-    let c = state.db.lock().ok()?;
-    // Resolve through the homelab fallback chain (local → Tailscale → public).
-    crate::homelab::resolved_setting(&c, "whisper_url")
+/// Where remote transcription goes, resolved from the user's transcription MODE
+/// (Settings → Integrations → Transcription):
+///  • "local"    → None (always transcribe on this machine, even with a homelab set)
+///  • "cloud"    → an OpenAI-compatible cloud endpoint (Groq/OpenAI/custom) with a
+///                 bearer API key; no on-demand model pulls (cloud servers host
+///                 their models already)
+///  • "homelab" / unset (legacy auto) → the homelab whisper service via the
+///                 local→Tailscale→public fallback chain; the homelab access token
+///                 rides the URL (see homelab::inject_token), pulls allowed
+pub struct RemoteWhisper {
+    pub url: String,
+    pub api_key: Option<String>,
+    /// Whether the server supports speaches' POST /v1/models on-demand download.
+    pub allow_pull: bool,
+}
+
+/// Default cloud endpoint/model: Groq's free-tier whisper-large-v3-turbo.
+const DEFAULT_CLOUD_WHISPER_URL: &str = "https://api.groq.com/openai/v1";
+const DEFAULT_CLOUD_WHISPER_MODEL: &str = "whisper-large-v3-turbo";
+
+fn transcription_mode(state: &AppState) -> String {
+    state
+        .db
+        .lock()
+        .ok()
+        .and_then(|c| crate::repo::get_setting(&c, "transcription_mode").ok().flatten())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+fn whisper_remote(state: &AppState) -> Option<RemoteWhisper> {
+    match transcription_mode(state).as_str() {
+        "local" => None,
+        "cloud" => {
+            let c = state.db.lock().ok()?;
+            let url = crate::repo::get_setting(&c, "whisper_cloud_url")
+                .ok()
+                .flatten()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| DEFAULT_CLOUD_WHISPER_URL.to_string());
+            let api_key = crate::repo::get_setting(&c, "whisper_api_key")
+                .ok()
+                .flatten()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            Some(RemoteWhisper { url, api_key, allow_pull: false })
+        }
+        _ => {
+            let c = state.db.lock().ok()?;
+            // Resolve through the homelab fallback chain (local → Tailscale → public).
+            crate::homelab::resolved_setting(&c, "whisper_url")
+                .map(|url| RemoteWhisper { url, api_key: None, allow_pull: true })
+        }
+    }
 }
 
 /// Model name sent to the remote (OpenAI-compatible) Whisper endpoint. A homelab
@@ -3091,8 +3141,20 @@ fn whisper_remote_url(state: &AppState) -> Option<String> {
 /// OpenAI's "whisper-1" — so this is configurable (Settings → Integrations). When the
 /// user hasn't picked one we fall back to `DEFAULT_WHISPER_MODEL` (the model the
 /// homelab compose pre-pulls): speaches requires the `model` field, so we must always
-/// send one — omitting it is the HTTP 422 "Field required" error.
+/// send one — omitting it is the HTTP 422 "Field required" error. Cloud mode has its
+/// own model setting (cloud providers use their own ids, e.g. Groq's
+/// "whisper-large-v3-turbo" or OpenAI's "whisper-1").
 fn whisper_model(state: &AppState) -> String {
+    if transcription_mode(state) == "cloud" {
+        return state
+            .db
+            .lock()
+            .ok()
+            .and_then(|c| crate::repo::get_setting(&c, "whisper_cloud_model").ok().flatten())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| DEFAULT_CLOUD_WHISPER_MODEL.to_string());
+    }
     state
         .db
         .lock()
@@ -3347,17 +3409,17 @@ fn transcribe(
     file: &Path,
     data_dir: &Path,
     allow_install: bool,
-    remote_url: Option<&str>,
+    remote: Option<&RemoteWhisper>,
     remote_model: &str,
 ) -> (String, Option<String>) {
     use std::process::Command;
     let outdir = std::env::temp_dir().join(format!("cortex-asr-{}", crate::db::new_id()));
     let _ = std::fs::create_dir_all(&outdir);
 
-    // 0. Remote homelab Whisper (OpenAI-compatible /v1/audio/transcriptions).
+    // 0. Remote Whisper (homelab or cloud; OpenAI-compatible /v1/audio/transcriptions).
     //    Tried first when configured so users never need a local Python toolchain.
-    if let Some(base) = remote_url.map(str::trim).filter(|s| !s.is_empty()) {
-        match transcribe_remote(base, file, remote_model) {
+    if let Some(rw) = remote.filter(|rw| !rw.url.trim().is_empty()) {
+        match transcribe_remote(rw, file, remote_model) {
             Ok(t) => {
                 let _ = std::fs::remove_dir_all(&outdir);
                 return (t, None); // empty = ran but recognised nothing
@@ -3369,9 +3431,10 @@ fn transcribe(
                 return (
                     String::new(),
                     Some(format!(
-                        "Couldn't reach your homelab Whisper server at {base} — {e}. \
-                         Check Settings → Integrations → Remote transcription, or clear it to \
-                         transcribe on this machine."
+                        "Couldn't transcribe via your Whisper server at {} — {e}. \
+                         Check Settings → Integrations → Transcription, or switch it to \
+                         “This computer” to transcribe locally.",
+                        display_url(&rw.url)
                     )),
                 );
             }
@@ -3549,6 +3612,19 @@ fn last_line(s: &str) -> String {
     if line.len() > 240 { format!("{}…", &line[..240]) } else { line.to_string() }
 }
 
+/// A URL safe for error messages / logs: credentials (the homelab access token
+/// rides service URLs as userinfo) are stripped, never displayed.
+fn display_url(url: &str) -> String {
+    match reqwest::Url::parse(url) {
+        Ok(mut u) => {
+            let _ = u.set_username("");
+            let _ = u.set_password(None);
+            u.to_string().trim_end_matches('/').to_string()
+        }
+        Err(_) => url.to_string(),
+    }
+}
+
 /// Normalize a configured Whisper base to its `/v1` API root. Accepts a bare
 /// base ("http://host:9009"), a "/v1" root, or a full transcriptions endpoint.
 fn whisper_v1_url(base: &str) -> String {
@@ -3587,11 +3663,15 @@ fn pull_whisper_model(base: &str, model: &str) -> std::result::Result<(), String
 }
 
 /// True when `model` is already installed on the Whisper server (its
-/// `GET /v1/models` lists locally-installed models).
-fn whisper_model_installed(base: &str, model: &str) -> std::result::Result<bool, String> {
+/// `GET /v1/models` lists locally-installed models). Cloud endpoints list their
+/// hosted models on the same route (bearer-authenticated).
+fn whisper_model_installed(base: &str, api_key: Option<&str>, model: &str) -> std::result::Result<bool, String> {
     let models_url = format!("{}/models", whisper_v1_url(base));
-    let resp = http_client(20)
-        .get(&models_url)
+    let mut req = http_client(20).get(&models_url);
+    if let Some(key) = api_key {
+        req = req.bearer_auth(key);
+    }
+    let resp = req
         .send()
         .map_err(|e| format!("couldn't reach the Whisper server — {e}"))?;
     if !resp.status().is_success() {
@@ -3614,20 +3694,23 @@ fn whisper_model_installed(base: &str, model: &str) -> std::result::Result<bool,
 pub async fn check_whisper_model(app: AppHandle) -> Result<String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String> {
         let state = app.state::<AppState>();
-        let Some(base) = whisper_remote_url(&state) else {
-            return Ok(
-                "No homelab Whisper server configured — recordings transcribe locally on this machine."
-                    .into(),
-            );
+        let mode = transcription_mode(&state);
+        let Some(rw) = whisper_remote(&state) else {
+            return Ok(if mode == "local" {
+                "Transcription runs on this computer — nothing to verify.".into()
+            } else {
+                "No Whisper server configured — recordings transcribe locally on this machine."
+                    .into()
+            });
         };
         let model = whisper_model(&state);
-        match whisper_model_installed(&base, &model) {
-            Ok(true) => Ok(format!("Ready — “{model}” is installed on the server.")),
-            Ok(false) => {
-                pull_whisper_model(&base, &model).map_err(Error::Other)?;
+        match whisper_model_installed(&rw.url, rw.api_key.as_deref(), &model) {
+            Ok(true) => Ok(format!("Ready — “{model}” is available on the server.")),
+            Ok(false) if rw.allow_pull => {
+                pull_whisper_model(&rw.url, &model).map_err(Error::Other)?;
                 // Confirm rather than assume: some servers 200 the pull request
                 // without actually having the model afterwards.
-                match whisper_model_installed(&base, &model) {
+                match whisper_model_installed(&rw.url, rw.api_key.as_deref(), &model) {
                     Ok(true) => Ok(format!(
                         "Downloaded — the server fetched “{model}” and is ready to transcribe."
                     )),
@@ -3637,9 +3720,20 @@ pub async fn check_whisper_model(app: AppHandle) -> Result<String> {
                     )),
                 }
             }
+            // Cloud: the key worked (we could list models) but the id isn't there —
+            // that's a model-name problem, not an auth problem. Say so precisely.
+            Ok(false) => Ok(format!(
+                "Your API key works, but the provider doesn't list “{model}”. Double-check the \
+                 model id for this provider (Groq: whisper-large-v3-turbo · OpenAI: whisper-1)."
+            )),
             Err(e) => Err(Error::Other(format!(
-                "Whisper server check failed: {e}. Check the Homelab URL / whisper service in \
-                 Settings → Integrations."
+                "Whisper check failed: {e}.{}",
+                if mode == "cloud" {
+                    " Check the endpoint URL and API key in Settings → Integrations → Transcription."
+                } else {
+                    " Check the Homelab URL / whisper service (and access token, if set) in \
+                     Settings → Integrations."
+                }
             ))),
         }
     })
@@ -3650,8 +3744,8 @@ pub async fn check_whisper_model(app: AppHandle) -> Result<String> {
 /// Send an audio file to an OpenAI-compatible transcription endpoint
 /// (`{base}/v1/audio/transcriptions`, model `whisper-1`). Returns the text or a
 /// short error. This is how the homelab Whisper service is consumed.
-fn transcribe_remote(base: &str, file: &Path, model: &str) -> std::result::Result<String, String> {
-    let url = format!("{}/audio/transcriptions", whisper_v1_url(base));
+fn transcribe_remote(rw: &RemoteWhisper, file: &Path, model: &str) -> std::result::Result<String, String> {
+    let url = format!("{}/audio/transcriptions", whisper_v1_url(&rw.url));
     let model = model.trim();
     // Build + send a fresh transcription request. The multipart body consumes the file
     // bytes, so we re-read the file each call — which lets us retry after pulling a model.
@@ -3678,8 +3772,14 @@ fn transcribe_remote(base: &str, file: &Path, model: &str) -> std::result::Resul
         if !model.is_empty() {
             form = form.text("model", model.to_string());
         }
-        // Transcription is slow; allow a generous timeout.
-        http_client(600).post(&url).multipart(form).send().map_err(|e| e.to_string())
+        // Transcription is slow; allow a generous timeout. Cloud endpoints
+        // (Groq/OpenAI) authenticate with a bearer key; the homelab token rides
+        // the URL itself as Basic credentials.
+        let mut req = http_client(600).post(&url).multipart(form);
+        if let Some(key) = rw.api_key.as_deref() {
+            req = req.bearer_auth(key);
+        }
+        req.send().map_err(|e| e.to_string())
     };
 
     let mut resp = send()?;
@@ -3687,11 +3787,12 @@ fn transcribe_remote(base: &str, file: &Path, model: &str) -> std::result::Resul
     // installed locally. … POST /v1/models …". Pull it on demand once, then retry, so the
     // user doesn't have to download models by hand. If the PULL ITSELF fails, surface
     // that as the error — retrying into a second bare 404 told the user nothing about
-    // why their homelab couldn't fetch the model.
-    if resp.status() == reqwest::StatusCode::NOT_FOUND && !model.is_empty() {
+    // why their homelab couldn't fetch the model. Cloud servers (allow_pull=false)
+    // host their models already — a 404 there is just an error.
+    if resp.status() == reqwest::StatusCode::NOT_FOUND && !model.is_empty() && rw.allow_pull {
         let body = resp.text().unwrap_or_default();
         if body.contains("not installed") || body.contains("/v1/models") {
-            pull_whisper_model(base, model)?;
+            pull_whisper_model(&rw.url, model)?;
             resp = send()?;
         } else {
             return Err(format!("HTTP 404: {}", last_line(&body)));
@@ -3817,8 +3918,8 @@ pub async fn transcribe_partial(app: AppHandle, audio: Vec<u8>, ext: Option<Stri
     let file = dir.join(format!("partial-{}.{ext}", crate::db::new_id()));
     std::fs::write(&file, &audio)?;
 
-    let remote = whisper_remote_url(&app.state::<AppState>());
-    let (transcript, _warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), false, remote.as_deref(), &whisper_model(&app.state::<AppState>()));
+    let remote = whisper_remote(&app.state::<AppState>());
+    let (transcript, _warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), false, remote.as_ref(), &whisper_model(&app.state::<AppState>()));
     let _ = std::fs::remove_file(&file);
     Ok(transcript)
     })
@@ -3868,8 +3969,8 @@ pub async fn save_recording(
     emit_progress(&app, &source_id, "parsing", "transcribing audio", 25);
 
     // 3. transcribe (homelab Whisper if configured, else local)
-    let remote = whisper_remote_url(&state);
-    let (transcript, warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_deref(), &whisper_model(&state));
+    let remote = whisper_remote(&state);
+    let (transcript, warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_ref(), &whisper_model(&state));
 
     if transcript.trim().is_empty() {
         let c = state.db.lock().unwrap();

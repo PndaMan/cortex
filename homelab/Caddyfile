@@ -7,6 +7,17 @@
 # e.g. http://<host>:8080  (or your Tailscale / public HTTPS URL).
 
 :8080 {
+	# ── Optional access token ─────────────────────────────────────────────
+	# Set CORTEX_TOKEN on the proxy container (docker-compose.yml) and the
+	# entrypoint writes a basic_auth snippet into /etc/caddy/auth.d/ that this
+	# import picks up: every service then requires the token (user "cortex"),
+	# which Cortex sends automatically once you paste the same token into
+	# Settings → Integrations → Homelab → Access token. /sync is exempt — the
+	# WebDAV container enforces its own username/password. WITHOUT a token, a
+	# PUBLIC homelab URL leaves whisper/ollama/searxng/ingest open to anyone —
+	# never expose this proxy to the internet with CORTEX_TOKEN unset.
+	import auth.d/*
+
 	handle_path /searxng/* {
 		reverse_proxy searxng:8080
 	}

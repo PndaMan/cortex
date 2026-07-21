@@ -37,12 +37,30 @@ let
   hostPort  = 8080;                          # the single published Homelab URL port
   proxyPort = 8088;                          # Caddy's port INSIDE the pod (8080 is SearXNG's)
   whisperModel = "deepdml/faster-whisper-large-v3-turbo-ct2";
+  # OPTIONAL access token: bcrypt hash of the token every request (except /sync,
+  # which has its own WebDAV credentials) must present as Basic auth user
+  # "cortex". Generate with `caddy hash-password --plaintext 'your-token'` (or
+  # `docker run --rm caddy:2-alpine caddy hash-password --plaintext 'your-token'`)
+  # and paste the SAME plaintext token into Cortex → Settings → Integrations →
+  # Homelab → Access token. REQUIRED before exposing the proxy on a public URL —
+  # unauthenticated whisper/ollama/searxng/ingest on the open internet means
+  # anyone can burn your compute. Empty string = auth disabled (LAN/Tailscale
+  # only setups).
+  cortexTokenHash = "";
 
   # In a pod all containers share one netns, so Caddy proxies to localhost. Note
   # the Caddyfile block syntax: `{` must end the line — inline `{ directive }` is
   # rejected by Caddy ("Unexpected next token after '{' on same line").
   caddyfile = pkgs.writeText "cortex-Caddyfile" ''
     :${toString proxyPort} {
+      ${lib.optionalString (cortexTokenHash != "") ''
+      @cortex_protected {
+        not path /sync/*
+      }
+      basic_auth @cortex_protected {
+        cortex ${cortexTokenHash}
+      }
+      ''}
       handle_path /searxng/* {
         reverse_proxy localhost:8080
       }

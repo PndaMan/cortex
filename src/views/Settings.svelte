@@ -375,6 +375,54 @@
     }
   }
 
+  // ---- transcription mode (Settings → Integrations → Transcription) ----
+  // "local" = on this machine (zero setup) · "cloud" = OpenAI-compatible API
+  // with a key (Groq/OpenAI/custom) · "homelab" = the /whisper service behind
+  // the Homelab URL. Unset falls back to the legacy auto behavior (homelab if
+  // configured, else local) — shown as whichever of those applies.
+  let transcriptionMode = $state<"local" | "cloud" | "homelab">("local");
+  let whisperCloudProvider = $state<"groq" | "openai" | "custom">("groq");
+  let whisperCloudUrl = $state("");
+  let whisperCloudModel = $state("");
+  let whisperApiKey = $state("");
+  const CLOUD_WHISPER_PRESETS = {
+    groq: { url: "https://api.groq.com/openai/v1", model: "whisper-large-v3-turbo" },
+    openai: { url: "https://api.openai.com/v1", model: "whisper-1" },
+  } as const;
+  function setTranscriptionMode(m: "local" | "cloud" | "homelab") {
+    transcriptionMode = m;
+    whisperCheckState = null;
+    whisperCheckNote = "";
+    api.setSetting("transcription_mode", m).catch(() => {});
+    // Entering cloud mode with everything blank: land on the Groq preset so the
+    // only thing left to do is paste a key.
+    if (m === "cloud" && !whisperCloudUrl.trim() && !whisperCloudModel.trim()) {
+      applyCloudPreset("groq");
+    }
+  }
+  function applyCloudPreset(p: "groq" | "openai" | "custom") {
+    whisperCloudProvider = p;
+    api.setSetting("whisper_cloud_provider", p).catch(() => {});
+    if (p !== "custom") {
+      whisperCloudUrl = CLOUD_WHISPER_PRESETS[p].url;
+      whisperCloudModel = CLOUD_WHISPER_PRESETS[p].model;
+      saveCloudWhisper();
+    }
+  }
+  function saveCloudWhisper() {
+    api.setSettings({
+      whisper_cloud_url: whisperCloudUrl.trim(),
+      whisper_cloud_model: whisperCloudModel.trim(),
+      whisper_api_key: whisperApiKey.trim(),
+    }).catch(() => {});
+  }
+
+  // ---- homelab access token (auth for every service except /sync) ----
+  let hlToken = $state("");
+  function saveHlToken() {
+    api.setSetting("homelab_token", hlToken.trim()).catch(() => {});
+  }
+
   // ---- unified homelab access ----
   // One base URL fronts every service (search / whisper / ollama / sync) behind
   // a reverse proxy; Cortex appends each service's path. Tailscale/public bases
@@ -967,6 +1015,20 @@
       if (s.searxng_url)                   searxng  = s.searxng_url;
       if (s.whisper_url)                   whisperUrl = s.whisper_url;
       if (s.whisper_model)                 whisperModel = s.whisper_model;
+      // Transcription mode + cloud provider. Unset mode = legacy auto: homelab
+      // when any whisper/homelab URL is configured, otherwise local.
+      if (s.transcription_mode === "local" || s.transcription_mode === "cloud" || s.transcription_mode === "homelab") {
+        transcriptionMode = s.transcription_mode;
+      } else {
+        transcriptionMode =
+          (s.whisper_url || s.homelab_base || s.homelab_tailscale_base || s.homelab_public_base)
+            ? "homelab" : "local";
+      }
+      if (s.whisper_cloud_provider === "groq" || s.whisper_cloud_provider === "openai" || s.whisper_cloud_provider === "custom") whisperCloudProvider = s.whisper_cloud_provider;
+      if (s.whisper_cloud_url)   whisperCloudUrl = s.whisper_cloud_url;
+      if (s.whisper_cloud_model) whisperCloudModel = s.whisper_cloud_model;
+      if (s.whisper_api_key)     whisperApiKey = s.whisper_api_key;
+      if (s.homelab_token)       hlToken = s.homelab_token;
       // Live sync
       if (s.homelab_base)           hlBase = s.homelab_base;
       if (s.homelab_tailscale_base) hlTailscale = s.homelab_tailscale_base;
@@ -1818,9 +1880,85 @@ Notes: {about}</pre>
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">Integrations</div>
-          <h1 class="set-title">Local models, web search & backups</h1>
-          <p class="set-sub">Optional, self-hosted services. Cortex stays fully local without any of them — or run them all with the <span class="mono">homelab/</span> docker compose.</p>
+          <h1 class="set-title">Transcription, search & sync — your way</h1>
+          <p class="set-sub">Everything works out of the box on this computer. Add a cloud API key for heavier lifting, or point Cortex at your own homelab (the <span class="mono">homelab/</span> docker compose) — nothing here is required.</p>
         </header>
+
+        <!-- ═══ TRANSCRIPTION — outcome-first: pick WHERE audio becomes text ═══ -->
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">Transcription</h3>
+            <p class="set-group-d">Where lecture recordings become text.</p>
+          </div>
+          <div class="set-card">
+            <div class="set-row stacked">
+              <div class="seg">
+                <button type="button" class={"seg-opt" + (transcriptionMode === "local" ? " on" : "")} onclick={() => setTranscriptionMode("local")}>This computer</button>
+                <button type="button" class={"seg-opt" + (transcriptionMode === "cloud" ? " on" : "")} onclick={() => setTranscriptionMode("cloud")}>Cloud API</button>
+                <button type="button" class={"seg-opt" + (transcriptionMode === "homelab" ? " on" : "")} onclick={() => setTranscriptionMode("homelab")}>My homelab</button>
+              </div>
+              {#if transcriptionMode === "local"}
+                <div class="set-row-d">Zero setup — Whisper runs on this machine, and the first transcription fetches its model automatically. Most private; slower on long lectures than the other two.</div>
+              {:else if transcriptionMode === "cloud"}
+                <div class="set-row-d">No server, no hosting — just an API key. Groq's free tier turns a whole lecture into text in seconds with <span class="mono">large-v3-turbo</span>.</div>
+              {:else}
+                <div class="set-row-d">Runs on the <span class="mono">/whisper</span> service behind your Homelab URL (configured below). Audio never leaves your machines.</div>
+              {/if}
+            </div>
+
+            {#if transcriptionMode === "cloud"}
+              <div class="set-row stacked">
+                <div class="set-row-t">Provider</div>
+                <div class="seg">
+                  <button type="button" class={"seg-opt" + (whisperCloudProvider === "groq" ? " on" : "")} onclick={() => applyCloudPreset("groq")}>Groq <span class="faint">free</span></button>
+                  <button type="button" class={"seg-opt" + (whisperCloudProvider === "openai" ? " on" : "")} onclick={() => applyCloudPreset("openai")}>OpenAI</button>
+                  <button type="button" class={"seg-opt" + (whisperCloudProvider === "custom" ? " on" : "")} onclick={() => applyCloudPreset("custom")}>Custom</button>
+                </div>
+              </div>
+              {#if whisperCloudProvider === "custom"}
+                <div class="set-row stacked">
+                  <div class="set-row-t">Endpoint URL</div>
+                  <input class="input mono" bind:value={whisperCloudUrl} onchange={saveCloudWhisper} onblur={saveCloudWhisper} placeholder="https://api.example.com/v1" />
+                  <div class="set-row-d">Any OpenAI-compatible <span class="mono">/v1/audio/transcriptions</span> endpoint.</div>
+                </div>
+              {/if}
+              <div class="set-row stacked">
+                <div class="set-row-t">API key</div>
+                <input class="input mono" type="password" bind:value={whisperApiKey} onchange={saveCloudWhisper} onblur={saveCloudWhisper} placeholder={whisperCloudProvider === "openai" ? "sk-…" : "gsk_…"} />
+                {#if whisperCloudProvider === "groq"}
+                  <div class="set-row-d">Get one free — no card needed:
+                    <button class="btn btn--sm btn--ghost" onclick={() => api.openExternal("https://console.groq.com/keys")}><Icon name="external" size={11} /> console.groq.com/keys</button>
+                  </div>
+                {/if}
+              </div>
+              <div class="set-row stacked">
+                <div class="set-row-t">Model</div>
+                <input class="input mono" bind:value={whisperCloudModel} onchange={saveCloudWhisper} onblur={saveCloudWhisper} placeholder="whisper-large-v3-turbo" />
+              </div>
+            {/if}
+
+            {#if transcriptionMode === "homelab"}
+              <div class="set-row stacked">
+                <div class="set-row-t">Model <span class="faint">optional</span></div>
+                <input class="input mono" bind:value={whisperModel} onchange={saveWhisperModel} onblur={saveWhisperModel} placeholder="deepdml/faster-whisper-large-v3-turbo-ct2" />
+                <div class="set-row-d">The model your homelab server (faster-whisper / speaches) loads. Default is <span class="mono">large-v3-turbo</span> (near large-v3 accuracy, ~8× faster); use <span class="mono">Systran/faster-whisper-small</span> on a weak CPU box.</div>
+              </div>
+            {/if}
+
+            {#if transcriptionMode !== "local"}
+              <div class="set-row stacked">
+                <div class="row-inline">
+                  <button class="btn" onclick={checkWhisper} disabled={whisperCheckState === "checking"}>
+                    <Icon name="refresh" size={12} /> {whisperCheckState === "checking" ? "Verifying…" : "Verify setup"}
+                  </button>
+                </div>
+                {#if whisperCheckNote}
+                  <div class="set-row-d" style="color:{whisperCheckState === 'fail' ? 'var(--err,#e5484d)' : whisperCheckState === 'ok' ? 'var(--ok)' : 'var(--fg-muted)'}">{whisperCheckNote}</div>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        </section>
 
         <section class="set-group">
           <div class="set-group-h svc-h">
@@ -1847,6 +1985,14 @@ Notes: {about}</pre>
             <div class="set-row stacked">
               <div class="set-row-t">Public URL <span class="faint">optional</span></div>
               <input class="input mono" bind:value={hlPublic} oninput={saveHomelabBasesSoon} onchange={saveHomelabBases} onblur={saveHomelabBases} placeholder="https://lab.example.com" />
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">Access token <span class="faint">optional — required for a public URL</span></div>
+              <input class="input mono" type="password" bind:value={hlToken} onchange={saveHlToken} onblur={saveHlToken} placeholder="the CORTEX_TOKEN your proxy was started with" />
+              <div class="set-row-d">Locks every homelab service behind a shared secret. Start the proxy with <span class="mono">CORTEX_TOKEN=… docker compose up -d</span> and paste the same value here — Cortex sends it automatically on every request (sync keeps its own WebDAV credentials).</div>
+              {#if hlPublic.trim() && !hlToken.trim()}
+                <div class="set-row-d" style="color:var(--warn)">Your homelab has a public URL but no access token — anyone on the internet can use your Whisper/Ollama/SearXNG. Set <span class="mono">CORTEX_TOKEN</span> on the proxy and paste it here.</div>
+              {/if}
             </div>
             <div class="set-row stacked">
               <div class="row-inline" style="flex-wrap:wrap; gap:8px 12px; align-items:center">
@@ -1914,19 +2060,6 @@ Notes: {about}</pre>
           </div>
           <div class="set-card">
             {@render diagramsToggle()}
-            <div class="set-row stacked">
-              <div class="set-row-t">Transcription model <span class="faint">optional</span></div>
-              <input class="input mono" bind:value={whisperModel} onchange={saveWhisperModel} onblur={saveWhisperModel} placeholder="deepdml/faster-whisper-large-v3-turbo-ct2" />
-              <div class="set-row-d">The Whisper model your homelab server (faster-whisper / speaches) loads — reached at <span class="mono">/whisper</span> off the Homelab URL. Default is <span class="mono">large-v3-turbo</span> (near large-v3 accuracy, ~8× faster); use <span class="mono">Systran/faster-whisper-small</span> on a weak CPU box.</div>
-              <div class="row-inline" style="margin-top:8px">
-                <button class="btn btn--sm" onclick={checkWhisper} disabled={whisperCheckState === "checking"}>
-                  {whisperCheckState === "checking" ? "Checking…" : "Verify model on server"}
-                </button>
-                {#if whisperCheckNote}
-                  <span class="set-row-d" style="color:{whisperCheckState === 'fail' ? 'var(--err)' : 'var(--ok)'}">{whisperCheckNote}</span>
-                {/if}
-              </div>
-            </div>
           </div>
         </section>
         <section class="set-group">

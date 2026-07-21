@@ -67,6 +67,27 @@ lab.example.com { reverse_proxy localhost:8080 }
 The bundled `Caddyfile` already handles the per-service path routing — you only
 need to add TLS in front of it.
 
+## Security — read this before using a public URL
+
+Out of the box the proxy has **no authentication**: fine on a LAN or a
+Tailscale tailnet (both private), dangerous on a public URL — anyone on the
+internet could use your Whisper/Ollama compute, hammer SearXNG, and feed
+files to ingest. (`/sync` is the exception: the WebDAV container enforces its
+own username/password, so the vault itself is always credentialed.)
+
+To expose the homelab publicly, set an access token:
+
+```bash
+CORTEX_TOKEN='some-long-random-string' docker compose up -d
+```
+
+then paste the same token into **Cortex → Settings → Integrations → Homelab →
+Access token**. Every service (except `/sync`) now requires it; Cortex sends
+it automatically on every request. On NixOS set `cortexTokenHash` in
+`cortex.nix` (see the comment there). Also prefer HTTPS for the public URL —
+put the proxy behind your TLS terminator or a Cloudflare tunnel so the token
+never crosses the wire in clear.
+
 ## Notes
 
 - **GPU:** swap the Whisper image to `…:latest-cuda` and uncomment the Ollama

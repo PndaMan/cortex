@@ -24,6 +24,30 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
+    environment:
+      # OPTIONAL access token gating every service except /sync (the WebDAV
+      # container enforces its own username/password). Paste the SAME value into
+      # Cortex → Settings → Integrations → Homelab → Access token. REQUIRED
+      # before exposing this proxy on a public URL — without it, anyone on the
+      # internet can use your whisper/ollama/searxng/ingest.
+      #   CORTEX_TOKEN=some-long-random-string docker compose up -d
+      - CORTEX_TOKEN=${CORTEX_TOKEN:-}
+    # Generate the Caddy basic_auth snippet from CORTEX_TOKEN at startup (the
+    # Caddyfile `import auth.d/*` picks it up), then run Caddy normally.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mkdir -p /etc/caddy/auth.d
+        if [ -n "$$CORTEX_TOKEN" ]; then
+          HASH=$$(caddy hash-password --plaintext "$$CORTEX_TOKEN")
+          printf '@cortex_protected {\n\tnot path /sync/*\n}\nbasic_auth @cortex_protected {\n\tcortex %s\n}\n' "$$HASH" > /etc/caddy/auth.d/token.caddy
+          echo "cortex-proxy: access token ENABLED"
+        else
+          printf '# no CORTEX_TOKEN set - services are unauthenticated\n' > /etc/caddy/auth.d/token.caddy
+          echo "cortex-proxy: access token DISABLED (set CORTEX_TOKEN before exposing this proxy publicly)"
+        fi
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
