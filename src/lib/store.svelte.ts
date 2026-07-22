@@ -589,6 +589,8 @@ class AppStore {
   pomoLiveForce = $state(false); // keep showing the widget even when idle
   onboarding = $state(false);
   metaModal = $state<any | null>(null);
+  /** Live per-source ingest/transcription progress (ingest:progress events). */
+  ingestProgress = $state<Record<string, api.IngestProgress>>({});
   toasts = $state<Toast[]>([]);
   // themed confirm/prompt dialog (replaces native window.confirm / window.prompt)
   dialog = $state<DialogSpec | null>(null);
@@ -639,6 +641,19 @@ class AppStore {
         title: "Lecture summary ready",
         body: "Key points + terms saved to Notes.",
       });
+    });
+    // Background ingestion/transcription progress (the asr queue and add_source
+    // emit these). Keep a live per-source map for the sources list, and refresh
+    // data when a source finishes or fails so lists flip to ready/error without
+    // a manual reload.
+    void api.onIngestProgress((p) => {
+      if (p.stage === "done" || p.stage === "error") {
+        delete this.ingestProgress[p.source_id];
+        this.ingestProgress = { ...this.ingestProgress };
+        void this.refresh();
+      } else {
+        this.ingestProgress = { ...this.ingestProgress, [p.source_id]: p };
+      }
     });
     // Toast on every focus↔break transition.
     this.pomo.onPhaseChange((to) => {

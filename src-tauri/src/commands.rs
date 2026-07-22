@@ -757,6 +757,27 @@ pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult>
             let c = state.db.lock().unwrap();
             repo::get_source(&c, &id)?
         };
+        // Audio re-ingests go through the BACKGROUND transcription queue — the
+        // old inline path kept this invoke (and its "Generating source…" job
+        // card) open for the whole Whisper run, which on a long lecture or a
+        // cold model download looked permanently stuck. Mark it ingesting,
+        // queue it, return: progress streams over ingest:progress and the asr
+        // worker finishes it even if the machine locks meanwhile.
+        if src.kind == "audio" {
+            {
+                let c = state.db.lock().unwrap();
+                repo::finalize_source(
+                    &c, &id, "ingesting", src.meta.as_deref(), src.content.as_deref(), None,
+                )?;
+            }
+            emit_progress(&app, &id, "queued", "queued for transcription", 10);
+            crate::asr::enqueue(&app, id.clone());
+            let source = {
+                let c = state.db.lock().unwrap();
+                repo::get_source(&c, &id)?
+            };
+            return Ok(IngestResult { source, chunk_count: 0, chars: 0, warning: None });
+        }
         // Reconstruct the ingest input from the stored row.
         let mut input = AddSourceInput {
             subject_id: src.subject_id.clone(),
@@ -983,6 +1004,20 @@ pub async fn add_source(
         }
     }
 
+    // Audio: the original is stored — everything else (Whisper wherever
+    // Settings → Transcription points, chunk, embed) runs on the BACKGROUND
+    // transcription queue so this invoke returns immediately instead of
+    // blocking on a potentially very long transcription.
+    if kind == "audio" {
+        emit_progress(&app, &source_id, "queued", "queued for transcription", 10);
+        crate::asr::enqueue(&app, source_id.clone());
+        let source = {
+            let c = state.db.lock().unwrap();
+            repo::get_source(&c, &source_id)?
+        };
+        return Ok(IngestResult { source, chunk_count: 0, chars: 0, warning: None });
+    }
+
     // 2. parse (no lock — may hit network / libreoffice)
     let parse_res = ingest::parse(&kind, &input);
     let (text, warning) = match parse_res {
@@ -1029,16 +1064,9 @@ pub async fn add_source(
                 Ok(_) => (text, warning),
                 Err(e) => (text, Some(format!("OCR failed: {e}"))),
             }
-        } else if kind == "audio" {
-            if let Some(p) = input.path.as_deref() {
-                emit_progress(&app, &source_id, "parsing", "transcribing audio (Whisper)", 35);
-                let remote = whisper_remote(&state);
-                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_ref(), &whisper_model(&state));
-                if t.trim().is_empty() { (text, w.or(warning)) } else { (t, w) }
-            } else {
-                (text, warning)
-            }
         } else {
+            // (audio never reaches here — it early-returns above onto the
+            // background transcription queue)
             (text, warning)
         }
     };
@@ -3927,8 +3955,11 @@ pub async fn transcribe_partial(app: AppHandle, audio: Vec<u8>, ext: Option<Stri
     .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
-/// Save a captured lecture recording: write the audio, create an audio source,
-/// transcribe it, then chunk + embed the transcript like any other source.
+/// Save a captured lecture recording: write the audio, create an audio source
+/// (status `ingesting`), queue it for BACKGROUND transcription and return
+/// immediately — the asr worker transcribes (homelab/cloud/local per Settings →
+/// Transcription), chunks + embeds, then flips the source to `ready` and fires
+/// a notification. The UI never blocks on Whisper again.
 #[tauri::command]
 pub async fn save_recording(
     app: AppHandle,
@@ -3954,78 +3985,146 @@ pub async fn save_recording(
     let file = dir.join(format!("{}.{ext}", crate::db::new_id()));
     std::fs::write(&file, &audio)?;
 
-    // 2. create the source row
-    let source_id = {
+    // 2. create the source row and hand it to the background transcriber
+    let source = {
         let c = state.db.lock().unwrap();
-        repo::insert_source(
+        let source_id = repo::insert_source(
             &c,
             &subject_id,
             topic_id.as_deref(),
             &name,
             "audio",
             file.to_str(),
-        )?
+        )?;
+        if let Some(p) = file.to_str() {
+            repo::set_stored_path(&c, &source_id, p)?;
+        }
+        repo::get_source(&c, &source_id)?
     };
-    emit_progress(&app, &source_id, "parsing", "transcribing audio", 25);
+    emit_progress(&app, &source.id, "queued", "queued for transcription", 10);
+    crate::asr::enqueue(&app, source.id.clone());
+    Ok(IngestResult { source, chunk_count: 0, chars: 0, warning: None })
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+}
 
-    // 3. transcribe (homelab Whisper if configured, else local)
+/// The background transcription job (runs on the asr worker thread): transcribe
+/// the source's stored audio wherever Settings → Transcription points, then
+/// chunk + embed + finalize, streaming `ingest:progress` and notifying on
+/// completion. Any failure lands in the source row (`error`) instead of a
+/// blocked invoke — re-ingest retries it.
+pub(crate) fn run_transcription_job(app: &AppHandle, source_id: &str) {
+    let state = app.state::<AppState>();
+    let src = {
+        let c = match state.db.lock() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        match repo::get_source(&c, source_id) {
+            Ok(s) => s,
+            Err(_) => return, // source deleted while queued — nothing to do
+        }
+    };
+    let fail = |msg: String| {
+        if let Ok(c) = state.db.lock() {
+            let _ = repo::finalize_source(&c, source_id, "error", None, None, Some(&msg));
+        }
+        emit_progress(app, source_id, "error", &msg, 100);
+        notify(app, "Transcription failed", &format!("{} — {msg}", src.name));
+    };
+
+    let Some(path) = src.stored_path.clone().or_else(|| src.origin.clone()) else {
+        fail("the original audio file is missing".into());
+        return;
+    };
+    emit_progress(app, source_id, "parsing", "transcribing audio (Whisper)", 25);
+    let data_dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
     let remote = whisper_remote(&state);
-    let (transcript, warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_ref(), &whisper_model(&state));
+    let (transcript, warning) =
+        transcribe(Path::new(&path), &data_dir, true, remote.as_ref(), &whisper_model(&state));
 
     if transcript.trim().is_empty() {
-        let c = state.db.lock().unwrap();
-        repo::finalize_source(&c, &source_id, "draft", warning.as_deref(), None, warning.as_deref())?;
-        emit_progress(&app, &source_id, "done", "saved (no transcript)", 100);
-        let source = repo::get_source(&c, &source_id)?;
-        return Ok(IngestResult { source, chunk_count: 0, chars: 0, warning });
+        // Ran but produced nothing (or the server errored — `warning` says which).
+        if let Ok(c) = state.db.lock() {
+            let _ = repo::finalize_source(
+                &c, source_id, "draft", warning.as_deref(), None, warning.as_deref(),
+            );
+        }
+        emit_progress(app, source_id, "done", "saved (no transcript)", 100);
+        notify(
+            app,
+            "Recording saved without transcript",
+            warning.as_deref().unwrap_or("Whisper recognised no speech in the audio."),
+        );
+        return;
     }
 
-    // 4. chunk + embed the transcript
-    emit_progress(&app, &source_id, "chunking", "splitting transcript", 55);
+    // chunk + embed the transcript
+    emit_progress(app, source_id, "chunking", "splitting transcript", 55);
     let chunks = ingest::chunk_text(&transcript, 900, 150);
     let (embed_provider, gemini_key, ollama_url) = {
         let c = state.db.lock().unwrap();
         (
             effective_embed_provider(&c),
-            repo::get_setting(&c, "gemini_api_key")?,
+            repo::get_setting(&c, "gemini_api_key").ok().flatten(),
             crate::homelab::resolved_setting(&c, "ollama_url"),
         )
     };
     let embedder = embed::from_settings(&embed_provider, gemini_key.as_deref(), ollama_url.as_deref());
-    emit_progress(&app, &source_id, "embedding", &format!("{} chunks", chunks.len()), 75);
-    let vectors = ingest::embed_chunks(embedder.as_ref(), &chunks)?;
+    emit_progress(app, source_id, "embedding", &format!("{} chunks", chunks.len()), 75);
+    let vectors = match ingest::embed_chunks(embedder.as_ref(), &chunks) {
+        Ok(v) => v,
+        Err(e) => {
+            fail(format!("embedding failed: {e}"));
+            return;
+        }
+    };
 
-    emit_progress(&app, &source_id, "storing", "writing vectors", 90);
-    let chunk_count = {
+    emit_progress(app, source_id, "storing", "writing vectors", 90);
+    let stored = (|| -> Result<i64> {
         let c = state.db.lock().unwrap();
         for (i, (chunk, vec)) in chunks.iter().zip(vectors.iter()).enumerate() {
             repo::insert_chunk(
-                &c, &source_id, &subject_id, topic_id.as_deref(), i as i64, chunk, None,
+                &c, source_id, &src.subject_id, src.topic_id.as_deref(), i as i64, chunk, None,
                 vec.len() as i64, &f32s_to_blob(vec),
             )?;
         }
-        let n = repo::count_chunks(&c, &source_id)?;
+        let n = repo::count_chunks(&c, source_id)?;
         let meta = format!("{n} chunks · transcribed");
-        repo::finalize_source(&c, &source_id, "ready", Some(&meta), Some(&transcript), None)?;
-        n
+        repo::finalize_source(&c, source_id, "ready", Some(&meta), Some(&transcript), None)?;
+        Ok(n)
+    })();
+    let chunk_count = match stored {
+        Ok(n) => n,
+        Err(e) => {
+            fail(format!("storing chunks failed: {e}"));
+            return;
+        }
     };
-    emit_progress(&app, &source_id, "done", "transcribed", 100);
+    emit_progress(app, source_id, "done", "transcribed", 100);
+    notify(
+        app,
+        "Lecture transcribed",
+        &format!("{} is ready — {chunk_count} chunks embedded.", src.name),
+    );
 
-    // 5. auto-summary: distill the lecture into a note in the background so the
-    // user comes back to key points + terms without blocking the save.
-    spawn_lecture_summary(app.clone(), subject_id.clone(), topic_id.clone(), name.clone(), transcript.clone());
+    // auto-summary: distill the lecture into a note in the background so the
+    // user comes back to key points + terms.
+    spawn_lecture_summary(
+        app.clone(),
+        src.subject_id.clone(),
+        src.topic_id.clone(),
+        src.name.clone(),
+        transcript,
+    );
+}
 
-    let c = state.db.lock().unwrap();
-    let source = repo::get_source(&c, &source_id)?;
-    Ok(IngestResult {
-        source,
-        chunk_count,
-        chars: transcript.chars().count() as i64,
-        warning,
-    })
-    })
-    .await
-    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+/// Best-effort desktop/mobile notification (the app may be minimised/locked
+/// while background transcription finishes).
+fn notify(app: &AppHandle, title: &str, body: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app.notification().builder().title(title).body(body).show();
 }
 
 /// Background auto-summary of a transcribed lecture → a note ("Summary — <name>")

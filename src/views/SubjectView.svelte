@@ -397,7 +397,7 @@
                       </div>
                       <div class="stl-name mono">{src.name}</div>
                       {#if src.meta}
-                        <div class="stl-meta mono">{src.meta} · {src.status === "ready" ? "embedded" : src.status === "error" ? "error" : "ingesting…"}</div>
+                        <div class="stl-meta mono">{src.meta} · {src.status === "ready" ? "embedded" : src.status === "error" ? "error" : (app.ingestProgress[src.id]?.detail ?? "ingesting…")}</div>
                       {/if}
                       {#if src.tags && src.tags.length > 0}
                         <div class="stl-tags">

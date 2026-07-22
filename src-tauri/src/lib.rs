@@ -3,6 +3,7 @@
 
 mod analytics;
 mod anki;
+mod asr;
 mod backup;
 mod calendar;
 mod commands;
@@ -123,6 +124,9 @@ pub fn run() {
                             let _ = sync::repoint_source_files(&c, &sources_dir);
                         }
                     }
+                    // Resume transcriptions interrupted by a quit/crash: any audio
+                    // source still `ingesting` goes back on the background queue.
+                    asr::resume_pending(&handle);
                     // Let the frontend's launch sync go first on a normal foreground start.
                     std::thread::sleep(std::time::Duration::from_secs(30));
                     loop {

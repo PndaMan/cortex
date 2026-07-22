@@ -452,11 +452,14 @@ class RecorderStore {
     const topicId = this.reviewTopicId || undefined;
     const capturedLabel = `${this.reviewDuration} ${this.reviewSourceLabel}`;
 
+    // The save itself is quick now — it persists the audio and queues the
+    // transcription on the BACKGROUND worker (homelab/cloud/local per
+    // Settings → Transcription), which keeps running with the app minimised or
+    // the machine locked. No more blocking "transcribing…" screen.
     this.status = "transcribing";
     this.errorMsg = null;
-    const unlisten = await api.onIngestProgress((p) => { this.note = p.detail; });
     try {
-      const res = this.reviewPath
+      this.reviewPath
         ? await api.saveRecordingPath(subj.id, name, this.reviewPath, topicId)
         : await api.saveRecording(subj.id, name, this.reviewBytes, topicId, this.reviewExt);
       // The take is committed (and the native temp file consumed) — clear the
@@ -467,15 +470,11 @@ class RecorderStore {
       this.native = false;
       // Post-save niceties are best-effort; the recording is already saved.
       try { await app.refresh(); } catch { /* stale list until next refresh */ }
-      if (res.warning) {
-        app.pushToast({ kind: "warning", title: "Recording saved", body: res.warning });
-      } else {
-        app.pushToast({
-          kind: "success",
-          title: "Recording transcribed",
-          body: `${capturedLabel} · ${res.chunk_count} chunks embedded.`,
-        });
-      }
+      app.pushToast({
+        kind: "success",
+        title: "Recording saved",
+        body: `${capturedLabel} · transcribing in the background — you'll get a notification when it's ready.`,
+      });
       // Reset to a clean slate — reopening the Recorder should read READY, not
       // the finished take's leftover clock and tags.
       this.discardReview();
@@ -484,8 +483,6 @@ class RecorderStore {
     } catch (e) {
       this.errorMsg = String(e);
       this.status = "review"; // back to review so the user can retry without losing the audio
-    } finally {
-      unlisten();
     }
   }
 

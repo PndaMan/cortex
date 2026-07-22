@@ -1,6 +1,6 @@
 [package]
 name = "cortex"
-version = "1.0.27"
+version = "1.0.28"
 description = "Cortex — desktop study OS"
 authors = ["Aidan McConnon"]
 license = "Apache-2.0"
@@ -60,6 +60,12 @@ tauri-plugin-updater = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Keep the machine awake while background transcription runs (asr.rs):
+# SetThreadExecutionState needs the raw Win32 Power API. macOS/Linux use the
+# caffeinate / systemd-inhibit CLIs instead — no crate needed there.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Power"] }
 
 # iOS-only: native lecture recording (AVAudioRecorder via the objc2 bindings).
 # WKWebView's custom-scheme pages aren't a secure context, so getUserMedia does
