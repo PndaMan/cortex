@@ -1,9 +1,10 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
-  import type { ChunkInfo } from "../lib/api";
+  import type { ChunkInfo, Note } from "../lib/api";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import Icon from "../components/Icon.svelte";
+  import RichText from "../components/RichText.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
   import { isMobile } from "../lib/platform";
   import { tick } from "svelte";
@@ -178,6 +179,26 @@
     app.activeSource?.content ?? (chunks.length ? chunks.map((c) => c.text).join("\n\n") : "")
   );
 
+  // ---- lecture overview note (audio) ----
+  // Transcription auto-saves a markdown summary as a note titled "Summary — {name}"
+  // in the same subject (spawn_lecture_summary). No FK links it to the source, so
+  // it's found by that title convention; a stale-response guard keeps a slow fetch
+  // from landing on a different source.
+  let summaryNote = $state<Note | null>(null);
+  let showTranscript = $state(false);
+  $effect(() => {
+    const s = app.activeSource;
+    summaryNote = null;
+    showTranscript = false;
+    if (!s || s.kind !== "audio") return;
+    api.listNotes(s.subject_id)
+      .then((notes) => {
+        if (app.activeSource?.id !== s.id) return;
+        summaryNote = notes.find((n) => n.title === `Summary — ${s.name}`) ?? null;
+      })
+      .catch(() => {});
+  });
+
   // ---- splitter drag ----
   $effect(() => {
     function onMove(e: MouseEvent) {
@@ -289,18 +310,39 @@
           <img class="sv-img" src={assetUrl} alt={src?.name ?? "image"} />
         </div>
       {:else if isAudio && assetUrl}
-        <!-- Audio player + transcript -->
+        <!-- Audio player + rendered overview note + transcript behind a toggle -->
         <div class="pdf-page" style="width:100%;max-width:560px">
           <audio class="sv-audio" controls src={assetUrl}></audio>
         </div>
         <div class="pdf-page" style="width:100%;max-width:560px">
-          <h3 class="pdf-h">Transcript</h3>
-          {#if transcript}
-            <p class="read pdf-note sv-text">{transcript}</p>
+          <h3 class="pdf-h">Overview</h3>
+          {#if summaryNote}
+            <RichText text={summaryNote.body} />
           {:else}
             <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--fg-muted)">
-              No transcript available yet.
+              No overview yet — a markdown summary is generated automatically after
+              transcription and saved to Notes as “Summary — {src?.name}”.
             </p>
+          {/if}
+        </div>
+        <div class="pdf-page" style="width:100%;max-width:560px">
+          <div class="sv-sec-head">
+            <h3 class="pdf-h">Transcript</h3>
+            <button
+              class="btn btn--sm btn--ghost"
+              onclick={() => (showTranscript = !showTranscript)}
+            >
+              {showTranscript ? "Hide transcript" : "View transcript"}
+            </button>
+          </div>
+          {#if showTranscript}
+            {#if transcript}
+              <p class="read pdf-note sv-text">{transcript}</p>
+            {:else}
+              <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--fg-muted)">
+                No transcript available yet.
+              </p>
+            {/if}
           {/if}
         </div>
       {:else if isText && src?.content}
@@ -400,6 +442,16 @@
   .sv-audio {
     width: 100%;
     display: block;
+  }
+  /* Section header row with an inline action (Transcript · View/Hide button). */
+  .sv-sec-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3, 8px);
+  }
+  .sv-sec-head .pdf-h {
+    margin: 0;
   }
   /* Preserve paragraphs/newlines for readable plaintext and transcripts. */
   .sv-text {
