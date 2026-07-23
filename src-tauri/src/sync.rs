@@ -217,6 +217,21 @@ fn read_cfg_inner(c: &Connection, require_enabled: bool) -> Option<SyncCfg> {
             .map(|u| vec![u.trim_end_matches('/').to_string()])
             .unwrap_or_default();
     }
+    // Desktop keeps explicit per-tier URLs, but the same trap exists there: a sync URL
+    // that just repeats a homelab base is the proxy ROOT, not the WebDAV endpoint —
+    // PUTs land outside /sync/* (silently discarded by the proxy, or 401'd once the
+    // access token is enforced, since /sync is the only token-exempt path). Repoint
+    // such URLs at the base's /sync service; genuinely custom WebDAV roots (no match
+    // with any homelab base) are left untouched.
+    let bases: Vec<String> = ["homelab_base", "homelab_tailscale_base", "homelab_public_base"]
+        .iter()
+        .filter_map(|k| endpoint(c, k))
+        .collect();
+    for url in candidates.iter_mut() {
+        if bases.contains(url) {
+            url.push_str("/sync");
+        }
+    }
     // No explicit sync URL set? Derive it from the unified homelab base (base + /sync),
     // so configuring the single Homelab URL is all that's needed — resolved_setting
     // already does the local→Tailscale→public reachability pick.
@@ -866,6 +881,32 @@ mod tests {
     use super::*;
     use crate::db::{now_ms, AppState};
     use std::fs;
+
+    #[test]
+    fn sync_url_equal_to_a_homelab_base_gets_sync_path_appended() {
+        // A per-tier sync URL that just repeats a homelab base is the proxy root —
+        // read_cfg must repoint it at the base's /sync WebDAV (the token-exempt path),
+        // not PUT cortex.db at the root where the access token 401s it.
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        repo::set_setting(&c, "homelab_tailscale_base", "http://lab.ts.net:8080").unwrap();
+        repo::set_setting(&c, "sync_url_tailscale", "http://lab.ts.net:8080/").unwrap();
+        repo::set_setting(&c, "sync_mode", "tailscale").unwrap();
+        repo::set_setting(&c, "sync_user", "cortex").unwrap();
+        repo::set_setting(&c, "sync_pass", "pw").unwrap();
+        let cfg = read_cfg_manual(&c).expect("cfg");
+        assert_eq!(cfg.url, "http://lab.ts.net:8080/sync");
+
+        // A custom WebDAV root that matches no homelab base is trusted verbatim.
+        repo::set_setting(&c, "sync_url_tailscale", "http://10.0.0.5:5005").unwrap();
+        let cfg = read_cfg_manual(&c).expect("cfg");
+        assert_eq!(cfg.url, "http://10.0.0.5:5005");
+
+        // An already-correct /sync URL is left alone (no double append).
+        repo::set_setting(&c, "sync_url_tailscale", "http://lab.ts.net:8080/sync").unwrap();
+        let cfg = read_cfg_manual(&c).expect("cfg");
+        assert_eq!(cfg.url, "http://lab.ts.net:8080/sync");
+    }
 
     #[test]
     fn syncable_settings_never_include_credentials() {
