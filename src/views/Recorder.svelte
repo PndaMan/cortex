@@ -34,7 +34,7 @@
 
   // ---- subtle animated waveform (Web Audio analyser on desktop, native level
   //      metering on iOS), rAF-driven ----
-  const WAVE_N = 72;
+  const WAVE_N = 48;
   function drawWave(levels: Float32Array | null) {
     const cv = waveCanvas;
     if (!cv) return;
@@ -64,7 +64,21 @@
     }
     const freq = analyser ? new Uint8Array(analyser.frequencyBinCount) : null;
     const levels = new Float32Array(WAVE_N);
-    const band = freq ? Math.max(1, Math.floor(freq.length / WAVE_N)) : 1;
+    // Log-spaced bin edges over the voice band (~100 Hz–8 kHz). A linear mapping
+    // put all of speech's energy (low frequencies) into the left-most bars and drew
+    // ultrasonic silence on the right — the strip looked heavily weighted left.
+    // Log spacing gives each bar a perceptually similar slice, so talking lights
+    // the whole strip. Bars can round onto the same low bin; the max(a+1, b) guard
+    // below keeps every bar at least one bin wide.
+    const edges: number[] = [];
+    if (freq && analyser) {
+      const nyquist = (analyser.context?.sampleRate ?? 48000) / 2;
+      const binHz = nyquist / freq.length;
+      const lo = 100, hi = Math.min(8000, nyquist);
+      for (let i = 0; i <= WAVE_N; i++) {
+        edges.push(Math.min(freq.length - 1, Math.round((lo * (hi / lo) ** (i / WAVE_N)) / binHz)));
+      }
+    }
     let rafId = 0;
     let skip = false;
     function tick() {
@@ -74,10 +88,12 @@
       if (analyser && freq) {
         analyser.getByteFrequencyData(freq);
         for (let i = 0; i < WAVE_N; i++) {
+          const a = edges[i];
+          const b = Math.max(a + 1, edges[i + 1]);
           let s = 0;
-          for (let j = 0; j < band; j++) s += freq[i * band + j] ?? 0;
+          for (let j = a; j < b; j++) s += freq[j] ?? 0;
           // gentle curve so quiet rooms still show a soft baseline, loud peaks don't clip
-          levels[i] = Math.min(1, (s / band / 255) * 1.7 + 0.04);
+          levels[i] = Math.min(1, (s / (b - a) / 255) * 1.7 + 0.04);
         }
       } else {
         // Native engine: one metering level — synthesize a soft symmetric hump.
