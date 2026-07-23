@@ -3800,10 +3800,15 @@ fn transcribe_remote(rw: &RemoteWhisper, file: &Path, model: &str) -> std::resul
         if !model.is_empty() {
             form = form.text("model", model.to_string());
         }
-        // Transcription is slow; allow a generous timeout. Cloud endpoints
-        // (Groq/OpenAI) authenticate with a bearer key; the homelab token rides
-        // the URL itself as Basic credentials.
-        let mut req = http_client(600).post(&url).multipart(form);
+        // Transcription is slow; allow a generous timeout. A homelab server may be
+        // crunching a long lecture on CPU at ~realtime speed — a 33-minute recording
+        // can take half an hour or more — so 10 minutes guaranteed a mid-transcription
+        // timeout ("error sending request") while the server kept working for nothing;
+        // give it hours. Cloud endpoints (Groq/OpenAI) transcribe in seconds and stay
+        // on a tight leash. Cloud endpoints authenticate with a bearer key; the
+        // homelab token rides the URL itself as Basic credentials.
+        let timeout = if rw.allow_pull { 4 * 3600 } else { 600 };
+        let mut req = http_client(timeout).post(&url).multipart(form);
         if let Some(key) = rw.api_key.as_deref() {
             req = req.bearer_auth(key);
         }
