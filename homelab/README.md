@@ -12,7 +12,8 @@ appends the rest.
 |---------|-----------|----------------------|
 | **SearXNG** | `<url>/searxng` | Diagrams/images in cheatsheets + web-enriched chat |
 | **WhisperX** (whisper-asr-webservice) | `<url>/whisper` | Long-form lecture transcription + speaker diarization |
-| **Sync** (WebDAV) | `<url>/sync` | Live sync — auto-store your library, fetch it on launch |
+| **Sync** (WebDAV) | `<url>/sync` | Binary vault (source files/recordings) + snapshot fallback |
+| **Live sync** (syncd) | `<url>/syncd` | Instant cross-device sync — delta log + WebSocket push |
 | **Ingest** (Apache Tika) | `<url>/ingest` | Document → text for **mobile** (PDF/DOCX/PPTX/legacy + OCR of scanned pages) — a phone can't run poppler/libreoffice |
 | **Ollama** *(optional)* | `<url>/ollama` | Local LLM + embeddings, no API key |
 
@@ -113,7 +114,17 @@ never crosses the wire in clear.
   chat model like `llama3.1`.
 - **SearXNG JSON** is pre-enabled in `searxng/settings.yml` — without it Cortex
   gets a 403.
-- **Change the WebDAV `PASSWORD`** in `docker-compose.yml` before exposing sync.
+- **Change the WebDAV `PASSWORD`** in `docker-compose.yml` before exposing sync —
+  in BOTH the `sync` (WebDAV) and `syncd` (live sync) services; they share one
+  credential pair, which is also what you enter in Cortex → Settings → Live sync.
+- **Live sync (`syncd`)** is built from `homelab/syncd/` on first
+  `docker compose up` (a small Rust service; the first build takes a few
+  minutes, cached afterwards). Devices push tiny row-level deltas and receive
+  each other's changes over a WebSocket within ~a second — no manual resync; an
+  offline device replays from its last sequence number when it reconnects.
+  Verify: `curl -su cortex:<password> http://<host>:8080/syncd/seq` →
+  `{"seq":N,"snapshot_seq":M}`. The app falls back to WebDAV snapshot sync
+  automatically wherever `syncd` isn't reachable.
 
 ## Deploying on a homelab host (agent-ready checklist)
 

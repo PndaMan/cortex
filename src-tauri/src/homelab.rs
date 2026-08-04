@@ -212,6 +212,7 @@ fn service_path(key: &str) -> Option<&'static str> {
         "ollama_url" => Some("/ollama"),
         "ingest_url" => Some("/ingest"),
         "sync_url" => Some("/sync"),
+        "syncd_url" => Some("/syncd"),
         _ => None,
     }
 }
@@ -338,7 +339,10 @@ pub fn resolved_setting(conn: &Connection, key: &str) -> Option<String> {
 ///  • explicit per-service override URLs — those may point at non-homelab hosts
 ///    (e.g. a cloud endpoint) that must never see the homelab token.
 fn inject_token(conn: &Connection, key: &str, url: String) -> String {
-    if key == "sync_url" {
+    // Both sync services authenticate with their OWN Basic credentials
+    // (sync_user/sync_pass) — two Basic headers can't coexist, so the homelab
+    // token never rides these URLs; the proxy exempts them from token auth.
+    if key == "sync_url" || key == "syncd_url" {
         return url;
     }
     let Some(token) = repo::get_setting(conn, "homelab_token")

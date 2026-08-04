@@ -31,6 +31,10 @@
 	handle_path /sync/* {
 		reverse_proxy sync:80
 	}
+	handle_path /syncd/* {
+		# Live sync: delta log + WebSocket push (enforces its own Basic auth).
+		reverse_proxy syncd:8787
+	}
 	handle_path /ingest/* {
 		# Apache Tika: document → text (PDF/DOCX/PPTX/legacy + OCR). Cortex mobile
 		# PUTs files to /ingest/tika when a phone can't parse them locally.
@@ -38,6 +42,6 @@
 	}
 	# A bare hit on the base URL is a friendly liveness check.
 	handle / {
-		respond "Cortex homelab is up. Services: /searxng /whisper /ollama /sync /ingest" 200
+		respond "Cortex homelab is up. Services: /searxng /whisper /ollama /sync /syncd /ingest" 200
 	}
 }

@@ -41,7 +41,7 @@ services:
         mkdir -p /etc/caddy/auth.d
         if [ -n "$$CORTEX_TOKEN" ]; then
           HASH=$$(caddy hash-password --plaintext "$$CORTEX_TOKEN")
-          printf '@cortex_protected {\n\tnot path /sync/*\n}\nbasic_auth @cortex_protected {\n\tcortex %s\n}\n' "$$HASH" > /etc/caddy/auth.d/token.caddy
+          printf '@cortex_protected {\n\tnot path /sync/* /syncd/*\n}\nbasic_auth @cortex_protected {\n\tcortex %s\n}\n' "$$HASH" > /etc/caddy/auth.d/token.caddy
           echo "cortex-proxy: access token ENABLED"
         else
           printf '# no CORTEX_TOKEN set - services are unauthenticated\n' > /etc/caddy/auth.d/token.caddy
@@ -110,7 +110,8 @@ services:
       - HF_TOKEN=${HF_TOKEN:-}
 
   sync:
-    # WebDAV target for Cortex live sync (last-write-wins DB snapshot).
+    # WebDAV target for the binary vault (source files/recordings) and as the
+    # snapshot fallback when syncd (below) isn't reachable.
     image: bytemark/webdav:latest
     container_name: cortex-sync
     restart: unless-stopped
@@ -122,6 +123,24 @@ services:
       - PASSWORD=change-me-sync-password
     volumes:
       - sync-data:/var/lib/dav
+
+  syncd:
+    # Cortex LIVE sync: an ordered delta log with WebSocket push. Devices send
+    # only changed rows and every connected device applies them within a second
+    # — edits show up across desktop/phone instantly, no manual resync. Offline
+    # devices replay from their last sequence number on reconnect, so the only
+    # failure mode is "unreachable" and it self-heals. Uses the SAME credentials
+    # as the WebDAV sync container above — keep USERNAME/PASSWORD in step.
+    build: ./syncd
+    container_name: cortex-syncd
+    restart: unless-stopped
+    expose:
+      - "8787"
+    environment:
+      - SYNC_USER=cortex
+      - SYNC_PASSWORD=change-me-sync-password
+    volumes:
+      - syncd-data:/data
 
   ingest:
     # Apache Tika — document parsing for mobile. A phone can't run poppler/
@@ -156,4 +175,5 @@ volumes:
   whisper-models:
   ollama-models:
   sync-data:
+  syncd-data:
   caddy-data:

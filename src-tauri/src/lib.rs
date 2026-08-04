@@ -14,6 +14,7 @@ mod exam;
 mod google;
 mod homelab;
 mod ingest;
+mod livesync;
 mod llm;
 mod models;
 mod moodle;
@@ -101,6 +102,19 @@ pub fn run() {
             }
 
             app.manage(state);
+
+            // LIVE sync: a SQLite update hook flags every local write; the
+            // livesync push worker debounces them into tiny deltas for the
+            // homelab syncd service, and its WebSocket listener applies peers'
+            // deltas within a second. Idles harmlessly when unconfigured.
+            {
+                let state = app.state::<AppState>();
+                let c = state.db.lock().unwrap();
+                c.update_hook(Some(|_action, _db: &str, table: &str, _rowid: i64| {
+                    livesync::mark_dirty(table);
+                }));
+            }
+            livesync::start(&app.handle().clone());
 
             // Background sync + homelab connect. The frontend (store.svelte.ts) only
             // syncs while a window is open and dies when it closes; this dedicated OS

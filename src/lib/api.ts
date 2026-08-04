@@ -195,6 +195,8 @@ export interface SyncStatus {
   enabled: boolean;
   configured: boolean;
   last_at: number; // epoch-ms, 0 = never
+  /** Live-sync WebSocket connected — changes propagate within ~a second. */
+  live: boolean;
 }
 export const syncStatus = () => invoke<SyncStatus>("sync_status");
 export const syncTest = (url: string, user: string, pass: string) =>
@@ -933,3 +935,6 @@ export const onTrayGoDashboard = (cb: () => void): Promise<UnlistenFn> =>
 /** Fired when a background job creates a note (e.g. auto lecture summary). */
 export const onNoteCreated = (cb: () => void): Promise<UnlistenFn> =>
   listen("note:created", () => cb());
+/** Fired after live sync merges peers' changes into the local DB. */
+export const onSyncApplied = (cb: () => void): Promise<UnlistenFn> =>
+  listen("sync:applied", () => cb());

@@ -202,7 +202,8 @@ Under the hood: `CORTEX_DATA_DIR` points the app at a separate folder and
 
 > **One-command homelab backend.** Don't want to set these up by hand? The
 > [`homelab/`](homelab/) folder has a `docker compose` stack that runs SearXNG,
-> a WhisperX transcription server (hour-plus lectures + speaker diarization), and (optionally) Ollama. Bring it up,
+> a WhisperX transcription server (hour-plus lectures + speaker diarization), a live-sync
+> service (instant cross-device deltas over WebSocket), and (optionally) Ollama. Bring it up,
 > expose it over a reverse proxy or VPN (Tailscale / Netbird), and point Cortex
 > at it in **Settings → Integrations**. See [homelab/README.md](homelab/README.md).
 

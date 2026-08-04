@@ -532,6 +532,11 @@
     return ms ? new Date(ms).toLocaleString() : "never";
   }
   function syncPill() {
+    // Live (WebSocket) trumps the periodic states — changes are propagating
+    // across devices within about a second.
+    if (app.syncLive && app.syncState !== "off" && app.syncState !== "error") {
+      return { cls: "ready", label: "Live" };
+    }
     switch (app.syncState) {
       case "syncing": return { cls: "draft", label: "Syncing…" };
       case "synced":  return { cls: "ready", label: "Synced" };

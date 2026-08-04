@@ -1,6 +1,6 @@
 [package]
 name = "cortex"
-version = "1.0.32"
+version = "1.0.33"
 description = "Cortex — desktop study OS"
 authors = ["Aidan McConnon"]
 license = "Apache-2.0"
@@ -30,7 +30,7 @@ sha2 = "0.10"
 rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 # sqlite-vec: statically-linked vector search extension (registered via
 # sqlite3_auto_extension at startup — no runtime .so to load).
 sqlite-vec = "0.1.6"
@@ -47,6 +47,10 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # CLI isn't present (iOS/Android, or a desktop without poppler). Handles text-layer
 # PDFs entirely in-process; scanned PDFs still need OCR (homelab ingest service).
 pdf-extract = "0.10"
+# Live sync: blocking WebSocket client for the homelab syncd push channel.
+# webpki roots (no system cert store needed) so wss:// works identically on
+# desktop and iOS; ring already builds everywhere here (reqwest uses rustls).
+tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 
 # Desktop-only deps. The system tray, single-instance guard and auto-updater don't
 # exist on iOS/Android, so they're gated to desktop targets and the mobile build

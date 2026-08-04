@@ -591,6 +591,8 @@ class AppStore {
   metaModal = $state<any | null>(null);
   /** Live per-source ingest/transcription progress (ingest:progress events). */
   ingestProgress = $state<Record<string, api.IngestProgress>>({});
+  /** Live sync connected (from sync_status.live / first applied event). */
+  syncLive = $state(false);
   toasts = $state<Toast[]>([]);
   // themed confirm/prompt dialog (replaces native window.confirm / window.prompt)
   dialog = $state<DialogSpec | null>(null);
@@ -641,6 +643,11 @@ class AppStore {
         title: "Lecture summary ready",
         body: "Key points + terms saved to Notes.",
       });
+    });
+    // Live sync applied peers' changes — refresh so they show up instantly.
+    void api.onSyncApplied(() => {
+      this.syncLive = true;
+      void this.refresh();
     });
     // Background ingestion/transcription progress (the asr queue and add_source
     // emit these). Keep a live per-source map for the sources list, and refresh
@@ -1015,6 +1022,7 @@ class AppStore {
       const s = await api.syncStatus();
       this.syncState = s.enabled && s.configured ? "idle" : "off";
       this.syncLastAt = s.last_at;
+      this.syncLive = s.live;
       // Sync runs in the BACKGROUND after the window is up — it must never block
       // startup on homelab network I/O. Pull+merge the remote vault, refresh the
       // UI if anything arrived, then push our union + binary files back.

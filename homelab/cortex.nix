@@ -60,7 +60,7 @@ let
     :${toString proxyPort} {
       ${lib.optionalString (cortexTokenHash != "") ''
       @cortex_protected {
-        not path /sync/*
+        not path /sync/* /syncd/*
       }
       basic_auth @cortex_protected {
         cortex ${cortexTokenHash}
@@ -78,18 +78,21 @@ let
       handle_path /sync/* {
         reverse_proxy localhost:80
       }
+      handle_path /syncd/* {
+        reverse_proxy localhost:8787
+      }
       handle_path /ingest/* {
         reverse_proxy localhost:9998
       }
       handle / {
-        respond "Cortex homelab is up. Services: /searxng /whisper /ollama /sync /ingest" 200
+        respond "Cortex homelab is up. Services: /searxng /whisper /ollama /sync /syncd /ingest" 200
       }
     }
   '';
 
   podmanBin = "${config.virtualisation.podman.package}/bin/podman";
   containerNames =
-    [ "cortex-proxy" "cortex-searxng" "cortex-whisper" "cortex-sync" "cortex-ingest" ]
+    [ "cortex-proxy" "cortex-searxng" "cortex-whisper" "cortex-sync" "cortex-syncd" "cortex-ingest" ]
     ++ lib.optional enableOllama "cortex-ollama";
   inPod = [ "--pod=cortex" ];
 in
@@ -104,6 +107,12 @@ in
     AUTH_TYPE=Basic
     USERNAME=cortex
     PASSWORD=${config.sops.placeholder."cortex/sync-password"}
+  '';
+
+  # Same credentials for the live-sync delta service (one pair for both).
+  sops.templates."cortex-syncd.env".content = ''
+    SYNC_USER=cortex
+    SYNC_PASSWORD=${config.sops.placeholder."cortex/sync-password"}
   '';
 
   # SearXNG settings.yml with the secret_key injected. 0444 so the in-container
@@ -139,7 +148,7 @@ in
           "${caddyfile}:/etc/caddy/Caddyfile:ro"
           "cortex-caddy-data:/data"
         ];
-        dependsOn = [ "cortex-searxng" "cortex-whisper" "cortex-sync" "cortex-ingest" ];
+        dependsOn = [ "cortex-searxng" "cortex-whisper" "cortex-sync" "cortex-syncd" "cortex-ingest" ];
         extraOptions = inPod;
       };
 
@@ -170,6 +179,15 @@ in
           # Empty = transcription only, diarization silently skipped.
           HF_TOKEN = hfToken;
         };
+        extraOptions = inPod;
+      };
+
+      cortex-syncd = {
+        # Live sync: delta log + WebSocket push. No published image — build it
+        # once on the host from the repo:  podman build -t cortex-syncd homelab/syncd
+        image = "cortex-syncd";
+        environmentFiles = [ config.sops.templates."cortex-syncd.env".path ];
+        volumes = [ "cortex-syncd-data:/data" ];
         extraOptions = inPod;
       };
 

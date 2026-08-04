@@ -119,7 +119,7 @@ fn unseal_cred(stored: &str, pass: &str) -> Option<String> {
 /// Encrypt (or, with no sync password, blank) every credential value in a snapshot DB
 /// copy about to be uploaded. Operates on the TEMP COPY only — the live DB keeps its
 /// plaintext values so the running app is unaffected.
-fn seal_snapshot_credentials(snapshot: &Path, pass: &str) -> Result<()> {
+pub(crate) fn seal_snapshot_credentials(snapshot: &Path, pass: &str) -> Result<()> {
     let conn = Connection::open(snapshot)?;
     let rows: Vec<(String, String)> = {
         let mut st = conn.prepare("SELECT key, value FROM settings")?;
@@ -146,7 +146,7 @@ pub struct SyncCfg {
     pub pass: String,
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -487,7 +487,7 @@ fn merge_db(local: &Path, remote: &Path) -> Result<()> {
 /// The merge itself, run against an already-open connection (the launch path
 /// uses the *live* DB connection so the merge happens in the background after
 /// the window is shown — never blocking startup on network I/O).
-fn merge_attached(conn: &Connection, remote: &Path) -> Result<()> {
+pub(crate) fn merge_attached(conn: &Connection, remote: &Path) -> Result<()> {
     // Bulk inserts may transiently violate FKs (a child arriving before its
     // parent); we re-enable FK only for the tombstone-apply pass.
     conn.pragma_update(None, "foreign_keys", "OFF")?;
@@ -618,6 +618,9 @@ pub struct SyncStatus {
     pub enabled: bool,
     pub configured: bool,
     pub last_at: i64, // 0 = never
+    /// True while the live-sync WebSocket (homelab syncd) is connected —
+    /// changes propagate across devices within about a second.
+    pub live: bool,
 }
 
 #[tauri::command]
@@ -646,6 +649,7 @@ pub fn sync_status(state: tauri::State<AppState>) -> Result<SyncStatus> {
         enabled,
         configured,
         last_at,
+        live: crate::livesync::CONNECTED.load(std::sync::atomic::Ordering::SeqCst),
     })
 }
 
