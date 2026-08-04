@@ -417,20 +417,21 @@ fn map_source(r: &rusqlite::Row) -> rusqlite::Result<Source> {
         content: r.get(9)?,
         stored_path: r.get(10)?,
         tags: Vec::new(),
+        diarize: r.get::<_, Option<i64>>(13)?.map(|v| v != 0),
         created_at: r.get(11)?,
         updated_at: r.get(12)?,
     })
 }
 
 const SOURCE_COLS: &str =
-    "id, subject_id, topic_id, name, kind, status, meta, origin, error, content, stored_path, created_at, updated_at";
+    "id, subject_id, topic_id, name, kind, status, meta, origin, error, content, stored_path, created_at, updated_at, diarize";
 /// Same columns as `SOURCE_COLS` but with `content` blanked. The subject tree,
 /// sidebar and source lists only render metadata, so loading every source's full
 /// extracted text there is wasted RAM/IO (it scaled with total library text). The
 /// `'' AS content` keeps the column shape identical so `map_source` is shared; the
 /// viewer hydrates real content via `get_source` when a source is actually opened.
 const SOURCE_LIST_COLS: &str =
-    "id, subject_id, topic_id, name, kind, status, meta, origin, error, '' AS content, stored_path, created_at, updated_at";
+    "id, subject_id, topic_id, name, kind, status, meta, origin, error, '' AS content, stored_path, created_at, updated_at, diarize";
 
 pub fn insert_source(
     conn: &Connection,
@@ -466,6 +467,15 @@ pub fn finalize_source(
 }
 
 /// Persist the stable on-disk path to a source's original/rendered bytes.
+/// Persist the per-recording speaker-label choice (NULL = follow app default).
+pub fn set_source_diarize(conn: &Connection, id: &str, diarize: Option<bool>) -> Result<()> {
+    conn.execute(
+        "UPDATE sources SET diarize=?2 WHERE id=?1",
+        params![id, diarize.map(|d| d as i64)],
+    )?;
+    Ok(())
+}
+
 pub fn set_stored_path(conn: &Connection, id: &str, stored_path: &str) -> Result<()> {
     conn.execute(
         "UPDATE sources SET stored_path=?2, updated_at=?3 WHERE id=?1",

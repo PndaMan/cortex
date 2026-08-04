@@ -428,7 +428,8 @@ export const saveRecordingRaw = (
   name: string,
   audio: Uint8Array,
   topicId?: string,
-  ext?: string
+  ext?: string,
+  diarize?: boolean
 ) =>
   invoke<IngestResult>("save_recording_raw", audio, {
     headers: {
@@ -436,6 +437,7 @@ export const saveRecordingRaw = (
       "x-name": encodeURIComponent(name),
       ...(topicId ? { "x-topic-id": encodeURIComponent(topicId) } : {}),
       ...(ext ? { "x-ext": encodeURIComponent(ext) } : {}),
+      ...(diarize !== undefined ? { "x-diarize": String(diarize) } : {}),
     },
   });
 
@@ -473,8 +475,9 @@ export const saveRecordingPath = (
   subjectId: string,
   name: string,
   path: string,
-  topicId?: string
-) => invoke<IngestResult>("save_recording_path", { subjectId, name, path, topicId });
+  topicId?: string,
+  diarize?: boolean
+) => invoke<IngestResult>("save_recording_path", { subjectId, name, path, topicId, diarize });
 
 // ---- settings (bulk) ----
 export const getAllSettings = () => invoke<Record<string, string>>("get_all_settings");

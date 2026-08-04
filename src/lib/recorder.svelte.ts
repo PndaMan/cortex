@@ -106,7 +106,10 @@ class RecorderStore {
   reviewPath = "";      // native (iOS) recordings stay a backend file — no bytes over IPC
   reviewExt = "webm";
   reviewName = $state("");
+  reviewSubjectId = $state("");
   reviewTopicId = $state("");
+  /** Per-recording "multiple people speaking" → speaker labels in the transcript. */
+  reviewDiarize = $state(true);
   reviewDuration = $state("00:00");
   reviewTranscript = $state("");
   reviewSourceLabel = $state("");
@@ -431,10 +434,21 @@ class RecorderStore {
     this.reviewDuration = duration;
     this.reviewSourceLabel = sourceLabel;
     this.reviewTranscript = transcript;
-    // Default to the first topic when the subject has any, otherwise "no topic".
+    // Default home: the active subject (changeable on the save screen) and its
+    // first topic when it has any, otherwise "no topic".
+    this.reviewSubjectId = subj.id;
     this.reviewTopicId = subj.topics[0]?.id ?? "";
+    this.reviewDiarize = true;
     this.errorMsg = null;
     this.status = "review";
+  }
+
+  /** Retarget the pending recording at another subject (save screen). */
+  setReviewSubject(id: string): void {
+    if (id === this.reviewSubjectId) return;
+    this.reviewSubjectId = id;
+    const subj = app.subjects.find((s) => s.id === id);
+    this.reviewTopicId = subj?.topics[0]?.id ?? "";
   }
 
   /** Stash an uploaded audio file and enter review. */
@@ -446,8 +460,8 @@ class RecorderStore {
   }
 
   async confirmSave(): Promise<void> {
-    const subj = app.activeSubject;
-    if (!subj) { this.status = "ready"; return; }
+    const subjId = this.reviewSubjectId || app.activeSubject?.id;
+    if (!subjId) { this.status = "ready"; return; }
     const name = this.reviewName.trim() || "Untitled recording";
     const topicId = this.reviewTopicId || undefined;
     const capturedLabel = `${this.reviewDuration} ${this.reviewSourceLabel}`;
@@ -460,8 +474,8 @@ class RecorderStore {
     this.errorMsg = null;
     try {
       this.reviewPath
-        ? await api.saveRecordingPath(subj.id, name, this.reviewPath, topicId)
-        : await api.saveRecordingRaw(subj.id, name, this.reviewBytes, topicId, this.reviewExt);
+        ? await api.saveRecordingPath(subjId, name, this.reviewPath, topicId, this.reviewDiarize)
+        : await api.saveRecordingRaw(subjId, name, this.reviewBytes, topicId, this.reviewExt, this.reviewDiarize);
       // The take is committed (and the native temp file consumed) — clear the
       // review state NOW so a failure in any post-save step can't bounce the
       // user back to a review whose audio no longer exists.
@@ -478,7 +492,9 @@ class RecorderStore {
       // Reset to a clean slate — reopening the Recorder should read READY, not
       // the finished take's leftover clock and tags.
       this.discardReview();
-      app.setView("subject");
+      // Land on the subject the recording was saved TO (it may differ from the
+      // one that was active when recording started).
+      app.openSubject(subjId);
       app.setTab("sources");
     } catch (e) {
       this.errorMsg = String(e);
@@ -491,6 +507,7 @@ class RecorderStore {
     this.reviewBytes = new Uint8Array(0);
     this.reviewPath = "";
     this.reviewName = "";
+    this.reviewSubjectId = "";
     this.reviewTopicId = "";
     this.reviewTranscript = "";
     this.reviewDuration = "00:00";

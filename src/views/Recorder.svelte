@@ -16,10 +16,14 @@
   // WebKitGTK's software renderer.
   let waveCanvas: HTMLCanvasElement | null = $state(null);
 
-  // Topic options for the review Picker: the active subject's topics + a "no topic" sentinel.
+  // Save-screen pickers: any subject in the library, and the CHOSEN subject's
+  // topics (not just the active one — a lecture can be filed anywhere).
+  const subjectOptions = $derived(
+    app.subjects.map((s) => ({ id: s.id, label: s.code ? `${s.name} · ${s.code}` : s.name })),
+  );
   const topicOptions = $derived([
     { id: "", label: "— no topic —" },
-    ...(app.activeSubject?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),
+    ...(app.subjects.find((s) => s.id === rec.reviewSubjectId)?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),
   ]);
 
   // ---- transcript auto-scroll (anchored to newest text unless the user scrolls up) ----
@@ -205,6 +209,16 @@
         </div>
 
         <div class="field" style:margin-top="16px">
+          <span class="onb-label mono">SUBJECT <span class="faint">which course this lecture belongs to</span></span>
+          <Picker
+            value={rec.reviewSubjectId}
+            onChange={(id) => rec.setReviewSubject(id)}
+            options={subjectOptions}
+            placeholder="Pick a subject"
+          />
+        </div>
+
+        <div class="field" style:margin-top="16px">
           <span class="onb-label mono">TOPIC <span class="faint">where this recording lives</span></span>
           <Picker
             value={rec.reviewTopicId}
@@ -212,6 +226,21 @@
             options={topicOptions}
             placeholder="— no topic —"
           />
+        </div>
+
+        <div class="rev-speakers" style:margin-top="16px">
+          <div class="rev-speakers-l">
+            <span class="onb-label mono">MULTIPLE PEOPLE SPEAKING</span>
+            <span class="rev-speakers-d">Label the transcript by voice — “Speaker 1 / Speaker 2” (homelab WhisperX or a diarizing cloud model).</span>
+          </div>
+          <button
+            type="button"
+            class={"st-toggle" + (rec.reviewDiarize ? " on" : "")}
+            onclick={() => (rec.reviewDiarize = !rec.reviewDiarize)}
+            role="switch"
+            aria-checked={rec.reviewDiarize}
+            aria-label="multiple people speaking"
+          ><span class="st-knob"></span></button>
         </div>
 
         <div class="rev-meta mono faint">
@@ -597,6 +626,15 @@
     border-top: 1px solid var(--border);
   }
   .rev-discard { color: var(--err); }
+  /* "multiple people speaking" row: label block left, switch right */
+  .rev-speakers {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .rev-speakers-l { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .rev-speakers-d { font-size: var(--t-xs); color: var(--fg-muted); line-height: 1.5; }
+  .rev-speakers :global(.st-toggle) { flex: none; margin-left: auto; }
   .rev-hint {
     padding: 0 20px 16px;
     text-align: center;

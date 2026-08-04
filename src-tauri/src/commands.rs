@@ -4177,9 +4177,10 @@ pub async fn save_recording(
     name: String,
     audio: Vec<u8>,
     ext: Option<String>,
+    diarize: Option<bool>,
 ) -> Result<IngestResult> {
     tauri::async_runtime::spawn_blocking(move || -> Result<IngestResult> {
-        save_recording_impl(&app, &subject_id, topic_id.as_deref(), &name, &audio, ext.as_deref())
+        save_recording_impl(&app, &subject_id, topic_id.as_deref(), &name, &audio, ext.as_deref(), diarize)
     })
     .await
     .map_err(|e| Error::Other(format!("background task failed: {e}")))?
@@ -4211,6 +4212,7 @@ pub fn save_recording_raw(app: AppHandle, request: tauri::ipc::Request<'_>) -> R
     let topic_id = header("x-topic-id");
     let name = header("x-name").unwrap_or_else(|| "Untitled recording".into());
     let ext = header("x-ext");
+    let diarize = header("x-diarize").map(|v| v == "true");
     let audio: std::borrow::Cow<'_, [u8]> = match request.body() {
         tauri::ipc::InvokeBody::Raw(bytes) => std::borrow::Cow::Borrowed(bytes.as_slice()),
         // Android fallback: the bytes arrive JSON-encoded after all.
@@ -4219,7 +4221,7 @@ pub fn save_recording_raw(app: AppHandle, request: tauri::ipc::Request<'_>) -> R
                 .map_err(|e| Error::Other(format!("unreadable audio body: {e}")))?,
         ),
     };
-    save_recording_impl(&app, &subject_id, topic_id.as_deref(), &name, &audio, ext.as_deref())
+    save_recording_impl(&app, &subject_id, topic_id.as_deref(), &name, &audio, ext.as_deref(), diarize)
 }
 
 fn save_recording_impl(
@@ -4229,6 +4231,7 @@ fn save_recording_impl(
     name: &str,
     audio: &[u8],
     ext: Option<&str>,
+    diarize: Option<bool>,
 ) -> Result<IngestResult> {
     if audio.is_empty() {
         return Err(Error::Other(
@@ -4259,6 +4262,7 @@ fn save_recording_impl(
         if let Some(p) = file.to_str() {
             repo::set_stored_path(&c, &source_id, p)?;
         }
+        repo::set_source_diarize(&c, &source_id, diarize)?;
         repo::get_source(&c, &source_id)?
     };
     emit_progress(app, &source.id, "queued", "queued for transcription", 10);
@@ -4297,7 +4301,12 @@ pub(crate) fn run_transcription_job(app: &AppHandle, source_id: &str) {
     };
     emit_progress(app, source_id, "parsing", "transcribing audio (Whisper)", 25);
     let data_dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
-    let remote = whisper_remote(&state);
+    let mut remote = whisper_remote(&state);
+    // The save screen's per-recording "multiple people speaking" choice beats
+    // the app default (None = follow it).
+    if let (Some(rw), Some(d)) = (remote.as_mut(), src.diarize) {
+        rw.diarize = d;
+    }
     let (transcript, warning) =
         transcribe(Path::new(&path), &data_dir, true, remote.as_ref(), &whisper_model(&state));
 

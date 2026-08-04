@@ -55,6 +55,8 @@ pub struct Source {
     /// Stable on-disk path to the original (or rendered PDF) for preview.
     pub stored_path: Option<String>,
     pub tags: Vec<String>,
+    /// Per-recording speaker-label choice (None = follow the app default).
+    pub diarize: Option<bool>,
     pub created_at: i64,
     pub updated_at: i64,
 }

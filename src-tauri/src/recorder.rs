@@ -61,6 +61,7 @@ pub async fn save_recording_path(
     topic_id: Option<String>,
     name: String,
     path: String,
+    diarize: Option<bool>,
 ) -> Result<crate::models::IngestResult> {
     let canon = assert_native_rec_path(&path)?;
     let audio = std::fs::read(&canon)?;
@@ -68,7 +69,7 @@ pub async fn save_recording_path(
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_string());
-    let res = crate::commands::save_recording(app, subject_id, topic_id, name, audio, ext).await;
+    let res = crate::commands::save_recording(app, subject_id, topic_id, name, audio, ext, diarize).await;
     if res.is_ok() {
         let _ = std::fs::remove_file(&canon);
     }

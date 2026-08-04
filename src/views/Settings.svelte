@@ -416,14 +416,6 @@
       whisper_api_key: whisperApiKey.trim(),
     }).catch(() => {});
   }
-  // Speaker labels ("Speaker 1: …") — WhisperX diarization on the homelab, or
-  // OpenAI's diarizing model in cloud mode. Safe default ON: servers that can't
-  // diarize just skip it.
-  let whisperDiarize = $state(true);
-  function toggleDiarize() {
-    whisperDiarize = !whisperDiarize;
-    api.setSetting("whisper_diarize", whisperDiarize ? "true" : "false").catch(() => {});
-  }
 
   // ---- homelab access token (auth for every service except /sync) ----
   let hlToken = $state("");
@@ -1036,7 +1028,6 @@
       if (s.whisper_cloud_url)   whisperCloudUrl = s.whisper_cloud_url;
       if (s.whisper_cloud_model) whisperCloudModel = s.whisper_cloud_model;
       if (s.whisper_api_key)     whisperApiKey = s.whisper_api_key;
-      whisperDiarize = s.whisper_diarize !== "false";
       if (s.homelab_token)       hlToken = s.homelab_token;
       // Live sync
       if (s.homelab_base)           hlBase = s.homelab_base;
@@ -1915,23 +1906,6 @@ Notes: {about}</pre>
               {/if}
             </div>
 
-            {#if transcriptionMode !== "local"}
-              <div class="set-row">
-                <div class="set-row-l">
-                  <div class="set-row-t">Speaker labels</div>
-                  <div class="set-row-d">
-                    {#if transcriptionMode === "homelab"}
-                      Splits the transcript into <span class="mono">Speaker 1 / Speaker 2</span> turns. Needs <span class="mono">HF_TOKEN</span> on the homelab whisper service (see <span class="mono">homelab/README.md</span>) — without it, transcription still works and labels are skipped.
-                    {:else}
-                      Needs a diarizing model — set the model to <span class="mono">gpt-4o-transcribe-diarize</span> on OpenAI. Groq transcribes without labels.
-                    {/if}
-                  </div>
-                </div>
-                <div class="set-row-r">
-                  <button type="button" class={"st-toggle" + (whisperDiarize ? " on" : "")} onclick={toggleDiarize} role="switch" aria-checked={whisperDiarize} aria-label="speaker labels"><span class="st-knob"></span></button>
-                </div>
-              </div>
-            {/if}
 
             {#if transcriptionMode === "cloud"}
               <div class="set-row stacked">
