@@ -146,7 +146,11 @@ mod ios {
             // audio and — with UIBackgroundModes:audio — survives lock/background.
             session
                 .setCategory_withOptions_error(
-                    AVAudioSessionCategoryPlayAndRecord,
+                    // The AVFoundation constants are `Option` in objc2 only
+                    // because their headers lack nullability annotations —
+                    // they're linked symbols, always present at runtime.
+                    AVAudioSessionCategoryPlayAndRecord
+                        .expect("AVAudioSessionCategoryPlayAndRecord"),
                     AVAudioSessionCategoryOptions::MixWithOthers
                         | AVAudioSessionCategoryOptions::AllowBluetoothHFP,
                 )
@@ -163,10 +167,10 @@ mod ios {
             // AAC mono @44.1kHz / 64kbps — ~12 MB per 25-min lecture, decodes
             // everywhere (ffmpeg, PyAV, speaches).
             let keys: [&NSString; 4] = [
-                AVFormatIDKey,
-                AVSampleRateKey,
-                AVNumberOfChannelsKey,
-                AVEncoderBitRateKey,
+                AVFormatIDKey.expect("AVFormatIDKey"),
+                AVSampleRateKey.expect("AVSampleRateKey"),
+                AVNumberOfChannelsKey.expect("AVNumberOfChannelsKey"),
+                AVEncoderBitRateKey.expect("AVEncoderBitRateKey"),
             ];
             let format = NSNumber::new_u32(K_AUDIO_FORMAT_MPEG4_AAC);
             let rate = NSNumber::new_f64(44_100.0);
