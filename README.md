@@ -192,7 +192,7 @@ Under the hood: `CORTEX_DATA_DIR` points the app at a separate folder and
 ### Optional integrations (enable the features you want)
 | Feature | Needs | Notes |
 |---|---|---|
-| Lecture transcription | local [`openai-whisper`](https://github.com/openai/whisper) / whisper.cpp / auto `faster-whisper`, **or** a homelab Whisper URL | set the Whisper URL in Settings → Integrations to skip local setup |
+| Lecture transcription | on-device (auto `faster-whisper` / whisper.cpp), a cloud API key (Groq free tier / OpenAI), **or** the homelab [WhisperX](https://github.com/m-bain/whisperX) server (long-form + speaker labels) | pick a mode in Settings → Integrations → Transcription |
 | Web search / images | a self-hosted [SearXNG](https://docs.searxng.org/) with JSON output enabled | set its URL in Settings |
 | Local models | [Ollama](https://ollama.com) (local or homelab) | keyless chat + embeddings |
 | Slide previews (optional) | LibreOffice (`soffice`) | DOCX/PPTX **text ingests natively with no tools**; LibreOffice is only needed for the faithful rendered-PDF preview. On Windows/macOS you don't have to install it — the doc still ingests, just without slide thumbnails. |
@@ -202,7 +202,7 @@ Under the hood: `CORTEX_DATA_DIR` points the app at a separate folder and
 
 > **One-command homelab backend.** Don't want to set these up by hand? The
 > [`homelab/`](homelab/) folder has a `docker compose` stack that runs SearXNG,
-> an OpenAI-compatible Whisper server, and (optionally) Ollama. Bring it up,
+> a WhisperX transcription server (hour-plus lectures + speaker diarization), and (optionally) Ollama. Bring it up,
 > expose it over a reverse proxy or VPN (Tailscale / Netbird), and point Cortex
 > at it in **Settings → Integrations**. See [homelab/README.md](homelab/README.md).
 

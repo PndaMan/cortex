@@ -36,7 +36,12 @@ let
   lanInterface   = "eno2";                   # interface to open hostPort on (LAN)
   hostPort  = 8080;                          # the single published Homelab URL port
   proxyPort = 8088;                          # Caddy's port INSIDE the pod (8080 is SearXNG's)
-  whisperModel = "deepdml/faster-whisper-large-v3-turbo-ct2";
+  # WhisperX model tiers (accuracy ↑ / speed ↓): small → distil-large-v3 →
+  # large-v3. distil-large-v3 ≈ large-v3 accuracy on English at a fraction of
+  # the compute — the right default for a CPU box; use large-v3 on GPU.
+  whisperModel = "distil-large-v3";
+  # Free Hugging Face read token for speaker diarization (see cortex-whisper).
+  hfToken = "";
   # OPTIONAL access token: bcrypt hash of the token every request (except /sync,
   # which has its own WebDAV credentials) must present as Basic auth user
   # "cortex". Generate with `caddy hash-password --plaintext 'your-token'` (or
@@ -65,7 +70,7 @@ let
         reverse_proxy localhost:8080
       }
       handle_path /whisper/* {
-        reverse_proxy localhost:8000
+        reverse_proxy localhost:9000
       }
       handle_path /ollama/* {
         reverse_proxy localhost:11434
@@ -150,10 +155,21 @@ in
       };
 
       cortex-whisper = {
-        # Speaches: OpenAI-compatible ASR. Swap to :latest-cuda on a GPU host.
-        image = "ghcr.io/speaches-ai/speaches:latest-cpu";
-        volumes = [ "cortex-whisper-models:/home/ubuntu/.cache/huggingface" ];
-        environment.WHISPER__MODEL = whisperModel;
+        # WhisperX lecture server (whisper-asr-webservice): long-form VAD-batched
+        # transcription + pyannote speaker diarization. Swap to :latest-gpu and
+        # ASR_DEVICE=cuda on a GPU host.
+        image = "onerahmet/openai-whisper-asr-webservice:latest";
+        volumes = [ "cortex-whisper-models:/root/.cache" ];
+        environment = {
+          ASR_ENGINE = "whisperx";
+          ASR_MODEL = whisperModel;
+          ASR_DEVICE = "cpu";
+          MODEL_IDLE_TIMEOUT = "300";
+          # Speaker labels need a free HF read token AND accepted terms on
+          # hf.co/pyannote/speaker-diarization-3.1 + hf.co/pyannote/segmentation-3.0.
+          # Empty = transcription only, diarization silently skipped.
+          HF_TOKEN = hfToken;
+        };
         extraOptions = inPod;
       };
 

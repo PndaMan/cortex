@@ -3121,6 +3121,9 @@ pub struct RemoteWhisper {
     pub api_key: Option<String>,
     /// Whether the server supports speaches' POST /v1/models on-demand download.
     pub allow_pull: bool,
+    /// Ask for speaker labels where the server can produce them (WhisperX
+    /// homelab `diarize=true`, or OpenAI's gpt-4o-transcribe-diarize).
+    pub diarize: bool,
 }
 
 /// Default cloud endpoint/model: Groq's free-tier whisper-large-v3-turbo.
@@ -3138,6 +3141,15 @@ fn transcription_mode(state: &AppState) -> String {
 }
 
 fn whisper_remote(state: &AppState) -> Option<RemoteWhisper> {
+    // Speaker labels default ON — the server quietly skips diarization when it
+    // can't do it (no WhisperX / no HF token), so "on" is always safe.
+    let diarize = state
+        .db
+        .lock()
+        .ok()
+        .and_then(|c| crate::repo::get_setting(&c, "whisper_diarize").ok().flatten())
+        .map(|v| v != "false")
+        .unwrap_or(true);
     match transcription_mode(state).as_str() {
         "local" => None,
         "cloud" => {
@@ -3153,13 +3165,13 @@ fn whisper_remote(state: &AppState) -> Option<RemoteWhisper> {
                 .flatten()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            Some(RemoteWhisper { url, api_key, allow_pull: false })
+            Some(RemoteWhisper { url, api_key, allow_pull: false, diarize })
         }
         _ => {
             let c = state.db.lock().ok()?;
             // Resolve through the homelab fallback chain (local → Tailscale → public).
             crate::homelab::resolved_setting(&c, "whisper_url")
-                .map(|url| RemoteWhisper { url, api_key: None, allow_pull: true })
+                .map(|url| RemoteWhisper { url, api_key: None, allow_pull: true, diarize })
         }
     }
 }
@@ -3447,7 +3459,7 @@ fn transcribe(
     // 0. Remote Whisper (homelab or cloud; OpenAI-compatible /v1/audio/transcriptions).
     //    Tried first when configured so users never need a local Python toolchain.
     if let Some(rw) = remote.filter(|rw| !rw.url.trim().is_empty()) {
-        match transcribe_remote(rw, file, remote_model) {
+        match transcribe_remote(rw, file, remote_model, allow_install) {
             Ok(t) => {
                 let _ = std::fs::remove_dir_all(&outdir);
                 return (t, None); // empty = ran but recognised nothing
@@ -3731,6 +3743,19 @@ pub async fn check_whisper_model(app: AppHandle) -> Result<String> {
                     .into()
             });
         };
+        // WhisperX lecture server (whisper-asr-webservice): the model is
+        // configured SERVER-side (ASR_MODEL in the homelab compose) — reaching
+        // /asr is the whole check.
+        if rw.allow_pull
+            && homelab_server_kind(rw.url.trim_end_matches('/')) == WhisperServerKind::Asr
+        {
+            return Ok(format!(
+                "Ready — WhisperX lecture server detected. Long-form + speaker labels are handled \
+                 server-side (model via WHISPER_MODEL, diarization via HF_TOKEN in the homelab \
+                 compose).{}",
+                if rw.diarize { "" } else { " Speaker labels are currently switched off here." }
+            ));
+        }
         let model = whisper_model(&state);
         match whisper_model_installed(&rw.url, rw.api_key.as_deref(), &model) {
             Ok(true) => Ok(format!("Ready — “{model}” is available on the server.")),
@@ -3772,14 +3797,186 @@ pub async fn check_whisper_model(app: AppHandle) -> Result<String> {
 /// Send an audio file to an OpenAI-compatible transcription endpoint
 /// (`{base}/v1/audio/transcriptions`, model `whisper-1`). Returns the text or a
 /// short error. This is how the homelab Whisper service is consumed.
-fn transcribe_remote(rw: &RemoteWhisper, file: &Path, model: &str) -> std::result::Result<String, String> {
+/// Which protocol a homelab whisper server speaks. Cached per base URL so the
+/// probe runs once per session, not per segment.
+#[derive(Clone, Copy, PartialEq)]
+enum WhisperServerKind {
+    /// WhisperX via whisper-asr-webservice: POST {base}/asr — the robust
+    /// long-form pipeline (VAD-batched, aligned, pyannote diarization).
+    Asr,
+    /// OpenAI-compatible POST {base}/v1/audio/transcriptions (speaches, cloud).
+    OpenAi,
+}
+
+static WHISPER_KIND_CACHE: std::sync::Mutex<Option<std::collections::HashMap<String, WhisperServerKind>>> =
+    std::sync::Mutex::new(None);
+
+/// Probe (once) whether the homelab whisper base speaks the WhisperX `/asr`
+/// protocol. A GET on a FastAPI POST route answers 405 (route exists); a plain
+/// 404 means no such route → OpenAI-compatible (legacy speaches).
+fn homelab_server_kind(base: &str) -> WhisperServerKind {
+    let key = base.trim_end_matches('/').to_string();
+    if let Some(k) = WHISPER_KIND_CACHE
+        .lock()
+        .unwrap()
+        .get_or_insert_with(Default::default)
+        .get(&key)
+    {
+        return *k;
+    }
+    let kind = match http_client(10).get(format!("{key}/asr")).send() {
+        Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => WhisperServerKind::OpenAi,
+        Ok(_) => WhisperServerKind::Asr, // 405/422/2xx → the route exists
+        Err(_) => WhisperServerKind::OpenAi, // unreachable now — let the main call surface the real error
+    };
+    WHISPER_KIND_CACHE
+        .lock()
+        .unwrap()
+        .get_or_insert_with(Default::default)
+        .insert(key, kind);
+    kind
+}
+
+/// Map "SPEAKER_00"-style labels to friendly names and group consecutive
+/// same-speaker segments into "Speaker 1: …" paragraphs.
+fn format_diarized_segments(segments: &[serde_json::Value]) -> Option<String> {
+    let has_speakers = segments.iter().any(|s| s["speaker"].as_str().is_some());
+    if !has_speakers {
+        return None;
+    }
+    let mut order: Vec<String> = Vec::new();
+    let mut out: Vec<(usize, String)> = Vec::new(); // (speaker idx, accumulated text)
+    for seg in segments {
+        let text = seg["text"].as_str().unwrap_or("").trim();
+        if text.is_empty() {
+            continue;
+        }
+        let label = seg["speaker"].as_str().unwrap_or("").to_string();
+        let idx = if label.is_empty() {
+            // No label on this segment: attribute it to the previous speaker.
+            out.last().map(|(i, _)| *i).unwrap_or(0)
+        } else if let Some(i) = order.iter().position(|l| l == &label) {
+            i
+        } else {
+            order.push(label.clone());
+            order.len() - 1
+        };
+        match out.last_mut() {
+            Some((i, acc)) if *i == idx => {
+                acc.push(' ');
+                acc.push_str(text);
+            }
+            _ => out.push((idx, text.to_string())),
+        }
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(
+        out.iter()
+            .map(|(i, t)| format!("Speaker {}: {t}", i + 1))
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+    )
+}
+
+/// Transcribe against a WhisperX whisper-asr-webservice `/asr` endpoint. The
+/// model lives SERVER-side (ASR_MODEL env in the homelab compose); diarization
+/// adds per-segment speaker labels when the server has an HF token configured.
+fn transcribe_asr(rw: &RemoteWhisper, file: &Path, full: bool) -> std::result::Result<String, String> {
+    let base = rw.url.trim_end_matches('/');
+    // encode=true lets the server ffmpeg-normalize whatever container we send.
+    let diarize = rw.diarize && full;
+    let url = format!(
+        "{base}/asr?task=transcribe&output=json&encode=true{}",
+        if diarize { "&diarize=true" } else { "" }
+    );
+    let bytes = std::fs::read(file).map_err(|e| format!("read audio: {e}"))?;
+    let fname = file
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("audio.webm")
+        .to_string();
+    let part = reqwest::blocking::multipart::Part::bytes(bytes)
+        .file_name(fname)
+        .mime_str("application/octet-stream")
+        .map_err(|e| e.to_string())?;
+    let form = reqwest::blocking::multipart::Form::new().part("audio_file", part);
+    let resp = http_client(if full { 4 * 3600 } else { 120 })
+        .post(&url)
+        .multipart(form)
+        .send()
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let code = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("HTTP {code}: {}", last_line(&body)));
+    }
+    let body: serde_json::Value = resp.json().map_err(|e| format!("unreadable response: {e}"))?;
+    if diarize {
+        if let Some(t) = body["segments"].as_array().and_then(|s| format_diarized_segments(s)) {
+            return Ok(t);
+        }
+    }
+    Ok(body["text"].as_str().unwrap_or_default().trim().to_string())
+}
+
+// `full`: true for the on-save/background transcription of a whole lecture
+// (hours-long timeout), false for the ~7s live-preview partials (fail fast so a
+// hung request degrades the preview, not the whole live loop).
+fn transcribe_remote(rw: &RemoteWhisper, file: &Path, model: &str, full: bool) -> std::result::Result<String, String> {
+    // Homelab servers may speak either protocol — the WhisperX lecture server
+    // (whisper-asr-webservice, the robust long-form + diarization pipeline) or
+    // the legacy OpenAI-compatible speaches. Detect once, dispatch accordingly.
+    if rw.allow_pull && homelab_server_kind(rw.url.trim_end_matches('/')) == WhisperServerKind::Asr {
+        return transcribe_asr(rw, file, full);
+    }
     let url = format!("{}/audio/transcriptions", whisper_v1_url(&rw.url));
     let model = model.trim();
+    // OpenAI's diarizing model returns speaker-labelled segments when asked for
+    // diarized_json (labels "A"/"B"…, same `speaker` field we format below).
+    let diarized_cloud = rw.diarize && full && model.contains("diarize");
+
+    // Cloud providers cap uploads (Groq: 25MB free tier) — an hour-long lecture
+    // busts that. When ffmpeg is around, shrink big uploads to 16kHz mono Opus
+    // (~15MB/hour) before sending; the temp file cleans itself up on return.
+    struct TempCleanup(Option<std::path::PathBuf>);
+    impl Drop for TempCleanup {
+        fn drop(&mut self) {
+            if let Some(p) = &self.0 {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    }
+    let mut send_file = file.to_path_buf();
+    let mut _cleanup = TempCleanup(None);
+    if !rw.allow_pull && full {
+        let big = std::fs::metadata(file).map(|m| m.len() > 24 * 1024 * 1024).unwrap_or(false);
+        if big {
+            if let Some(ff) = ingest::which("ffmpeg") {
+                let out = std::env::temp_dir().join(format!("cortex-cloud-{}.ogg", crate::db::new_id()));
+                let ok = std::process::Command::new(ff)
+                    .args(["-y", "-i"])
+                    .arg(file)
+                    .args(["-ac", "1", "-ar", "16000", "-c:a", "libopus", "-b:a", "32k"])
+                    .arg(&out)
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
+                if ok && out.is_file() {
+                    send_file = out.clone();
+                    _cleanup = TempCleanup(Some(out));
+                }
+            }
+        }
+    }
+    let send_file = send_file; // freeze for the closure
+
     // Build + send a fresh transcription request. The multipart body consumes the file
     // bytes, so we re-read the file each call — which lets us retry after pulling a model.
     let send = || -> std::result::Result<reqwest::blocking::Response, String> {
-        let bytes = std::fs::read(file).map_err(|e| format!("read audio: {e}"))?;
-        let fname = file
+        let bytes = std::fs::read(&send_file).map_err(|e| format!("read audio: {e}"))?;
+        let fname = send_file
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("audio.webm")
@@ -3789,7 +3986,7 @@ fn transcribe_remote(rw: &RemoteWhisper, file: &Path, model: &str) -> std::resul
             .mime_str("application/octet-stream")
             .map_err(|e| e.to_string())?;
         let mut form = reqwest::blocking::multipart::Form::new()
-            .text("response_format", "text")
+            .text("response_format", if diarized_cloud { "diarized_json" } else { "text" })
             // Voice-activity detection: skip silent stretches instead of letting
             // Whisper hallucinate text (or repetition-loop) through them — the main
             // reason long lectures came back short and garbled. Supported by
@@ -3800,14 +3997,16 @@ fn transcribe_remote(rw: &RemoteWhisper, file: &Path, model: &str) -> std::resul
         if !model.is_empty() {
             form = form.text("model", model.to_string());
         }
-        // Transcription is slow; allow a generous timeout. A homelab server may be
-        // crunching a long lecture on CPU at ~realtime speed — a 33-minute recording
-        // can take half an hour or more — so 10 minutes guaranteed a mid-transcription
-        // timeout ("error sending request") while the server kept working for nothing;
-        // give it hours. Cloud endpoints (Groq/OpenAI) transcribe in seconds and stay
-        // on a tight leash. Cloud endpoints authenticate with a bearer key; the
-        // homelab token rides the URL itself as Basic credentials.
-        let timeout = if rw.allow_pull { 4 * 3600 } else { 600 };
+        // Transcription is slow — and long-form is SLOW: an hour-long lecture on
+        // a CPU homelab can legitimately take hours (the old 10-minute timeout is
+        // exactly why long lectures came back cut off), so full transcriptions
+        // get 4 hours there; the background asr queue means nobody sits on a
+        // spinner meanwhile. Cloud endpoints (Groq/OpenAI) finish in minutes and
+        // stay on a 10-minute leash; the ~7s live-preview partials fail fast so
+        // a hung request degrades the preview, not the whole live loop. Cloud
+        // endpoints authenticate with a bearer key; the homelab token rides the
+        // URL itself as Basic credentials.
+        let timeout = if !full { 120 } else if rw.allow_pull { 4 * 3600 } else { 600 };
         let mut req = http_client(timeout).post(&url).multipart(form);
         if let Some(key) = rw.api_key.as_deref() {
             req = req.bearer_auth(key);
@@ -3837,12 +4036,17 @@ fn transcribe_remote(rw: &RemoteWhisper, file: &Path, model: &str) -> std::resul
         return Err(format!("HTTP {code}: {}", last_line(&body)));
     }
     let body = resp.text().map_err(|e| e.to_string())?;
-    // OpenAI returns plain text for response_format=text; some servers wrap JSON.
+    // OpenAI returns plain text for response_format=text; some servers wrap
+    // JSON, and diarized_json carries speaker-labelled segments.
     let text = if body.trim_start().starts_with('{') {
-        serde_json::from_str::<serde_json::Value>(&body)
-            .ok()
-            .and_then(|v| v["text"].as_str().map(|s| s.to_string()))
-            .unwrap_or(body)
+        match serde_json::from_str::<serde_json::Value>(&body) {
+            Ok(v) => v["segments"]
+                .as_array()
+                .and_then(|s| format_diarized_segments(s))
+                .or_else(|| v["text"].as_str().map(|s| s.to_string()))
+                .unwrap_or(body),
+            Err(_) => body,
+        }
     } else {
         body
     };
@@ -3975,6 +4179,57 @@ pub async fn save_recording(
     ext: Option<String>,
 ) -> Result<IngestResult> {
     tauri::async_runtime::spawn_blocking(move || -> Result<IngestResult> {
+        save_recording_impl(&app, &subject_id, topic_id.as_deref(), &name, &audio, ext.as_deref())
+    })
+    .await
+    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
+}
+
+/// Raw-body variant of `save_recording`: the audio arrives as the invoke's RAW
+/// byte body (metadata in headers) instead of a JSON number[] — an hour-long
+/// recording is ~100MB, and JSON-serializing that many boxed numbers through
+/// the IPC bridge took tens of seconds (and could OOM the webview); the raw
+/// path moves the same bytes in milliseconds. Android's webview can't deliver
+/// raw bodies, so Tauri silently falls back to the JSON path there — handle
+/// both body shapes.
+#[tauri::command]
+pub fn save_recording_raw(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<IngestResult> {
+    let header = |name: &str| -> Option<String> {
+        request
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| {
+                percent_encoding::percent_decode_str(v)
+                    .decode_utf8_lossy()
+                    .into_owned()
+            })
+            .filter(|v| !v.is_empty())
+    };
+    let subject_id = header("x-subject-id")
+        .ok_or_else(|| Error::Other("missing x-subject-id header".into()))?;
+    let topic_id = header("x-topic-id");
+    let name = header("x-name").unwrap_or_else(|| "Untitled recording".into());
+    let ext = header("x-ext");
+    let audio: std::borrow::Cow<'_, [u8]> = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => std::borrow::Cow::Borrowed(bytes.as_slice()),
+        // Android fallback: the bytes arrive JSON-encoded after all.
+        tauri::ipc::InvokeBody::Json(v) => std::borrow::Cow::Owned(
+            serde_json::from_value::<Vec<u8>>(v.clone())
+                .map_err(|e| Error::Other(format!("unreadable audio body: {e}")))?,
+        ),
+    };
+    save_recording_impl(&app, &subject_id, topic_id.as_deref(), &name, &audio, ext.as_deref())
+}
+
+fn save_recording_impl(
+    app: &AppHandle,
+    subject_id: &str,
+    topic_id: Option<&str>,
+    name: &str,
+    audio: &[u8],
+    ext: Option<&str>,
+) -> Result<IngestResult> {
     if audio.is_empty() {
         return Err(Error::Other(
             "the recording is empty — the microphone produced no audio (check the \
@@ -3986,18 +4241,18 @@ pub async fn save_recording(
     // 1. persist the audio file (keep the real container as the extension)
     let dir = app.path().app_data_dir().map_err(|e| Error::Other(e.to_string()))?.join("recordings");
     std::fs::create_dir_all(&dir)?;
-    let ext = sanitize_ext(ext.as_deref());
+    let ext = sanitize_ext(ext);
     let file = dir.join(format!("{}.{ext}", crate::db::new_id()));
-    std::fs::write(&file, &audio)?;
+    std::fs::write(&file, audio)?;
 
     // 2. create the source row and hand it to the background transcriber
     let source = {
         let c = state.db.lock().unwrap();
         let source_id = repo::insert_source(
             &c,
-            &subject_id,
-            topic_id.as_deref(),
-            &name,
+            subject_id,
+            topic_id,
+            name,
             "audio",
             file.to_str(),
         )?;
@@ -4006,12 +4261,9 @@ pub async fn save_recording(
         }
         repo::get_source(&c, &source_id)?
     };
-    emit_progress(&app, &source.id, "queued", "queued for transcription", 10);
-    crate::asr::enqueue(&app, source.id.clone());
+    emit_progress(app, &source.id, "queued", "queued for transcription", 10);
+    crate::asr::enqueue(app, source.id.clone());
     Ok(IngestResult { source, chunk_count: 0, chars: 0, warning: None })
-    })
-    .await
-    .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
 /// The background transcription job (runs on the asr worker thread): transcribe

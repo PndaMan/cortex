@@ -420,6 +420,25 @@ export const saveRecording = (
   ext?: string
 ) => invoke<IngestResult>("save_recording", { subjectId, name, audio, topicId, ext });
 
+/** Raw-bytes save: the audio rides the invoke body as-is (no JSON number[]),
+ * which is the only sane transport for hour-long recordings (~100MB). Metadata
+ * travels in headers (percent-encoded — header values must be ASCII-safe). */
+export const saveRecordingRaw = (
+  subjectId: string,
+  name: string,
+  audio: Uint8Array,
+  topicId?: string,
+  ext?: string
+) =>
+  invoke<IngestResult>("save_recording_raw", audio, {
+    headers: {
+      "x-subject-id": encodeURIComponent(subjectId),
+      "x-name": encodeURIComponent(name),
+      ...(topicId ? { "x-topic-id": encodeURIComponent(topicId) } : {}),
+      ...(ext ? { "x-ext": encodeURIComponent(ext) } : {}),
+    },
+  });
+
 // Near-live transcription: transcribe an audio slice and return its text (or ""
 // if no Whisper transcriber is installed). Used by the recorder's live panel.
 export const transcribePartial = (audio: number[], ext?: string) =>

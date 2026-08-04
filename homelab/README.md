@@ -11,7 +11,7 @@ appends the rest.
 | Service | Reached at | What it gives Cortex |
 |---------|-----------|----------------------|
 | **SearXNG** | `<url>/searxng` | Diagrams/images in cheatsheets + web-enriched chat |
-| **Whisper** (Speaches) | `<url>/whisper` | Lecture transcription, OpenAI-compatible |
+| **WhisperX** (whisper-asr-webservice) | `<url>/whisper` | Long-form lecture transcription + speaker diarization |
 | **Sync** (WebDAV) | `<url>/sync` | Live sync — auto-store your library, fetch it on launch |
 | **Ingest** (Apache Tika) | `<url>/ingest` | Document → text for **mobile** (PDF/DOCX/PPTX/legacy + OCR of scanned pages) — a phone can't run poppler/libreoffice |
 | **Ollama** *(optional)* | `<url>/ollama` | Local LLM + embeddings, no API key |
@@ -90,12 +90,24 @@ never crosses the wire in clear.
 
 ## Notes
 
-- **GPU:** swap the Whisper image to `…:latest-cuda` and uncomment the Ollama
-  `deploy.resources` block (needs the NVIDIA container toolkit).
-- **Whisper model:** the default is `deepdml/faster-whisper-large-v3-turbo-ct2`
-  (near large-v3 accuracy at ~8× its speed). On a very weak CPU box drop
-  `WHISPER__MODEL` to `Systran/faster-whisper-small`; with a GPU you can afford
-  `Systran/faster-whisper-large-v3` for maximum accuracy.
+- **GPU:** swap the Whisper image to `…:latest-gpu` with `WHISPER_DEVICE=cuda`,
+  and uncomment the Ollama `deploy.resources` block (needs the NVIDIA container
+  toolkit). An hour-long lecture transcribes in a couple of minutes on GPU.
+- **Whisper model:** set `WHISPER_MODEL` (default `distil-large-v3` — near
+  large-v3 accuracy on English at a fraction of the compute). Tiers:
+  `small` (weak CPU) → `distil-large-v3` (default) → `large-v3` (GPU / maximum
+  accuracy). Models lazy-download on first use into the `whisper-models` volume.
+- **Speaker labels (diarization):** transcripts come back as
+  `Speaker 1: … / Speaker 2: …` when a Hugging Face token is configured:
+  create a free account, make a **read** token (Settings → Access Tokens),
+  accept the terms on BOTH gated models —
+  [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
+  and [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) —
+  then start the stack with `HF_TOKEN=hf_xxx docker compose up -d`. Without a
+  token, transcription still works and diarization is silently skipped.
+- **Long lectures:** WhisperX's VAD-batched pipeline is built for hour-plus
+  audio — no more transcripts cutting off near the end; the app also allows the
+  request up to three hours before timing out.
 - **Pull an Ollama model** after first start:
   `docker exec -it cortex-ollama ollama pull nomic-embed-text` (embeddings) and a
   chat model like `llama3.1`.
@@ -121,7 +133,7 @@ Verify the single URL routes to every service:
 
 ```bash
 curl -s 'http://<host>:8080/searxng/search?q=test&format=json' | head -c 200  # SearXNG (must NOT be 403)
-curl -s http://<host>:8080/whisper/v1/models                                   # Whisper
+curl -s http://<host>:8080/whisper/openapi.json | head -c 200                  # WhisperX
 curl -su cortex:<password> -X PROPFIND http://<host>:8080/sync/                 # WebDAV sync
 curl -s http://<host>:8080/                                                    # liveness banner
 ```

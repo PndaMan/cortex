@@ -102,7 +102,7 @@ class RecorderStore {
   // review & save step
   // reviewBytes/reviewPath are NOT $state: megabytes of audio must never be
   // wrapped in a deep reactive proxy (it makes IPC serialization crawl).
-  reviewBytes: number[] = [];
+  reviewBytes: Uint8Array = new Uint8Array(0);
   reviewPath = "";      // native (iOS) recordings stay a backend file — no bytes over IPC
   reviewExt = "webm";
   reviewName = $state("");
@@ -380,7 +380,7 @@ class RecorderStore {
       this.status = "ready";
       return;
     }
-    this.reviewBytes = [];
+    this.reviewBytes = new Uint8Array(0);
     this.reviewPath = res.path;
     this.reviewExt = "m4a";
     this.enterReview(`Lecture ${this.stamp()}`, dur, "captured", "");
@@ -393,13 +393,13 @@ class RecorderStore {
     this.endTimers();
     if (!app.activeSubject) { this.status = "ready"; return; }
 
-    let bytes: number[];
+    let bytes: Uint8Array;
     if (this.captureMode === "wav") {
-      bytes = Array.from(encodeWav(this.wavChunks));
+      bytes = encodeWav(this.wavChunks);
       this.reviewExt = "wav";
     } else {
       const blob = new Blob(this.chunks, { type: this.chunks[0]?.type || "audio/webm" });
-      bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+      bytes = new Uint8Array(await blob.arrayBuffer());
       this.reviewExt = "webm";
     }
     if (bytes.length === 0) {
@@ -438,7 +438,7 @@ class RecorderStore {
   }
 
   /** Stash an uploaded audio file and enter review. */
-  enterReviewFromUpload(bytes: number[], name: string, ext: string): void {
+  enterReviewFromUpload(bytes: Uint8Array, name: string, ext: string): void {
     this.reviewBytes = bytes;
     this.reviewPath = "";
     this.reviewExt = ext;
@@ -461,11 +461,11 @@ class RecorderStore {
     try {
       this.reviewPath
         ? await api.saveRecordingPath(subj.id, name, this.reviewPath, topicId)
-        : await api.saveRecording(subj.id, name, this.reviewBytes, topicId, this.reviewExt);
+        : await api.saveRecordingRaw(subj.id, name, this.reviewBytes, topicId, this.reviewExt);
       // The take is committed (and the native temp file consumed) — clear the
       // review state NOW so a failure in any post-save step can't bounce the
       // user back to a review whose audio no longer exists.
-      this.reviewBytes = [];
+      this.reviewBytes = new Uint8Array(0);
       this.reviewPath = "";
       this.native = false;
       // Post-save niceties are best-effort; the recording is already saved.
@@ -488,7 +488,7 @@ class RecorderStore {
 
   discardReview(): void {
     if (this.reviewPath) api.nativeRecDiscardFile(this.reviewPath).catch(() => {});
-    this.reviewBytes = [];
+    this.reviewBytes = new Uint8Array(0);
     this.reviewPath = "";
     this.reviewName = "";
     this.reviewTopicId = "";

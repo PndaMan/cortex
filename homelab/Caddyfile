@@ -22,7 +22,8 @@
 		reverse_proxy searxng:8080
 	}
 	handle_path /whisper/* {
-		reverse_proxy whisper:8000
+		# WhisperX lecture server (whisper-asr-webservice) listens on 9000.
+		reverse_proxy whisper:9000
 	}
 	handle_path /ollama/* {
 		reverse_proxy ollama:11434

@@ -329,6 +329,7 @@ pub fn run() {
             commands::ollama_models,
             commands::verify_provider,
             commands::save_recording,
+            commands::save_recording_raw,
             commands::transcribe_partial,
             commands::check_whisper_model,
             recorder::save_recording_path,

@@ -140,7 +140,7 @@
       return;
     }
     try {
-      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+      const bytes = new Uint8Array(await file.arrayBuffer());
       // Keep the real container so the backend stores a matching extension.
       const ext = file.name.split(".").pop()?.toLowerCase() || "webm";
       // Route uploads through the same review step so they can be named/topic-tagged too.

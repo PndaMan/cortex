@@ -76,42 +76,38 @@ services:
       - SETUID
 
   whisper:
-    # Speaches: OpenAI-compatible ASR exposing POST /v1/audio/transcriptions.
-    # Use latest-cuda instead of latest-cpu if the host has an NVIDIA GPU.
-    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    # WhisperX lecture server (whisper-asr-webservice) — THE proven long-form
+    # pipeline: VAD-batched inference (no more transcripts cutting off or
+    # repetition-looping on hour-plus lectures), forced alignment, and real
+    # pyannote 3.1 SPEAKER DIARIZATION ("Speaker 1: … / Speaker 2: …").
+    # Use :latest-gpu + ASR_DEVICE=cuda (and the NVIDIA container toolkit) on a
+    # GPU host — an hour-long lecture transcribes in a couple of minutes there.
+    image: onerahmet/openai-whisper-asr-webservice:latest
     container_name: cortex-whisper
     restart: unless-stopped
     expose:
-      - "8000"
+      - "9000"
     volumes:
-      - whisper-models:/home/ubuntu/.cache/huggingface
+      # Whisper + alignment + pyannote models cache here (lazy-downloaded on
+      # first use; keep the volume so restarts don't re-fetch gigabytes).
+      - whisper-models:/root/.cache
     environment:
-      # The server's DEFAULT model — matches DEFAULT_WHISPER_MODEL in the app, which
-      # always sends a model field (speaches hard-errors on a missing one). Keeping the
-      # two in sync means no cold-start pull on first transcription; whisper-init
-      # pre-pulls it below. large-v3-turbo ≈ large-v3 accuracy at ~8× the speed.
-      - WHISPER__MODEL=deepdml/faster-whisper-large-v3-turbo-ct2
-
-  whisper-init:
-    # One-shot: pre-download the default faster-whisper model into the shared cache so
-    # the first transcription never has to fetch it (and so nobody has to install a model
-    # by hand). Waits for the whisper server, asks it to pull the model, then exits.
-    image: curlimages/curl:latest
-    container_name: cortex-whisper-init
-    restart: "no"
-    depends_on:
-      - whisper
-    entrypoint:
-      - sh
-      - -c
-      - |
-        echo "whisper-init: waiting for the whisper server…";
-        until curl -sf http://whisper:8000/v1/models >/dev/null 2>&1; do sleep 2; done;
-        echo "whisper-init: pulling deepdml/faster-whisper-large-v3-turbo-ct2…";
-        curl -s -X POST http://whisper:8000/v1/models \
-          -H 'Content-Type: application/json' \
-          -d '{"model":"deepdml/faster-whisper-large-v3-turbo-ct2"}' || true;
-        echo "whisper-init: done.";
+      - ASR_ENGINE=whisperx
+      # Model tiers (accuracy ↑ / speed ↓): small → distil-large-v3 → large-v3.
+      # distil-large-v3 ≈ large-v3 accuracy on English at a fraction of the
+      # compute — the right default for a CPU box. On GPU, use large-v3.
+      - ASR_MODEL=${WHISPER_MODEL:-distil-large-v3}
+      - ASR_DEVICE=${WHISPER_DEVICE:-cpu}
+      # Unload models after 5 idle minutes (frees RAM on a shared homelab box);
+      # the next lecture pays a short reload, not a re-download.
+      - MODEL_IDLE_TIMEOUT=300
+      # SPEAKER LABELS need a (free) Hugging Face token:
+      #   1. huggingface.co → create account → Settings → Access Tokens → "read" token
+      #   2. Accept the terms on BOTH gated models:
+      #      hf.co/pyannote/speaker-diarization-3.1 and hf.co/pyannote/segmentation-3.0
+      #   3. HF_TOKEN=hf_xxx docker compose up -d
+      # Without it, transcription still works — diarization is silently skipped.
+      - HF_TOKEN=${HF_TOKEN:-}
 
   sync:
     # WebDAV target for Cortex live sync (last-write-wins DB snapshot).
