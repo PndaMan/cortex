@@ -119,6 +119,7 @@ NotebookLM is great, but it's a web product: your sources live on someone else's
 - **Helix-style modal keyboard engine** with a command palette, leader keys, and fully customizable bindings.
 - **10 themes** and live re-skinning (designed to follow the Omarchy palette).
 - **Close-to-tray** — closing the window keeps ingest/generation/music running behind a tray icon (Open · Play/Pause · Quit); reminders become OS notifications while hidden.
+- **Smart notifications** — Moodle deadlines/exams are pre-scheduled as local alerts on your phone (24 h + 1 h before, no push server needed — they fire with the app closed), and tapping any Cortex notification deep-links straight to the lecture's subject or the calendar day.
 - A responsive shell that stays intentional when tiled narrow (drawer sidebar below 1080px).
 
 ## Download & install

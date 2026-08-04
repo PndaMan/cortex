@@ -938,3 +938,32 @@ export const onNoteCreated = (cb: () => void): Promise<UnlistenFn> =>
 /** Fired after live sync merges peers' changes into the local DB. */
 export const onSyncApplied = (cb: () => void): Promise<UnlistenFn> =>
   listen("sync:applied", () => cb());
+
+// ---- notification tap deep links (mobile) ----
+// Where a tapped OS notification should land in the app; stored by the backend
+// (alerts.rs) keyed on the notification's numeric id.
+export interface NotifRoute {
+  id: number;
+  /** "lecture" (→ subject) · "deadline"/"exam"/"event" (→ calendar day) */
+  kind: string;
+  subjectId?: string | null;
+  ts?: number | null;
+}
+export const notificationRoute = (id: number) =>
+  invoke<NotifRoute | null>("notification_route", { id });
+
+/** Listen for OS-notification taps (mobile only — the desktop plugin has no
+ *  tap events). The callback gets the tapped notification's numeric id. */
+export async function onNotificationTap(cb: (id: number) => void): Promise<void> {
+  const { addPluginListener } = await import("@tauri-apps/api/core");
+  await addPluginListener(
+    "notification",
+    "actionPerformed",
+    (data: { actionId?: string; notification?: { id?: number } }) => {
+      // "tap" is the plain open action; explicit action buttons pass through too.
+      if (data?.actionId === "dismiss") return;
+      const id = data?.notification?.id;
+      if (typeof id === "number") cb(id);
+    }
+  );
+}

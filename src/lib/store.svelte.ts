@@ -6,6 +6,7 @@ import * as api from "./api";
 import type { Subject, Source } from "./api";
 import { music, BUILTIN_STATION_IDS, builtinStationUrl, builtinStationUrls } from "./music";
 import { keybinds } from "./keybinds.svelte";
+import { isMobile } from "./platform";
 
 export type View =
   | "dashboard"
@@ -649,6 +650,27 @@ class AppStore {
       this.syncLive = true;
       void this.refresh();
     });
+    // Tapping an OS notification (lecture ready, deadline alert, reminder)
+    // deep-links to the right place: subject for lectures, calendar day for
+    // deadlines/reminders, otherwise the notification centre. Mobile-only —
+    // the desktop notification backend has no tap events.
+    if (isMobile) {
+      void api
+        .onNotificationTap(async (id) => {
+          let route: api.NotifRoute | null = null;
+          try {
+            route = await api.notificationRoute(id);
+          } catch { /* route table unavailable — fall through */ }
+          if (route?.kind === "lecture" && route.subjectId) {
+            this.openSubject(route.subjectId);
+          } else if (route?.ts && ["deadline", "exam", "event"].includes(route.kind)) {
+            this.openCalendarAt(route.ts);
+          } else {
+            this.notifOpen = true; // still land somewhere useful
+          }
+        })
+        .catch(() => { /* plugin listener unavailable — never break startup */ });
+    }
     // Background ingestion/transcription progress (the asr queue and add_source
     // emit these). Keep a live per-source map for the sources list, and refresh
     // data when a source finishes or fails so lists flip to ready/error without
@@ -1084,6 +1106,18 @@ class AppStore {
 
   // ---- navigation actions ----
   openSubject(id: string) {
+    // Deep links (notifications, restored state, synced ids) can point at a
+    // subject that was deleted or hasn't synced to this device — navigating
+    // anyway leaves a dead subject view. Say so and go Home instead.
+    if (this.subjects.length > 0 && !this.subjects.some((s) => s.id === id)) {
+      this.pushToast({
+        kind: "warning",
+        title: "Subject not found",
+        body: "It may have been deleted, or hasn't synced to this device yet.",
+      });
+      this.view = "dashboard";
+      return;
+    }
     this.activeSubjectId = id;
     this.view = "subject";
     this.subjectTab = "cheatsheet"; // land on the cheatsheet (the default page)

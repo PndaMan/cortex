@@ -1,6 +1,6 @@
 [package]
 name = "cortex"
-version = "1.0.33"
+version = "1.0.34"
 description = "Cortex — desktop study OS"
 authors = ["Aidan McConnon"]
 license = "Apache-2.0"
@@ -18,7 +18,14 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
+# Open URLs with the platform opener (Safari view / browser / default handler).
+# Replaces hand-spawning xdg-open/open, which simply cannot work on iOS/Android
+# (no fork/exec in the sandbox) — this is what makes "Open in Moodle" work on phones.
+tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
+# Scheduled local notifications (deadline alerts) need concrete fire dates for
+# tauri-plugin-notification's Schedule::At — which speaks time::OffsetDateTime.
+time = "0.3"
 base64 = "0.22"
 percent-encoding = "2"
 # Sync credential encryption: XChaCha20-Poly1305 AEAD (chacha20poly1305) with a key
@@ -94,6 +101,14 @@ gdk = "0.18"
 [features]
 # this feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
+
+# Vendored copy of the notification plugin (same version) carrying one iOS fix:
+# the stock plugin force-unwraps its in-memory notification map when a
+# notification is TAPPED, so tapping any notification delivered by a previous
+# app session (cold start, scheduled deadline alerts) crashed the app on launch.
+# See vendor/tauri-plugin-notification/ios/Sources/NotificationHandler.swift.
+[patch.crates-io]
+tauri-plugin-notification = { path = "vendor/tauri-plugin-notification" }
 
 [profile.release]
 # panic stays "unwind": a panicking command thread shouldn't kill the whole app.

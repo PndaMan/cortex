@@ -166,19 +166,20 @@ pub fn check_reminders(
         due
     };
     if system_notify.unwrap_or(false) {
-        use tauri_plugin_notification::NotificationExt;
         for e in &due {
             let body = e
                 .location
                 .as_deref()
                 .map(|l| format!("at {l}"))
                 .unwrap_or_else(|| "Reminder".to_string());
-            let _ = app
-                .notification()
-                .builder()
-                .title(format!("⏰ {}", e.title))
-                .body(body)
-                .show();
+            // Tapping the reminder deep-links to that day on the calendar.
+            crate::alerts::notify_routed(
+                &app,
+                &format!("ev:{}", e.id),
+                &format!("⏰ {}", e.title),
+                &body,
+                serde_json::json!({ "kind": "event", "ts": e.start_ms }),
+            );
         }
     }
     Ok(due)

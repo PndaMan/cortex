@@ -1,6 +1,7 @@
 //! Cortex backend library. Wires the SQLite-backed AppState into Tauri and
 //! registers the command surface consumed by the Svelte frontend.
 
+mod alerts;
 mod analytics;
 mod anki;
 mod asr;
@@ -58,6 +59,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         // Moodle SSO callback: the launch flow redirects to cortexmoodle://token=…
         // This handler receives the RAW callback URI (so the base64 token isn't
@@ -158,6 +160,26 @@ pub fn run() {
             // If a previous session crashed, its mpv music sidecar is still
             // alive and streaming — quit it before this session starts its own.
             mpv::cleanup_stale(app.handle());
+
+            // Mobile: ask for notification permission once at startup, off the
+            // setup path (the iOS prompt blocks the calling thread). Without
+            // this, lecture-ready alerts and the scheduled deadline reminders
+            // never appear — nothing on the phone asks by itself.
+            #[cfg(mobile)]
+            {
+                use tauri_plugin_notification::{NotificationExt, PermissionState};
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let n = handle.notification();
+                    if !matches!(n.permission_state(), Ok(PermissionState::Granted)) {
+                        let _ = n.request_permission();
+                    }
+                    // Permission may have just been granted: put the deadline
+                    // alerts in place from the data we already have (a Moodle
+                    // sync later refreshes them).
+                    alerts::schedule_deadline_alerts(&handle);
+                });
+            }
 
             // Tray icon: lets the app keep working (ingest, generation, music)
             // after the window is closed. Left-click or "Open" reopens it.
@@ -414,6 +436,7 @@ pub fn run() {
             calendar::set_event_done,
             calendar::set_event_status,
             calendar::check_reminders,
+            alerts::notification_route,
             // review
             review::record_attempt,
             review::review_set,

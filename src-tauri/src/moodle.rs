@@ -753,13 +753,21 @@ pub async fn moodle_sync(app: AppHandle) -> Result<MoodleSummary> {
                 let subject_id = course_subj.get(&course_id).cloned();
                 let ev_kind = if kind == "exam" { "event" } else { "task" };
                 let start_ms = due_at * 1000;
+                // New mirrored deadlines default to a day-before reminder so
+                // desktop reminder polling (check_reminders) covers Moodle due
+                // dates too; the upsert leaves reminder_ms alone afterwards so
+                // a user's own choice is never clobbered. A moved due date
+                // resets `notified` so the (re-derived) reminder fires again.
+                let reminder_ms: Option<i64> =
+                    (start_ms > now + 86_400_000).then(|| start_ms - 86_400_000);
                 c.execute(
-                    "INSERT INTO events (id, subject_id, title, description, start_ms, all_day, kind, done, notified, created_at, updated_at) \
-                     VALUES (?1, ?2, ?3, 'From Moodle', ?4, 0, ?5, 0, 0, ?6, ?6) \
+                    "INSERT INTO events (id, subject_id, title, description, start_ms, all_day, kind, done, reminder_ms, notified, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, 'From Moodle', ?4, 0, ?5, 0, ?7, 0, ?6, ?6) \
                      ON CONFLICT(id) DO UPDATE SET \
                        subject_id=excluded.subject_id, title=excluded.title, \
-                       start_ms=excluded.start_ms, kind=excluded.kind, updated_at=excluded.updated_at",
-                    params![ev_id, subject_id, name, start_ms, ev_kind, now],
+                       start_ms=excluded.start_ms, kind=excluded.kind, updated_at=excluded.updated_at, \
+                       notified=CASE WHEN events.start_ms<>excluded.start_ms THEN 0 ELSE events.notified END",
+                    params![ev_id, subject_id, name, start_ms, ev_kind, now, reminder_ms],
                 )?;
             }
         }
@@ -768,6 +776,9 @@ pub async fn moodle_sync(app: AppHandle) -> Result<MoodleSummary> {
             let c = state.db.lock().unwrap();
             repo::set_setting(&c, K_LAST_SYNC, &now.to_string())?;
         }
+        // Mobile: keep the locally-scheduled deadline/exam alerts in step with
+        // what we just synced — these fire on time even with the app closed.
+        crate::alerts::schedule_deadline_alerts(&app);
         Ok(summary)
     })
     .await

@@ -97,7 +97,14 @@
         {/if}
         <div class="grow"></div>
         {#if d.url}
-          <button class="btn btn--sm btn--primary" onclick={() => d.url && api.openExternal(d.url)}><Icon name="external" size={12} /> Open in Moodle</button>
+          <button
+            class="btn btn--sm btn--primary"
+            onclick={() =>
+              d.url &&
+              api.openExternal(d.url).catch((e) =>
+                app.pushToast({ kind: "error", title: "Couldn't open the link", body: String(e) })
+              )}
+          ><Icon name="external" size={12} /> Open in Moodle</button>
         {/if}
       </footer>
     </div>

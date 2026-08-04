@@ -432,31 +432,27 @@ pub fn list_archived_subjects(state: State<AppState>) -> Result<Vec<Subject>> {
     repo::list_archived_subjects(&c)
 }
 
-/// Open a URL in the system's default browser. Used for "Open in Moodle" and
-/// other external links — a webview `<a target="_blank">` is a no-op in Tauri,
-/// so links must round-trip through the OS opener.
+/// Open a URL in the system's default browser (or matching app). Used for
+/// "Open in Moodle" and other external links — a webview `<a target="_blank">`
+/// is a no-op in Tauri, so links must round-trip through the OS opener.
+/// Goes through the opener plugin: hand-spawning xdg-open/open worked only on
+/// desktop — iOS/Android forbid fork/exec, so every external link on a phone
+/// (all the notification deep links included) silently failed.
 #[tauri::command]
-pub fn open_external(url: String) -> Result<()> {
+pub fn open_external(app: AppHandle, url: String) -> Result<()> {
+    use tauri_plugin_opener::OpenerExt;
     let url = url.trim();
-    // Only allow real web links — never hand arbitrary strings to the shell.
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
+    // Web links plus the one app scheme we deliberately deep-link into
+    // (the Moodle mobile app) — never arbitrary strings.
+    if !(url.starts_with("http://")
+        || url.starts_with("https://")
+        || url.starts_with("moodlemobile://"))
+    {
         return Err(Error::Other("refusing to open a non-http(s) URL".into()));
     }
-    use std::process::Command;
-    #[cfg(target_os = "linux")]
-    let cmds: &[&str] = &["xdg-open"];
-    #[cfg(target_os = "macos")]
-    let cmds: &[&str] = &["open"];
-    #[cfg(target_os = "windows")]
-    let cmds: &[&str] = &["explorer"];
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    let cmds: &[&str] = &["xdg-open", "open"];
-    for c in cmds {
-        if Command::new(c).arg(url).spawn().is_ok() {
-            return Ok(());
-        }
-    }
-    Err(Error::Other("couldn't launch a browser".into()))
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| Error::Other(format!("couldn't open the link: {e}")))
 }
 
 // ---- topics ------------------------------------------------------------
@@ -4292,7 +4288,7 @@ pub(crate) fn run_transcription_job(app: &AppHandle, source_id: &str) {
             let _ = repo::finalize_source(&c, source_id, "error", None, None, Some(&msg));
         }
         emit_progress(app, source_id, "error", &msg, 100);
-        notify(app, "Transcription failed", &format!("{} — {msg}", src.name));
+        notify(app, source_id, &src.subject_id, "Transcription failed", &format!("{} — {msg}", src.name));
     };
 
     let Some(path) = src.stored_path.clone().or_else(|| src.origin.clone()) else {
@@ -4320,6 +4316,8 @@ pub(crate) fn run_transcription_job(app: &AppHandle, source_id: &str) {
         emit_progress(app, source_id, "done", "saved (no transcript)", 100);
         notify(
             app,
+            source_id,
+            &src.subject_id,
             "Recording saved without transcript",
             warning.as_deref().unwrap_or("Whisper recognised no speech in the audio."),
         );
@@ -4371,6 +4369,8 @@ pub(crate) fn run_transcription_job(app: &AppHandle, source_id: &str) {
     emit_progress(app, source_id, "done", "transcribed", 100);
     notify(
         app,
+        source_id,
+        &src.subject_id,
         "Lecture transcribed",
         &format!("{} is ready — {chunk_count} chunks embedded.", src.name),
     );
@@ -4387,10 +4387,16 @@ pub(crate) fn run_transcription_job(app: &AppHandle, source_id: &str) {
 }
 
 /// Best-effort desktop/mobile notification (the app may be minimised/locked
-/// while background transcription finishes).
-fn notify(app: &AppHandle, title: &str, body: &str) {
-    use tauri_plugin_notification::NotificationExt;
-    let _ = app.notification().builder().title(title).body(body).show();
+/// while background transcription finishes). Tapping it deep-links to the
+/// lecture's subject (route resolved by id via `notification_route`).
+fn notify(app: &AppHandle, source_id: &str, subject_id: &str, title: &str, body: &str) {
+    crate::alerts::notify_routed(
+        app,
+        &format!("src:{source_id}"),
+        title,
+        body,
+        serde_json::json!({ "kind": "lecture", "subjectId": subject_id }),
+    );
 }
 
 /// Background auto-summary of a transcribed lecture → a note ("Summary — <name>")
