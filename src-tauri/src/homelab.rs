@@ -364,3 +364,179 @@ fn inject_token(conn: &Connection, key: &str, url: String) -> String {
     }
     u.to_string()
 }
+
+// ---- per-service health check (Settings → Integrations "Test homelab") -------
+
+/// One row of the Integrations status grid: a homelab service, whether it
+/// answered, and a human-readable outcome ("WhisperX lecture server", "wrong
+/// live-sync password", "not on this homelab yet — update it", …).
+#[derive(serde::Serialize)]
+pub struct ServiceStatus {
+    pub id: String,
+    pub label: String,
+    pub configured: bool,
+    pub ok: bool,
+    pub detail: String,
+}
+
+/// Probe every homelab service through the SAME resolved URLs the app actually
+/// uses (unified base + service path, token injected, per-service overrides
+/// honoured), so a green row here means the feature genuinely works. Network
+/// probes run OFF the DB lock (see warm()'s contract).
+#[tauri::command]
+pub async fn homelab_status(app: tauri::AppHandle) -> crate::error::Result<Vec<ServiceStatus>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app.state::<crate::db::AppState>();
+        // Short lock: resolve each service URL + read sync creds, then release.
+        // (resolved_setting probes the network on cache miss, but the Test button
+        // is explicit user action and warm() usually has the cache hot.)
+        let (urls, sync_user, sync_pass) = {
+            let c = state.db.lock().unwrap();
+            let mut urls: HashMap<&'static str, Option<String>> = HashMap::new();
+            for key in ["searxng_url", "whisper_url", "sync_url", "syncd_url", "ingest_url", "ollama_url"] {
+                urls.insert(key, resolved_setting(&c, key));
+            }
+            (
+                urls,
+                repo::get_setting(&c, "sync_user").ok().flatten().unwrap_or_default(),
+                repo::get_setting(&c, "sync_pass").ok().flatten().unwrap_or_default(),
+            )
+        };
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(6))
+            .build()
+            .map_err(|e| crate::error::Error::Other(format!("http client: {e}")))?;
+
+        let get = |url: &str| client.get(url).send();
+        let auth_get = |url: &str| {
+            let mut rq = client.get(url);
+            if !sync_user.is_empty() || !sync_pass.is_empty() {
+                rq = rq.basic_auth(&sync_user, Some(&sync_pass));
+            }
+            rq.send()
+        };
+        let u = |k: &str| urls.get(k).cloned().flatten();
+        let base = |url: &str| url.trim_end_matches('/').to_string();
+        let mut out: Vec<ServiceStatus> = Vec::new();
+        let mut push = |id: &str, label: &str, configured: bool, ok: bool, detail: String| {
+            out.push(ServiceStatus { id: id.into(), label: label.into(), configured, ok, detail });
+        };
+        let unconfigured = "no URL — set the Homelab URL above".to_string();
+
+        // SearXNG — the JSON format must be enabled or Cortex gets 403s.
+        match u("searxng_url") {
+            None => push("searxng", "SearXNG · web images & search", false, false, unconfigured.clone()),
+            Some(url) => {
+                let (ok, detail) = match get(&format!("{}/search?q=cortex&format=json", base(&url))) {
+                    Ok(r) if r.status().is_success() => (true, "search + JSON enabled".into()),
+                    Ok(r) if r.status().as_u16() == 403 => (false, "reachable, but the JSON format is disabled — check searxng/settings.yml".into()),
+                    Ok(r) if r.status().as_u16() == 401 => (false, "reachable, but the access token was rejected".into()),
+                    Ok(r) => (false, format!("HTTP {}", r.status().as_u16())),
+                    Err(_) => (false, "unreachable".into()),
+                };
+                push("searxng", "SearXNG · web images & search", true, ok, detail);
+            }
+        }
+
+        // Whisper — distinguish the WhisperX lecture server from a legacy install.
+        match u("whisper_url") {
+            None => push("whisper", "Whisper · lecture transcription", false, false, unconfigured.clone()),
+            Some(url) => {
+                let b = base(&url);
+                let (ok, detail) = match get(&format!("{b}/asr")) {
+                    // GET on the POST-only /asr → 405 = whisper-asr-webservice (WhisperX).
+                    Ok(r) if r.status().as_u16() == 405 => (true, "WhisperX lecture server (hour-plus audio + speaker labels)".into()),
+                    Ok(r) if r.status().as_u16() == 401 => (false, "reachable, but the access token was rejected".into()),
+                    Ok(_) | Err(_) => match get(&format!("{b}/v1/models")) {
+                        Ok(r) if r.status().is_success() =>
+                            (true, "legacy server — works, but update the homelab for hour-plus lectures + speaker labels".into()),
+                        Ok(r) => (false, format!("HTTP {}", r.status().as_u16())),
+                        Err(_) => (false, "unreachable".into()),
+                    },
+                };
+                push("whisper", "Whisper · lecture transcription", true, ok, detail);
+            }
+        }
+
+        // WebDAV vault (/sync) — files + snapshot fallback; own Basic credentials.
+        match u("sync_url") {
+            None => push("sync", "File vault · WebDAV (/sync)", false, false, unconfigured.clone()),
+            Some(url) => {
+                let (ok, detail) = match auth_get(&base(&url)) {
+                    Ok(r) if r.status().is_success() || r.status().as_u16() == 404 || r.status().as_u16() == 405 =>
+                        (true, "reachable, credentials accepted".into()),
+                    Ok(r) if matches!(r.status().as_u16(), 401 | 403) =>
+                        (false, "reachable, but the sync username/password was rejected".into()),
+                    Ok(r) => (false, format!("HTTP {}", r.status().as_u16())),
+                    Err(_) => (false, "unreachable".into()),
+                };
+                push("sync", "File vault · WebDAV (/sync)", true, ok, detail);
+            }
+        }
+
+        // Live sync (/syncd) — the instant delta+WebSocket engine.
+        match u("syncd_url") {
+            None => push("syncd", "Live sync · instant deltas (/syncd)", false, false, unconfigured.clone()),
+            Some(url) => {
+                let (ok, detail) = match auth_get(&format!("{}/seq", base(&url))) {
+                    Ok(r) if r.status().is_success() => {
+                        let seq = r.json::<serde_json::Value>().ok()
+                            .and_then(|v| v.get("seq").and_then(|s| s.as_i64()));
+                        (true, match seq {
+                            Some(n) => format!("live sync ready (at change #{n})"),
+                            None => "live sync ready".into(),
+                        })
+                    }
+                    Ok(r) if matches!(r.status().as_u16(), 401 | 403) =>
+                        (false, "reachable, but the sync username/password was rejected".into()),
+                    Ok(r) if r.status().as_u16() == 404 =>
+                        (false, "not on this homelab yet — update it: git pull && docker compose up -d --build".into()),
+                    Ok(r) => (false, format!("HTTP {}", r.status().as_u16())),
+                    Err(_) => (false, "unreachable — the app falls back to WebDAV snapshot sync".into()),
+                };
+                push("syncd", "Live sync · instant deltas (/syncd)", true, ok, detail);
+            }
+        }
+
+        // Ingest (Tika) — mobile document extraction.
+        match u("ingest_url") {
+            None => push("ingest", "Ingest · documents on mobile (/ingest)", false, false, unconfigured.clone()),
+            Some(url) => {
+                let (ok, detail) = match get(&format!("{}/tika", base(&url))) {
+                    Ok(r) if r.status().is_success() => (true, "Tika ready".into()),
+                    Ok(r) if r.status().as_u16() == 401 => (false, "reachable, but the access token was rejected".into()),
+                    Ok(r) => (false, format!("HTTP {}", r.status().as_u16())),
+                    Err(_) => (false, "unreachable".into()),
+                };
+                push("ingest", "Ingest · documents on mobile (/ingest)", true, ok, detail);
+            }
+        }
+
+        // Ollama — optional (compose profile), so absence is expected.
+        match u("ollama_url") {
+            None => push("ollama", "Ollama · keyless local models", false, false, unconfigured.clone()),
+            Some(url) => {
+                let (ok, detail) = match get(&format!("{}/api/tags", base(&url))) {
+                    Ok(r) if r.status().is_success() => {
+                        let n = r.json::<serde_json::Value>().ok()
+                            .and_then(|v| v.get("models").and_then(|m| m.as_array()).map(|a| a.len()));
+                        (true, match n {
+                            Some(0) => "running — pull a model: docker exec -it cortex-ollama ollama pull llama3.1".into(),
+                            Some(n) => format!("running with {n} model{}", if n == 1 { "" } else { "s" }),
+                            None => "running".into(),
+                        })
+                    }
+                    Ok(r) if r.status().as_u16() == 401 => (false, "reachable, but the access token was rejected".into()),
+                    Ok(r) => (false, format!("HTTP {}", r.status().as_u16())),
+                    Err(_) => (false, "not running — optional; start it with: docker compose --profile ollama up -d".into()),
+                };
+                push("ollama", "Ollama · keyless local models", true, ok, detail);
+            }
+        }
+
+        Ok(out)
+    })
+    .await
+    .map_err(|e| crate::error::Error::Other(format!("homelab status task failed: {e}")))?
+}

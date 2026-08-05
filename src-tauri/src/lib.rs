@@ -437,6 +437,7 @@ pub fn run() {
             calendar::set_event_status,
             calendar::check_reminders,
             alerts::notification_route,
+            homelab::homelab_status,
             // review
             review::record_attempt,
             review::review_set,

@@ -939,6 +939,17 @@ export const onNoteCreated = (cb: () => void): Promise<UnlistenFn> =>
 export const onSyncApplied = (cb: () => void): Promise<UnlistenFn> =>
   listen("sync:applied", () => cb());
 
+// ---- homelab per-service status (Settings → Integrations) ----
+export interface HomelabServiceStatus {
+  id: string;
+  label: string;
+  configured: boolean;
+  ok: boolean;
+  detail: string;
+}
+/** Probe every homelab service through the URLs the app actually uses. */
+export const homelabStatus = () => invoke<HomelabServiceStatus[]>("homelab_status");
+
 // ---- notification tap deep links (mobile) ----
 // Where a tapped OS notification should land in the app; stored by the backend
 // (alerts.rs) keyed on the notification's numeric id.

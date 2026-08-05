@@ -452,10 +452,15 @@
     clearTimeout(hlSaveTimer);
     hlSaveTimer = setTimeout(saveHomelabBases, 400);
   }
+  // Per-service health grid (SearXNG / WhisperX / WebDAV / syncd / ingest / Ollama),
+  // probed through the SAME resolved URLs the app actually uses.
+  let svcStatus = $state<api.HomelabServiceStatus[] | null>(null);
+  let svcTesting = $state(false);
   async function testHomelab() {
     const tiers: [string, string][] = [["local", hlBase], ["tailscale", hlTailscale], ["public", hlPublic]];
     if (!tiers.some(([, u]) => u.trim())) return;
     hlState = "testing";
+    svcTesting = true;
     const reach: Record<string, "ok" | "fail"> = {};
     for (const [tier, url] of tiers) {
       if (!url.trim()) continue;
@@ -463,7 +468,12 @@
     }
     hlReach = reach;
     hlState = Object.values(reach).some((r) => r === "ok") ? "ok" : "fail";
+    // Then check each service individually so a broken one is named, not guessed.
+    try { svcStatus = await api.homelabStatus(); } catch { svcStatus = null; }
+    svcTesting = false;
   }
+  // Whether the homelab's live-sync service answered on the last test (null = unknown).
+  const syncdOk = $derived(svcStatus?.find((s) => s.id === "syncd")?.ok ?? null);
 
   // ---- live homelab sync (smart per-record merge + binary file sync) ----
   // Three endpoint tiers tried in order (auto): local LAN → Tailscale → public.
@@ -1970,7 +1980,7 @@ Notes: {about}</pre>
           <div class="set-group-h svc-h">
             <div>
               <h3 class="set-group-t">Homelab URL</h3>
-              <p class="set-group-d">One address for everything. Run the <span class="mono">homelab/</span> docker compose and point Cortex here — search, transcription, local models and sync are all reached off this single URL (Cortex adds <span class="mono">/searxng</span>, <span class="mono">/whisper</span>, <span class="mono">/ollama</span>, <span class="mono">/sync</span> for you). Add a Tailscale and/or public address and Cortex auto-picks the first reachable: <strong>local → Tailscale → public</strong>.</p>
+              <p class="set-group-d">One address for everything. Run the <span class="mono">homelab/</span> docker compose and point Cortex here — search, lecture transcription, instant sync, mobile ingest and local models are all reached off this single URL (Cortex adds <span class="mono">/searxng</span>, <span class="mono">/whisper</span>, <span class="mono">/sync</span>, <span class="mono">/syncd</span>, <span class="mono">/ingest</span>, <span class="mono">/ollama</span> for you). Add a Tailscale and/or public address and Cortex auto-picks the first reachable: <strong>local → Tailscale → public</strong>.</p>
             </div>
             {#if hlBase.trim()}
               {@const p = connPill(hlState === "idle" ? null : hlState, true)}
@@ -2003,13 +2013,31 @@ Notes: {about}</pre>
             <div class="set-row stacked">
               <div class="row-inline" style="flex-wrap:wrap; gap:8px 12px; align-items:center">
                 <button class="btn" onclick={testHomelab} disabled={hlState === 'testing' || !(hlBase.trim() || hlTailscale.trim() || hlPublic.trim())}>
-                  <Icon name="refresh" size={12} /> {hlState === 'testing' ? "Testing…" : "Test all URLs"}
+                  <Icon name="refresh" size={12} /> {hlState === 'testing' ? "Testing…" : "Test homelab"}
                 </button>
                 {#if hlReach.local}<span class="hl-reach" style="color:{hlReach.local === 'ok' ? 'var(--ok)' : 'var(--err,#e5484d)'}">LAN {hlReach.local === 'ok' ? '✓' : '✗'}</span>{/if}
                 {#if hlReach.tailscale}<span class="hl-reach" style="color:{hlReach.tailscale === 'ok' ? 'var(--ok)' : 'var(--err,#e5484d)'}">Tailscale {hlReach.tailscale === 'ok' ? '✓' : '✗'}</span>{/if}
                 {#if hlReach.public}<span class="hl-reach" style="color:{hlReach.public === 'ok' ? 'var(--ok)' : 'var(--err,#e5484d)'}">Public {hlReach.public === 'ok' ? '✓' : '✗'}</span>{/if}
               </div>
             </div>
+            <!-- Per-service health: each feature probed on the exact URL the app
+                 uses, so a red row names the ONE thing to fix (and how). -->
+            {#if svcTesting && !svcStatus}
+              <div class="set-row-d faint" style="margin-top:6px">Checking each service…</div>
+            {:else if svcStatus}
+              <div style="margin-top:10px">
+                {#each svcStatus as s (s.id)}
+                  <div class="dep-row" class:dep-missing={s.configured && !s.ok}>
+                    <span class="dep-dot" class:on={s.ok}></span>
+                    <div class="dep-main">
+                      <span class="dep-name">{s.label}</span>
+                      <span class="dep-detail mono">{s.detail}</span>
+                    </div>
+                    <span class="dep-status {s.ok ? 'ok' : s.configured ? 'miss' : ''}">{s.ok ? "working" : s.configured ? "problem" : "not set"}</span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </div>
         </section>
 
@@ -2072,7 +2100,7 @@ Notes: {about}</pre>
           <div class="set-group-h svc-h">
             <div>
               <h3 class="set-group-t">Live sync</h3>
-              <p class="set-group-d">Sync your whole vault to a homelab WebDAV target — database <em>and</em> source files. Smart per-record merge across devices: newest edit wins, rows from either device are kept, and nothing is deleted unless you actually deleted it.</p>
+              <p class="set-group-d">Instant cross-device sync. Every change streams to your other devices as a tiny per-record delta over a WebSocket (the homelab's <span class="mono">/syncd</span> service) and shows up within about a second — newest edit wins, and nothing is deleted unless you actually deleted it. Source files and a full snapshot ride the <span class="mono">/sync</span> WebDAV vault, which also serves as the automatic fallback when <span class="mono">/syncd</span> isn't reachable.</p>
             </div>
             <span class="status-pill status-pill--{syncPill().cls}"><span class="dot"></span>{syncPill().label}</span>
           </div>
@@ -2088,7 +2116,18 @@ Notes: {about}</pre>
             </div>
 
             <div class="set-row stacked">
-              <div class="set-row-d">Syncs through the <strong>Homelab URL</strong> above (its <span class="mono">/sync</span> WebDAV), with the same local → Tailscale → public reachability. Just add the credentials your WebDAV target expects below.</div>
+              <div class="set-row-d">Rides the <strong>Homelab URL</strong> above (its <span class="mono">/syncd</span> + <span class="mono">/sync</span> services), with the same local → Tailscale → public reachability. One username/password below covers both — it's the pair set in <span class="mono">docker-compose.yml</span> for the <span class="mono">sync</span> and <span class="mono">syncd</span> services.</div>
+              {#if syncOn}
+                {#if app.syncLive}
+                  <div class="set-row-d" style="color:var(--ok)">Live — connected to <span class="mono">/syncd</span>; changes propagate across devices in about a second.</div>
+                {:else if syncdOk === false}
+                  <div class="set-row-d" style="color:var(--warn)">Running in snapshot mode: the homelab's live-sync service didn't answer (see the service check above). Update the homelab — <span class="mono">git pull && docker compose up -d --build</span> — to get instant sync; until then changes still sync via WebDAV snapshots.</div>
+                {:else if app.syncState === "error"}
+                  <div class="set-row-d" style="color:var(--warn)">Sync is failing — hit <strong>Test homelab</strong> above; the service check will name what's broken (URL, credentials, or a service that isn't running).</div>
+                {:else}
+                  <div class="set-row-d faint">Not live right now — snapshot sync still runs in the background. <strong>Test homelab</strong> above checks whether your homelab has the <span class="mono">/syncd</span> live-sync service.</div>
+                {/if}
+              {/if}
             </div>
             <div class="set-row stacked">
               <div class="set-row-t">Username <span class="faint">optional</span></div>
@@ -2102,7 +2141,7 @@ Notes: {about}</pre>
                   <Icon name="upload" size={12} /> {app.syncState === "syncing" ? "Syncing…" : "Sync now"}
                 </button>
               </div>
-              <div class="set-row-d">Last synced: <span class="mono">{fmtSyncTime(app.syncLastAt)}</span>. Files live under <span class="mono">files/</span> on the target; the DB merges by record. Bring up a WebDAV target with the <span class="mono">homelab/</span> compose.</div>
+              <div class="set-row-d">Last snapshot sync: <span class="mono">{fmtSyncTime(app.syncLastAt)}</span> (live deltas don't update this — it's the periodic full-vault pass). Files live under <span class="mono">files/</span> on the target; the DB merges by record.</div>
             </div>
           </div>
         </section>
