@@ -7,6 +7,12 @@ import type { Subject, Source } from "./api";
 import { music, BUILTIN_STATION_IDS, builtinStationUrl, builtinStationUrls } from "./music";
 import { keybinds } from "./keybinds.svelte";
 import { isMobile } from "./platform";
+import {
+  applyLanguage,
+  getLanguage,
+  normalizeLanguage,
+  type Language,
+} from "./i18n";
 
 export type View =
   | "dashboard"
@@ -615,6 +621,7 @@ class AppStore {
   // Pull diagrams/images from the homelab SearXNG into cheatsheets & chat. On by
   // default once a SearXNG server is connected; toggle lives in Settings → Homelab.
   webImagesEnabled = $state(false);
+  language = $state<Language>(getLanguage());
 
   activeSubject = $derived(
     this.subjects.find((s) => s.id === this.activeSubjectId) ?? null
@@ -720,6 +727,7 @@ class AppStore {
     // Restore preferences: theme, keybinds, and audio defaults.
     try {
       const all = await api.getAllSettings();
+      this.applyLanguagePreference(all["language"]);
       // Follow Omarchy theme takes precedence when enabled — adopt the desktop's
       // current palette on every launch (and fall through if it can't be read).
       this.followOmarchy = all["follow_omarchy"] === "true";
@@ -1433,6 +1441,15 @@ class AppStore {
   }
 
   // ---- theme ----
+  applyLanguagePreference(value: unknown) {
+    this.language = normalizeLanguage(value);
+    applyLanguage(this.language);
+  }
+  setLanguage(value: unknown) {
+    this.applyLanguagePreference(value);
+    api.setSetting("language", this.language).catch(() => {});
+  }
+
   applyTheme(t: Theme) {
     document.documentElement.setAttribute("data-theme", t);
     // Synchronous cache so the NEXT launch/refresh paints the right theme

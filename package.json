@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "i18n:audit": "bun scripts/i18n-audit.ts",
     "sidecars": "bun scripts/fetch-sidecars.mjs",
     "tauri": "tauri"
   },
@@ -24,6 +25,7 @@
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@tauri-apps/cli": "^2.1.0",
     "@tsconfig/svelte": "^5.0.4",
+    "@types/bun": "^1.4.0",
     "@types/katex": "^0.16.8",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",

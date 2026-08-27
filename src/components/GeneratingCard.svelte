@@ -1,6 +1,7 @@
 <script lang="ts">
   import { jobs, jobKindLabel, type Job } from "../lib/jobs.svelte";
   import { app } from "../lib/store.svelte";
+  import { translateText } from "../lib/i18n";
   import Icon from "./Icon.svelte";
 
   let { job }: { job: Job } = $props();
@@ -19,7 +20,7 @@
 {#if job.status === "running"}
   <div class="gen-card">
     <span class="is-spin"></span>
-    <span class="gen-card-label mono">Generating {jobKindLabel(job.kind)}…</span>
+    <span class="gen-card-label mono">{translateText(`Generating ${jobKindLabel(job.kind)}…`, app.language)}</span>
     {#if job.label}
       <span class="gen-card-sub mono">{job.label}</span>
     {/if}
@@ -38,8 +39,8 @@
   <div class="gen-card gen-card--err">
     <span class="gen-card-ico"><Icon name="bolt" size={14} color="var(--err)" /></span>
     <div class="gen-card-body">
-      <span class="gen-card-label mono">Couldn't generate {jobKindLabel(job.kind)}</span>
-      <span class="gen-card-sub mono">{job.error ?? "Unknown error"}</span>
+      <span class="gen-card-label mono">{translateText(`Couldn't generate ${jobKindLabel(job.kind)}`, app.language)}</span>
+      <span class="gen-card-sub mono">{translateText(job.error ?? "Unknown error", app.language)}</span>
     </div>
     <button
       class="gen-card-x"

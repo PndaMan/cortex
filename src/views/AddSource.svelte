@@ -5,6 +5,7 @@
   import { jobs } from "../lib/jobs.svelte";
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
+  import { translateText } from "../lib/i18n";
 
   // Current input method selected
   let method = $state<"upload" | "url" | "text" | "record" | "photo" | null>(null);
@@ -49,7 +50,7 @@
     if (pending) app.addSourceTopicId = null; // consume once
   });
   const subjectOptions = $derived(
-    app.subjects.map((s) => ({ id: s.id, label: s.name }))
+    app.subjects.map((s) => ({ id: s.id, label: s.name, userContent: true }))
   );
   const selectedSubject = $derived(
     app.subjects.find((s) => s.id === selectedSubjectId) ?? null
@@ -57,7 +58,7 @@
   const topicId = $derived(selectedTopic || null);
   // Themed dropdown options: the selected subject's topics, plus an explicit "no topic" entry.
   const topicOptions = $derived([
-    ...(selectedSubject?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),
+    ...(selectedSubject?.topics ?? []).map((t) => ({ id: t.id, label: t.name, userContent: true })),
     { id: "", label: "— no topic —" },
   ]);
 
@@ -292,7 +293,7 @@
     </div>
     {#if selectedSubject}
       <div class="addsrc-crumb mono faint">
-        into {selectedSubject.name}{selectedTopic ? " › " + (selectedSubject.topics.find((t) => t.id === selectedTopic)?.name ?? "") : ""}
+        {translateText("into", app.language)} <span data-i18n-skip>{selectedSubject.name}{selectedTopic ? " › " + (selectedSubject.topics.find((t) => t.id === selectedTopic)?.name ?? "") : ""}</span>
       </div>
     {/if}
   </div>
@@ -307,7 +308,7 @@
           <Picker
             value={method ?? ""}
             onChange={(id) => selectMethod(id as typeof methods[number]["id"])}
-            options={methods.map((m) => ({ id: m.id, label: m.t }))}
+            options={methods.map((m) => ({ id: m.id, label: translateText(m.t, app.language) }))}
             icon={methods.find((m) => m.id === method)?.ico ?? "doc"}
             placeholder="Choose a source type…"
           />
@@ -321,8 +322,8 @@
           >
             <span class="am-ico"><Icon name={m.ico} size={18} /></span>
             <div class="am-text">
-              <div class="am-t">{m.t}</div>
-              <div class="am-d mono">{m.d}</div>
+              <div class="am-t">{translateText(m.t, app.language)}</div>
+              <div class="am-d mono">{translateText(m.d, app.language)}</div>
             </div>
             <span class="kbd">{m.k}</span>
           </button>

@@ -10,6 +10,7 @@
   import GeneratingCard from "../components/GeneratingCard.svelte";
   import Picker from "../components/Picker.svelte";
   import { jobs } from "../lib/jobs.svelte";
+  import { translateText } from "../lib/i18n";
 
   const TABS = [
     { id: "cheatsheet", label: "Cheatsheet", icon: "book" },
@@ -38,10 +39,10 @@
   // The cheatsheet scope currently in view: the active topic's name, or
   // "Whole subject" when no topic is selected. Tracks app.cheatTopicId, which the
   // Cheatsheet view keeps in sync with its tab selection.
-  const scopeLabel = $derived(
+  const scopeTopicName = $derived(
     app.cheatTopicId
-      ? (subj?.topics.find((t) => t.id === app.cheatTopicId)?.name ?? "Whole subject")
-      : "Whole subject"
+      ? (subj?.topics.find((t) => t.id === app.cheatTopicId)?.name ?? null)
+      : null
   );
 
   // Load ALL sources for the subject (including ones with no topic, which the
@@ -155,7 +156,11 @@
     sel = allSelected ? {} : Object.fromEntries(srcList.map((s) => [s.id, true]));
   }
   const moveTargets = $derived([
-    ...(subj?.topics ?? []).map((t) => ({ id: t.id, label: "→ " + t.name })),
+    ...(subj?.topics ?? []).map((t) => ({
+      id: t.id,
+      label: "→ " + t.name,
+      userContent: true,
+    })),
     { id: "__none__", label: "→ no topic" },
   ]);
   async function bulkDelete() {
@@ -213,8 +218,15 @@
       >
         <span class="subj-glyph sm" style="color:{app.subjectColor(subj)};font-size:13px;line-height:1">{subj.glyph || "◆"}</span>
         <div>
-          <div class="st-name">{subj.name}</div>
-          <div class="st-code mono">{subj.code ? subj.code + " · " : ""}{scopeLabel}</div>
+          <div class="st-name" data-i18n-skip>{subj.name}</div>
+          <div class="st-code mono">
+            {#if subj.code}<span data-i18n-skip>{subj.code}</span> · {/if}
+            {#if scopeTopicName}
+              <span data-i18n-skip>{scopeTopicName}</span>
+            {:else}
+              {translateText("Whole subject", app.language)}
+            {/if}
+          </div>
         </div>
         <button
           class="btn btn--icon btn--sm btn--ghost"
@@ -327,7 +339,12 @@
             {#each groups as g (g.key)}
               <div class="src-topic">
                 <div class="src-topic-h mono">
-                  <Icon name="chevron" size={11} /> {g.name}
+                  <Icon name="chevron" size={11} />
+                  {#if g.key === "__none__"}
+                    {g.name}
+                  {:else}
+                    <span data-i18n-skip>{g.name}</span>
+                  {/if}
                   <span class="faint">· {g.items.length}</span>
                   {#if g.key !== "__none__"}
                     <div class="grow"></div>

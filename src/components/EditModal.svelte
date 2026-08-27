@@ -37,7 +37,7 @@
   });
 
   const subjectOptions = $derived(
-    app.subjects.map((s) => ({ id: s.id, label: s.name }))
+    app.subjects.map((s) => ({ id: s.id, label: s.name, userContent: true }))
   );
 
   // Topic options are derived from the currently selected subject (not the
@@ -48,6 +48,7 @@
           ...(app.subjects.find((s) => s.id === selectedSubjectId)?.topics ?? []).map((tp) => ({
             id: tp.id,
             label: tp.name,
+            userContent: true,
           })),
           { id: "", label: "— no topic —" },
         ]

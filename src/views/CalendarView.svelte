@@ -13,6 +13,7 @@
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
   import EventModal from "../components/EventModal.svelte";
+  import { translateText } from "../lib/i18n";
 
   const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const MONTHS = [
@@ -129,7 +130,7 @@
   let filterSubjectId = $state<string>(""); // "" = all subjects
   const subjectOptions = $derived([
     { id: "", label: "All subjects" },
-    ...app.subjects.map((s) => ({ id: s.id, label: s.name })),
+    ...app.subjects.map((s) => ({ id: s.id, label: s.name, userContent: true })),
   ]);
 
   // ---- events + load window ----
@@ -454,7 +455,7 @@
       <button class="btn btn--ghost btn--icon btn--sm" type="button" aria-label="Next" onclick={next}>
         <Icon name="chevron" size={12} />
       </button>
-      <div class="cal-title">{headerTitle}</div>
+      <div class="cal-title">{translateText(headerTitle, app.language)}</div>
     </div>
 
     <div class="cal-head-r">
@@ -483,7 +484,7 @@
     <!-- ===== MONTH GRID ===== -->
     <div class="cal-dow">
       {#each DOW as d, i}
-        <div class={"cal-dow-cell" + (i === 0 || i === 6 ? " weekend" : "")}>{d}</div>
+        <div class={"cal-dow-cell" + (i === 0 || i === 6 ? " weekend" : "")}>{translateText(d, app.language)}</div>
       {/each}
     </div>
 
@@ -554,7 +555,7 @@
             class={"tg-day-head" + (c.isToday ? " today" : "") + (c.weekend ? " weekend" : "")}
             onclick={() => openDayView(c.date)}
           >
-            <span class="tg-dow">{DOW[c.date.getDay()]}</span>
+            <span class="tg-dow">{translateText(DOW[c.date.getDay()], app.language)}</span>
             <span class="tg-dnum">{c.date.getDate()}</span>
           </button>
         {/each}

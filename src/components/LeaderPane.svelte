@@ -2,6 +2,7 @@
   import { app } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
   import { LEADER_ACTIONS, type LeaderAction } from "../lib/keybinds.svelte";
+  import { translateText } from "../lib/i18n";
 
   // Run handlers keyed by leader key. The key/label/detail spec lives in
   // lib/keybinds.svelte (shared with the help overlay); only the behavior is here.
@@ -63,9 +64,9 @@
         {#each actions as a}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <div class="leader-item" onclick={() => runAction(a)}>
-            <span class="lk">{a.key}</span>{a.label}
+            <span class="lk">{a.key}</span>{translateText(a.label, app.language)}
             {#if a.detail}
-              <span class="ld">{a.detail}</span>
+              <span class="ld">{translateText(a.detail, app.language)}</span>
             {/if}
           </div>
         {/each}

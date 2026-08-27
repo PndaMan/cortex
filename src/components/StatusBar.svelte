@@ -28,7 +28,7 @@
   <div class="mode-block">
     {app.mode}
     {#if app.activeSubject}
-      <span class="mode-ctx">{app.activeSubject.code ?? app.activeSubject.name}</span>
+      <span class="mode-ctx" data-i18n-skip>{app.activeSubject.code ?? app.activeSubject.name}</span>
     {/if}
   </div>
 

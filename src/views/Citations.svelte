@@ -291,7 +291,7 @@
                 {@const on = aTopics.includes(t.id)}
                 <button class="cit-chip{on ? ' on' : ''}" onclick={() => toggleFormTopic(t.id)}>
                   <span class="cit-chip-box">{#if on}<Icon name="check" size={9} />{/if}</span>
-                  {t.glyph ?? ""} {t.name}
+                  <span data-i18n-skip>{t.glyph ?? ""} {t.name}</span>
                 </button>
               {/each}
             </div>
