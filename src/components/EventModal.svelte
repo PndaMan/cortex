@@ -164,7 +164,7 @@
 
   const subjectOptions = $derived([
     { id: "", label: "— no subject —" },
-    ...app.subjects.map((s) => ({ id: s.id, label: s.name })),
+    ...app.subjects.map((s) => ({ id: s.id, label: s.name, userContent: true })),
   ]);
 
   // Compose the final start/end epoch ms from date + time fields.

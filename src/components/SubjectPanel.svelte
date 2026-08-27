@@ -71,7 +71,11 @@
       : []
   );
   const courseOptions = $derived(
-    mdData.courses.map((c) => ({ id: c.id, label: c.fullname || c.shortname || c.id }))
+    mdData.courses.map((c) => ({
+      id: c.id,
+      label: c.fullname || c.shortname || c.id,
+      userContent: true,
+    }))
   );
 
   async function linkCourse(courseId: string) {

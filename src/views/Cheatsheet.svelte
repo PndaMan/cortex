@@ -11,6 +11,7 @@
   import { savePdf } from "../lib/pdf";
   import { isMobile } from "../lib/platform";
   import { safeUrl, safeImgSrc } from "../lib/url";
+  import { translateText } from "../lib/i18n";
 
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -657,7 +658,7 @@
             onclick={() => selectTopic(t.id)}
           >
             {#if t.glyph}<span class="cs-tab-glyph">{t.glyph}</span>{/if}
-            {t.name}
+            <span data-i18n-skip>{t.name}</span>
             <span class="cs-tab-count mono">{t.sources.length}</span>
           </button>
         {/each}
@@ -694,9 +695,10 @@
                 ? "this subject"
                 : "this topic"} first — your cheatsheet is synthesized from them.
             {:else}
-              A completeness-checked cheatsheet will be generated from
-              {selectedTopicId === null ? "this subject's" : "this topic's"}
-              {scopeSources} source{scopeSources !== 1 ? "s" : ""}.
+              {translateText(
+                `A completeness-checked cheatsheet will be generated from ${selectedTopicId === null ? "this subject's" : "this topic's"} ${scopeSources} source${scopeSources !== 1 ? "s" : ""}.`,
+                app.language,
+              )}
             {/if}
           </p>
           {#if !noSources && app.webImagesEnabled}
@@ -715,9 +717,9 @@
             <div class="eyebrow">
               Cheatsheet · {selectedTopicId === null ? "Whole subject" : "Topic"}
             </div>
-            <h1 class="cs-title">{cheatTopic}</h1>
+            <h1 class="cs-title" data-i18n-skip>{cheatTopic}</h1>
             <div class="cs-sub mono">
-              {sub.name}{sub.code ? " · " + sub.code : ""} ·
+              <span data-i18n-skip>{sub.name}{sub.code ? " · " + sub.code : ""}</span> ·
               {#if sourcesUsed < sourceCount}
                 <span class="cs-cov-warn" title="Some sources could not be synthesized — regenerate to retry">⚠ synthesized from {sourcesUsed}/{sourceCount} sources</span>
               {:else}

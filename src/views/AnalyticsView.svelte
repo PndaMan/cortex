@@ -1,6 +1,9 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
+  import { translateText } from "../lib/i18n";
+
+  const tr = (source: string) => translateText(source, app.language);
 
   // The whole dashboard arrives in ONE call (see repo::analytics_summary) so a
   // single DB lock backs every chart below. Reloaded when the view mounts and
@@ -106,13 +109,13 @@
     return raw.map((v) => (v > 0 ? Math.max(0.12, Math.sqrt(v)) : 0));
   });
   const radarMetricLabel = $derived(
-    radarMetric === "accuracy" ? "review accuracy" : radarMetric === "cards" ? "flashcards" : "engagement (sources · materials · cards)"
+    tr(radarMetric === "accuracy" ? "review accuracy" : radarMetric === "cards" ? "flashcards" : "engagement (sources · materials · cards)")
   );
   const accentColor = $derived(topicSubject ? app.subjectColor(app.subjects.find((s) => s.id === topicSubject) ?? null) : "var(--accent)");
 
   // Subject lookups come from the already-loaded subject list, not extra queries.
   function subjectName(id: string): string {
-    return app.subjects.find((s) => s.id === id)?.name ?? "Unknown subject";
+    return app.subjects.find((s) => s.id === id)?.name ?? tr("Unknown subject");
   }
   function subjectColor(id: string): string {
     return app.subjectColor(app.subjects.find((s) => s.id === id) ?? null);
@@ -126,17 +129,18 @@
 
   // Format minutes as "Hh Mm" / "Mm" so the cards read naturally.
   function fmtMins(m: number): string {
-    if (m <= 0) return "0m";
+    if (m <= 0) return tr("0m");
     const h = Math.floor(m / 60);
     const min = m % 60;
-    return h > 0 ? (min > 0 ? `${h}h ${min}m` : `${h}h`) : `${min}m`;
+    const formatted = h > 0 ? (min > 0 ? `${h}h ${min}m` : `${h}h`) : `${min}m`;
+    return tr(formatted);
   }
   const pct = (x: number) => `${Math.round(x * 100)}%`;
 
   // Short weekday/day label for an ISO "YYYY-MM-DD" (local date string).
   function dayLabel(iso: string): string {
     const [y, m, d] = iso.split("-").map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "short" });
+    return new Date(y, m - 1, d).toLocaleDateString(app.language === "zh-CN" ? "zh-CN" : undefined, { weekday: "short" });
   }
 
   // ── focus-hours contributions heatmap (GitHub-style; pure CSS grid) ──
@@ -200,7 +204,7 @@
       if (month !== lastMonth) {
         // Skip a label crammed into the very first partial column (GitHub does too).
         if (ci > 0 || mondayIdx(cell.date) === 0) {
-          out.push({ col: ci, label: MONTHS[month] });
+          out.push({ col: ci, label: tr(MONTHS[month]) });
         }
         lastMonth = month;
       }
@@ -219,9 +223,25 @@
   function tipLabel(c: NonNullable<Cell>): string {
     const [y, m, d] = c.date.split("-").map(Number);
     const dt = new Date(y, m - 1, d);
-    const when = dt.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-    const amount = c.minutes >= 60 ? `${(c.minutes / 60).toFixed(1)}h` : `${c.minutes}m`;
+    const when = dt.toLocaleDateString(app.language === "zh-CN" ? "zh-CN" : undefined, { weekday: "short", day: "numeric", month: "short" });
+    const amount = tr(c.minutes >= 60 ? `${(c.minutes / 60).toFixed(1)}h` : `${c.minutes}m`);
     return `${amount} · ${when}`;
+  }
+
+  function weakReason(reason: string): string {
+    return reason.split(" · ").map(tr).join(" · ");
+  }
+
+  function radarTopicSummary(t: api.TopicStat): string {
+    const parts = [
+      tr(`${t.sources} sources`),
+      tr(`${t.materials} materials`),
+      tr(`${t.cards} cards`),
+      t.reviews > 0
+        ? tr(`${pct(t.accuracy)} acc`)
+        : tr("no reviews"),
+    ];
+    return `${t.topic_name}: ${parts.join(" · ")}`;
   }
   function showTip(e: MouseEvent, c: Cell) {
     if (!c) return;
@@ -289,7 +309,7 @@
       <div class="an-stats">
         <div class="an-stat">
           <div class="an-stat-k mono">Current streak</div>
-          <div class="an-stat-v">{streak}<span class="an-stat-u"> day{streak === 1 ? "" : "s"}</span></div>
+          <div class="an-stat-v">{tr(`${streak} day${streak === 1 ? "" : "s"}`)}</div>
         </div>
         <div class="an-stat">
           <div class="an-stat-k mono">Focus this week</div>
@@ -323,7 +343,7 @@
             <circle cx="60" cy="60" r="48" class="an-donut-bg" />
             <circle cx="60" cy="60" r="48" class="an-donut-fg" style:stroke="var(--ok)" stroke-dasharray={ringDash(accuracyWeek, 48)} transform="rotate(-90 60 60)" />
             <text x="60" y="58" class="an-donut-v">{reviewsWeek > 0 ? pct(accuracyWeek) : "—"}</text>
-            <text x="60" y="76" class="an-donut-k">{reviewsWeek} reviews</text>
+            <text x="60" y="76" class="an-donut-k">{tr(`${reviewsWeek} review${reviewsWeek === 1 ? "" : "s"}`)}</text>
           </svg>
         </section>
 
@@ -335,27 +355,27 @@
               {#each pomo.by_hour as min, h (h)}
                 {@const p1 = polar(60, 60, 16, h / 24)}
                 {@const p2 = polar(60, 60, 16 + (min > 0 ? Math.max(0.32, min / maxHour) : 0.07) * 38, h / 24)}
-                <line x1={p1[0]} y1={p1[1]} x2={p2[0]} y2={p2[1]} class="an-spoke" class:zero={min === 0} style:stroke={min > 0 ? accentColor : "var(--border)"}><title>{min > 0 ? fmtMins(min) : "no focus"} · {h}:00</title></line>
+                <line x1={p1[0]} y1={p1[1]} x2={p2[0]} y2={p2[1]} class="an-spoke" class:zero={min === 0} style:stroke={min > 0 ? accentColor : "var(--border)"}><title>{min > 0 ? fmtMins(min) : tr("no focus")} · {h}:00</title></line>
               {/each}
-              <text x="60" y="64" class="an-clock-c mono">24h</text>
+              <text x="60" y="64" class="an-clock-c mono">{tr("24h")}</text>
             </svg>
           </section>
         {/if}
 
         <section class="an-card an-radial">
-          <div class="an-card-h"><h3 class="an-card-t mono">Consistency · {range}d</h3></div>
+          <div class="an-card-h"><h3 class="an-card-t mono">{tr(`Consistency · ${range}d`)}</h3></div>
           <svg class="an-donut" viewBox="0 0 120 120">
             <circle cx="60" cy="60" r="48" class="an-donut-bg" />
             <circle cx="60" cy="60" r="48" class="an-donut-fg" style:stroke="var(--accent)" stroke-dasharray={ringDash(consistency, 48)} transform="rotate(-90 60 60)" />
             <text x="60" y="58" class="an-donut-v">{pct(consistency)}</text>
-            <text x="60" y="76" class="an-donut-k">{daysStudied}/{mpd.length} days</text>
+            <text x="60" y="76" class="an-donut-k">{tr(`${daysStudied}/${mpd.length} days`)}</text>
           </svg>
         </section>
       </div>
 
       <!-- ── trends: focus minutes + reviews per day ── -->
       <section class="an-card">
-        <div class="an-card-h"><h3 class="an-card-t mono">Focus minutes · last {range}d</h3></div>
+        <div class="an-card-h"><h3 class="an-card-t mono">{tr(`Focus minutes · last ${range}d`)}</h3></div>
         <div class="an-ts">
           {#each mpd as d, i (d.day)}
             <div class="an-ts-col">
@@ -367,11 +387,11 @@
       </section>
 
       <section class="an-card">
-        <div class="an-card-h"><h3 class="an-card-t mono">Reviews · last {range}d</h3></div>
+        <div class="an-card-h"><h3 class="an-card-t mono">{tr(`Reviews · last ${range}d`)}</h3></div>
         <div class="an-ts">
           {#each rpd as d, i (d.day)}
             <div class="an-ts-col">
-              <div class="an-ts-track"><div class="an-ts-fill rev" style:height={pct(d.reviews / maxRev)} class:zero={d.reviews === 0}><title>{d.reviews} reviews · {d.reviews > 0 ? pct(d.accuracy) : "—"} acc · {d.day}</title></div></div>
+              <div class="an-ts-track"><div class="an-ts-fill rev" style:height={pct(d.reviews / maxRev)} class:zero={d.reviews === 0}><title>{tr(`${d.reviews} review${d.reviews === 1 ? "" : "s"}`)} · {d.reviews > 0 ? tr(`${pct(d.accuracy)} acc`) : "—"} · {d.day}</title></div></div>
               {#if i % labelEvery === 0}<span class="an-ts-x mono">{dayNum(d.day)}</span>{/if}
             </div>
           {/each}
@@ -384,8 +404,8 @@
           <div class="an-card-h"><h3 class="an-card-t mono">Focus sessions</h3><span class="an-card-sub mono">{fmtMins(pomo.focus_minutes)} focused</span></div>
           <div class="an-pomo">
             <div class="an-pomo-stat"><div class="an-pomo-v">{pomo.focus_sessions}</div><div class="an-pomo-k mono">sessions</div></div>
-            <div class="an-pomo-stat"><div class="an-pomo-v">{Math.round(pomo.avg_session_min)}<span class="an-stat-u">m</span></div><div class="an-pomo-k mono">avg length</div></div>
-            <div class="an-pomo-stat"><div class="an-pomo-v">{pomo.longest_session_min}<span class="an-stat-u">m</span></div><div class="an-pomo-k mono">longest</div></div>
+            <div class="an-pomo-stat"><div class="an-pomo-v">{Math.round(pomo.avg_session_min)}<span class="an-stat-u">{tr("min")}</span></div><div class="an-pomo-k mono">avg length</div></div>
+            <div class="an-pomo-stat"><div class="an-pomo-v">{pomo.longest_session_min}<span class="an-stat-u">{tr("min")}</span></div><div class="an-pomo-k mono">longest</div></div>
             <div class="an-pomo-stat"><div class="an-pomo-v">{fmtMins(pomo.break_minutes)}</div><div class="an-pomo-k mono">on breaks</div></div>
           </div>
         </section>
@@ -404,7 +424,7 @@
           </div>
           <div class="an-metricbar">
             {#each [{ id: "engagement", label: "Engagement" }, { id: "accuracy", label: "Accuracy" }, { id: "cards", label: "Cards" }] as m}
-              <button type="button" class={"an-metric" + (radarMetric === m.id ? " on" : "")} onclick={() => (radarMetric = m.id as typeof radarMetric)}>{m.label}</button>
+              <button type="button" class={"an-metric" + (radarMetric === m.id ? " on" : "")} onclick={() => (radarMetric = m.id as typeof radarMetric)}>{tr(m.label)}</button>
             {/each}
           </div>
           {#if radarTopics.length >= 3}
@@ -415,12 +435,12 @@
                   {@const p = polar(120, 120, 90, i / radarTopics.length)}
                   {@const lp = polar(120, 120, 106, i / radarTopics.length)}
                   <line x1="120" y1="120" x2={p[0]} y2={p[1]} class="an-radar-axis" />
-                  <text x={lp[0]} y={lp[1]} class="an-radar-lbl" text-anchor="middle">{t.topic_name.length > 11 ? t.topic_name.slice(0, 10) + "…" : t.topic_name}</text>
+                  <text x={lp[0]} y={lp[1]} class="an-radar-lbl" text-anchor="middle" data-i18n-skip>{t.topic_name.length > 11 ? t.topic_name.slice(0, 10) + "…" : t.topic_name}</text>
                 {/each}
                 <polygon points={radarPoints(radarValues, 120, 120, 90)} class="an-radar-poly" style:fill={accentColor} style:stroke={accentColor} />
                 {#each radarTopics as t, i (t.topic_id)}
                   {@const pt = polar(120, 120, 90 * Math.max(0.02, radarValues[i]), i / radarTopics.length)}
-                  <circle cx={pt[0]} cy={pt[1]} r="3.5" class="an-radar-dot" style:fill={accentColor}><title>{t.topic_name}: {t.sources} sources · {t.materials} materials · {t.cards} cards · {t.reviews > 0 ? pct(t.accuracy) + " acc" : "no reviews"}</title></circle>
+                  <circle cx={pt[0]} cy={pt[1]} r="3.5" class="an-radar-dot" style:fill={accentColor}><title data-i18n-skip>{radarTopicSummary(t)}</title></circle>
                 {/each}
               </svg>
               <div class="an-radar-note mono">distance from centre = {radarMetricLabel} · hover a point for detail</div>
@@ -435,7 +455,7 @@
       <section class="an-card hm-card">
         <div class="an-card-h">
           <h3 class="an-card-t mono">Focus hours · last year</h3>
-          <span class="an-card-sub mono">{yearHours.toFixed(1)}h total</span>
+          <span class="an-card-sub mono">{tr(`${yearHours.toFixed(1)}h total`)}</span>
         </div>
 
         <!-- Scroll wrapper: the full year is ~53 weeks wide; if it can't fit the
@@ -545,7 +565,7 @@
               <div class="an-tr">
                 <span class="an-td an-td--name">
                   <span class="an-dot" style:background={subjectColor(s.subject_id)}></span>
-                  <span class="an-name read">{subjectName(s.subject_id)}</span>
+                  <span class="an-name read" data-i18n-skip>{subjectName(s.subject_id)}</span>
                 </span>
                 <span class="an-td mono">{fmtMins(s.minutes)}</span>
                 <span class="an-td mono">{s.reviews}</span>
@@ -569,15 +589,15 @@
                 <span class="an-dot" style:background={subjectColor(t.subject_id)}></span>
                 <div class="an-weak-main">
                   <div class="an-weak-name read">
-                    <span class="an-weak-subj">{weakSubjectName(t)}</span>
+                    <span class="an-weak-subj" data-i18n-skip>{weakSubjectName(t)}</span>
                     <span class="an-weak-sep">·</span>
-                    {t.topic_name}
+                    <span data-i18n-skip>{t.topic_name}</span>
                   </div>
-                  <div class="an-weak-reason mono">{t.reason}</div>
+                  <div class="an-weak-reason mono">{weakReason(t.reason)}</div>
                 </div>
                 <div class="an-weak-stats mono">
-                  {#if t.reviews > 0}<span class="an-weak-stat">{pct(t.accuracy)} acc</span>{/if}
-                  {#if t.lapses > 0}<span class="an-weak-stat">{t.lapses} lapse{t.lapses === 1 ? "" : "s"}</span>{/if}
+                  {#if t.reviews > 0}<span class="an-weak-stat">{tr(`${pct(t.accuracy)} acc`)}</span>{/if}
+                  {#if t.lapses > 0}<span class="an-weak-stat">{tr(`${t.lapses} lapse${t.lapses === 1 ? "" : "s"}`)}</span>{/if}
                 </div>
               </div>
             {/each}
@@ -596,9 +616,7 @@
             <div class="an-fsrs-k mono">cards scheduled</div>
           </div>
           <div class="an-fsrs-stat">
-            <div class="an-fsrs-v">
-              {data.fsrs.cards > 0 ? data.fsrs.avg_stability.toFixed(1) : "—"}<span class="an-stat-u">{data.fsrs.cards > 0 ? " d" : ""}</span>
-            </div>
+            <div class="an-fsrs-v">{data.fsrs.cards > 0 ? tr(`${data.fsrs.avg_stability.toFixed(1)} days`) : "—"}</div>
             <div class="an-fsrs-k mono">avg stability</div>
           </div>
           <div class="an-fsrs-stat">

@@ -8,6 +8,7 @@
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
   import ModelSearch from "../components/ModelSearch.svelte";
+  import { LANGUAGE_OPTIONS } from "../lib/i18n";
   import { loadOpenRouterModels, type OrModel } from "../lib/openrouter";
   import { stations } from "../lib/mock";
   import { keybinds, ACTION_LABELS, ACTION_ORDER, LEADER_ACTIONS } from "../lib/keybinds.svelte";
@@ -880,7 +881,7 @@
   // Built-in + user-added stations, so the Default-station picker shows them all.
   const allStations = $derived([
     ...stations.map((s) => ({ id: s.id, label: s.name })),
-    ...app.customStations.map((s) => ({ id: s.id, label: s.name })),
+    ...app.customStations.map((s) => ({ id: s.id, label: s.name, userContent: true })),
   ]);
 
   // Stream-tool detection for the YouTube-audio engine (mpv sidecar).
@@ -1403,7 +1404,7 @@
             {:else}
               {#each memories as m (m.id)}
                 <div class="set-row">
-                  <div class="set-row-l"><div class="set-row-t">{m.content}</div></div>
+                  <div class="set-row-l"><div class="set-row-t" data-i18n-skip>{m.content}</div></div>
                   <div class="set-row-r">
                     <button class="btn btn--icon btn--sm btn--ghost" onclick={() => removeMemory(m.id)} title="Forget this">
                       <Icon name="x" size={13} />
@@ -1613,6 +1614,25 @@ Notes: {about}</pre>
           <h1 class="set-title">Make it yours</h1>
           <p class="set-sub">Cortex re-skins live from your Omarchy theme, or pick one manually.</p>
         </header>
+
+        <section class="set-group">
+          <div class="set-group-h"><h3 class="set-group-t">Language</h3></div>
+          <div class="set-card">
+            <div class="set-row">
+              <div class="set-row-l">
+                <div class="set-row-t">Interface language</div>
+                <div class="set-row-d">Choose the language used throughout Cortex.</div>
+              </div>
+              <div class="set-row-r" style="min-width:160px">
+                <Picker
+                  value={app.language}
+                  onChange={(id) => app.setLanguage(id)}
+                  options={[...LANGUAGE_OPTIONS]}
+                />
+              </div>
+            </div>
+          </div>
+        </section>
 
         <!-- Follow-Omarchy mirrors the desktop's Omarchy palette — meaningless on a phone. -->
         {#if !isMobile}
@@ -2582,7 +2602,7 @@ Notes: {about}</pre>
                 <div class="set-row">
                   <div class="set-row-l">
                     <div class="set-row-t">
-                      <span style="color:{app.subjectColor(s)}">{s.glyph}</span> {s.name}
+                      <span style="color:{app.subjectColor(s)}">{s.glyph}</span> <span data-i18n-skip>{s.name}</span>
                     </div>
                     <div class="set-row-d">
                       {s.code ? s.code + " · " : ""}{s.sourceCount} source{s.sourceCount === 1 ? "" : "s"}

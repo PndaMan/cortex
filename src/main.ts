@@ -7,6 +7,11 @@ import "./app.css";
 import "./styles/mobile.css";
 
 import { isMobile } from "./lib/platform";
+import { bootstrapLanguage, installDomLocalization } from "./lib/i18n";
+
+// Language has the same pre-paint localStorage mirror as theme and UI scale. The
+// settings table remains authoritative and AppStore reconciles it during init.
+bootstrapLanguage();
 
 // Apply the last-used theme BEFORE anything renders. The persisted theme lives
 // in the settings table (async — too late for first paint), so applyTheme also
@@ -40,5 +45,6 @@ import { mount } from "svelte";
 import App from "./App.svelte";
 
 const app = mount(App, { target: document.getElementById("root")! });
+installDomLocalization(document.body);
 
 export default app;

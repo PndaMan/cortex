@@ -11,7 +11,7 @@
   }: {
     value: string;
     onChange: (id: string) => void;
-    options: { id: string; label: string; glyph?: boolean }[];
+    options: { id: string; label: string; glyph?: boolean; userContent?: boolean }[];
     icon?: string;
     placeholder?: string;
   } = $props();
@@ -53,7 +53,10 @@
     {#if icon}
       <Icon name={icon} size={12} color="var(--fg-faint)" />
     {/if}
-    <span class={"picker-val" + (cur ? "" : " ph")}>
+    <span
+      class={"picker-val" + (cur ? "" : " ph")}
+      data-i18n-skip={cur?.userContent || undefined}
+    >
       {cur ? cur.label : (placeholder ?? "Select…")}
     </span>
     <Icon name="chevron" size={11} style="transform:rotate(90deg);color:var(--fg-faint)" />
@@ -70,7 +73,11 @@
           {#if o.glyph}
             <Icon name="diamond" size={11} color="var(--accent)" />
           {/if}
-          <span class="grow" style="text-align:left">{o.label}</span>
+          <span
+            class="grow"
+            style="text-align:left"
+            data-i18n-skip={o.userContent || undefined}
+          >{o.label}</span>
           {#if o.id === value}
             <Icon name="check" size={12} color="var(--accent)" />
           {/if}

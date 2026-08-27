@@ -3,6 +3,7 @@
   // window.confirm / window.prompt. Driven entirely by app.dialog; resolves via
   // app.resolveDialog. Mounted once globally in App.svelte.
   import { app } from "../lib/store.svelte";
+  import { translateText } from "../lib/i18n";
 
   let inputEl = $state<HTMLInputElement | null>(null);
   let draft = $state("");
@@ -45,19 +46,19 @@
 {#if app.dialog}
   <div class="dlg-back" onmousedown={cancel} role="presentation">
     <div class="dlg" role="dialog" aria-modal="true" tabindex="-1" onmousedown={(e) => e.stopPropagation()}>
-      <div class="dlg-title">{app.dialog.title}</div>
+      <div class="dlg-title">{translateText(app.dialog.title, app.language)}</div>
       {#if app.dialog.body}
-        <div class="dlg-body">{app.dialog.body}</div>
+        <div class="dlg-body">{translateText(app.dialog.body, app.language)}</div>
       {/if}
       {#if app.dialog.kind === "prompt"}
         {#if app.dialog.label}
-          <div class="dlg-label">{app.dialog.label}</div>
+          <div class="dlg-label">{translateText(app.dialog.label, app.language)}</div>
         {/if}
         <input
           bind:this={inputEl}
           bind:value={draft}
           class="input dlg-input"
-          placeholder={app.dialog.placeholder ?? ""}
+          placeholder={translateText(app.dialog.placeholder ?? "", app.language)}
         />
       {/if}
       <div class="dlg-actions">
@@ -67,7 +68,7 @@
           type="button"
           onclick={ok}
         >
-          {app.dialog.okLabel}
+          {translateText(app.dialog.okLabel ?? "OK", app.language)}
         </button>
       </div>
     </div>

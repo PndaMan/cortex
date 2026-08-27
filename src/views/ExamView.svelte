@@ -265,7 +265,7 @@
                         onclick={() => toggleTopic(t.id)}
                       >
                         {#if selTopics.includes(t.id)}<Icon name="check" size={9} />{/if}
-                        {t.name}
+                        <span data-i18n-skip>{t.name}</span>
                       </button>
                     {/each}
                   </div>
