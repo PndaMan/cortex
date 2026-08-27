@@ -294,17 +294,10 @@ describe("Cortex UI localization", () => {
     ])).toEqual([]);
   });
 
-  test("tracks untranslated static copy across every Svelte UI file", () => {
+  test("keeps every Svelte UI file free of untranslated static copy", () => {
     const files = svelteFilesUnder("src");
     const untranslated = findUntranslatedStaticCopy(files);
-    const digest = createHash("sha256").update(untranslated.join("\n")).digest("hex");
-    // This inventory makes every existing omission explicit without carrying a
-    // hundreds-entry whitelist. Adding, removing, or changing an omission must
-    // update the audit baseline after the affected UI has been reviewed.
-    expect({ files: files.length, findings: untranslated.length, digest }).toEqual({
-      files: 58,
-      findings: 418,
-      digest: "79aa1947cc37580d37b79fb3616ad3e2c02f856a5ee490a07753dcec22fdd506",
-    });
+    expect(files).toHaveLength(58);
+    expect(untranslated).toEqual([]);
   });
 });
