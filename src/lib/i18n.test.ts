@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { findUntranslatedStaticCopy, svelteFilesUnder } from "../../scripts/i18n-audit";
 import {

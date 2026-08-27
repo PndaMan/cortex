@@ -4,10 +4,14 @@ import { parse } from "svelte/compiler";
 import { translateText } from "../src/lib/i18n";
 
 const TECHNICAL_COPY = new Set([
+  "10.xxxx/…",
+  "AIza…",
   "Cortex",
   "Esc",
   "Groq",
+  "Last, F.; Last, F.",
   "OpenAI",
+  "Osaka Jade",
   "Tailscale",
   "Rust · Tauri · Svelte",
   "Omarchy ·",
