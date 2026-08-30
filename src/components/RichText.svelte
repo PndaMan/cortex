@@ -4,11 +4,11 @@
   // chips that are clickable (open the cited source). Rendered as real elements
   // (no innerHTML) so it's safe and the citations stay interactive.
   import { app } from "../lib/store.svelte";
-  import { safeImgSrc } from "../lib/url";
+  import { safeImgSrc, safeUrl } from "../lib/url";
   import { katex } from "../lib/katex.svelte";
   import { t } from "../lib/i18n.svelte";
 
-  let { text }: { text: string } = $props();
+  let { text, onWikilink }: { text: string; onWikilink?: (target: string) => void } = $props();
 
   function escapeHtml(src: string): string {
     return src.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
@@ -29,7 +29,7 @@
     }
   }
 
-  type Inline = { t: "text" | "b" | "i" | "code" | "cite" | "math"; v: string };
+  type Inline = { t: "text" | "b" | "i" | "code" | "cite" | "math" | "wiki" | "tag" | "link"; v: string; href?: string };
   type CalloutKind = "note" | "tip" | "warning" | "important" | "example";
   type Block =
     | { type: "h2" | "h3" | "p"; text: string }
@@ -46,7 +46,7 @@
   // Math is matched BEFORE italics so a `*` inside an expression can't trigger <em>.
   // \(…\) is unambiguous; bare $…$ is guarded (open not followed by space, close not
   // followed by a digit) so currency like "$5" / "$5 and $10" is left alone.
-  const INLINE_RE = /⟦([^⟧]+)⟧|\*\*([^*]+)\*\*|`([^`]+)`|\\\(([^\n]+?)\\\)|\$(?!\s)([^$\n]*?[^\s$])\$(?!\d)|\*([^*\n]+)\*/g;
+  const INLINE_RE = /⟦([^⟧]+)⟧|\[\[([^\]\n]+)\]\]|\[([^\]\n]+)\]\(([^)\s]+)\)|\*\*([^*]+)\*\*|`([^`]+)`|\\\(([^\n]+?)\\\)|\$(?!\s)([^$\n]*?[^\s$])\$(?!\d)|\*([^*\n]+)\*|(?<![\p{L}\p{N}_/-])#([\p{L}\p{N}_/-]+)/gu;
 
   function inlineTokens(s: string): Inline[] {
     const out: Inline[] = [];
@@ -56,11 +56,14 @@
     while ((m = INLINE_RE.exec(s)) !== null) {
       if (m.index > last) out.push({ t: "text", v: s.slice(last, m.index) });
       if (m[1] !== undefined) out.push({ t: "cite", v: m[1].trim() });
-      else if (m[2] !== undefined) out.push({ t: "b", v: m[2] });
-      else if (m[3] !== undefined) out.push({ t: "code", v: m[3] });
-      else if (m[4] !== undefined) out.push({ t: "math", v: m[4] });
-      else if (m[5] !== undefined) out.push({ t: "math", v: m[5] });
-      else if (m[6] !== undefined) out.push({ t: "i", v: m[6] });
+      else if (m[2] !== undefined) out.push({ t: "wiki", v: m[2] });
+      else if (m[3] !== undefined) out.push({ t: "link", v: m[3], href: m[4] });
+      else if (m[5] !== undefined) out.push({ t: "b", v: m[5] });
+      else if (m[6] !== undefined) out.push({ t: "code", v: m[6] });
+      else if (m[7] !== undefined) out.push({ t: "math", v: m[7] });
+      else if (m[8] !== undefined) out.push({ t: "math", v: m[8] });
+      else if (m[9] !== undefined) out.push({ t: "i", v: m[9] });
+      else if (m[10] !== undefined) out.push({ t: "tag", v: m[10] });
       last = m.index + m[0].length;
     }
     if (last < s.length) out.push({ t: "text", v: s.slice(last) });
@@ -236,6 +239,15 @@
     {:else if tok.t === "i"}<em>{tok.v}</em>
     {:else if tok.t === "code"}<code class="rt-code">{tok.v}</code>
     {:else if tok.t === "cite"}<button type="button" class="cite rt-cite" onclick={() => openCite(tok.v)}>{tok.v}</button>
+    {:else if tok.t === "wiki"}
+      {@const wiki = tok.v.split("|")}
+      {#if onWikilink}<button type="button" class="rt-wiki" title={t("Open linked note")} onclick={() => onWikilink?.(wiki[0].trim())}>{wiki[1]?.trim() || wiki[0].trim()}</button>
+      {:else}<span class="rt-wiki" title={t("Linked note")}>{wiki[1]?.trim() || wiki[0].trim()}</span>{/if}
+    {:else if tok.t === "tag"}<span class="rt-tag">#{tok.v}</span>
+    {:else if tok.t === "link"}
+      {@const href = safeUrl(tok.href)}
+      {#if href}<a class="rt-link" href={href} target="_blank" rel="noopener noreferrer">{tok.v}</a>
+      {:else}<span class="rt-link rt-link--blocked" title={t("Unsafe link blocked")}>{tok.v}</span>{/if}
     {:else if tok.t === "math"}<span class="rt-math-inline">{@html renderMath(tok.v, false)}</span>
     {:else}{tok.v}{/if}
   {/each}
@@ -389,6 +401,16 @@
 
   /* ── bar chart ────────────────────────────────────────── */
   .rt-chart { margin: 0 0 12px; display: flex; flex-direction: column; gap: 6px; }
+  .rt-link { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--accent) 45%, transparent); }
+  .rt-link--blocked { color: var(--fg-muted); text-decoration-style: dotted; cursor: not-allowed; }
+  .rt-wiki, .rt-tag {
+    display: inline-flex; align-items: center; border: 1px solid color-mix(in oklab, var(--accent) 40%, var(--border));
+    border-radius: 999px; padding: 0 6px; line-height: 1.45; font-size: .9em; white-space: nowrap;
+    background: color-mix(in oklab, var(--accent) 10%, transparent); color: var(--accent);
+  }
+  .rt-wiki { font: inherit; cursor: pointer; }
+  .rt-wiki:hover { background: color-mix(in oklab, var(--accent) 18%, transparent); }
+  .rt-tag { color: var(--fg-muted); border-color: var(--border); background: var(--surface-2); }
   .rt-chart-row { display: grid; grid-template-columns: minmax(70px, 30%) 1fr auto; align-items: center; gap: 10px; font-size: 12.5px; }
   .rt-chart-label { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rt-chart-track { height: 12px; border-radius: 6px; background: color-mix(in oklab, var(--fg) 8%, transparent); overflow: hidden; }

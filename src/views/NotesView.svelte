@@ -21,12 +21,21 @@
   let selectedId = $state<string | null>(null);
   let listCollapsed = $state(true); // collapsed by default — more room for the editor
   let fullscreen = $state(false);
+  let search = $state("");
+  let sortMode = $state<"updated" | "title">("updated");
 
   // Draft fields for the selected note; saved status tracks persistence.
   let title = $state("");
   let body = $state("");
   let saved = $state(true);
   let savingTimer: ReturnType<typeof setTimeout> | null = null;
+  const visibleNotes = $derived.by(() => {
+    const q = search.trim().toLocaleLowerCase();
+    const result = q ? notes.filter((n) => `${n.title}\n${n.body}`.toLocaleLowerCase().includes(q)) : [...notes];
+    return result.sort((a, b) => sortMode === "title"
+      ? (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" })
+      : b.updated_at - a.updated_at);
+  });
 
   const selected = $derived(notes.find((n) => n.id === selectedId) ?? null);
 
@@ -186,7 +195,13 @@
             <button class="btn btn--primary btn--sm" type="button" onclick={newNote} title={t("New note")}>
               <Icon name="plus" size={12} /> {t("New note")}
             </button>
-            <!-- Collapse button: visually prominent, chevron points left (← close) -->
+            <div class="notes-list-tools">
+              <input class="notes-search" type="search" bind:value={search} placeholder={t("Search notes…")} aria-label={t("Search notes")} />
+              <select class="notes-sort" bind:value={sortMode} aria-label={t("Sort notes")}>
+                <option value="updated">{t("Recently updated")}</option>
+                <option value="title">{t("Title")}</option>
+              </select>
+            </div>
             <button
               type="button"
               class="notes-collapse-btn"
@@ -194,15 +209,14 @@
               aria-label={t("Collapse note list")}
               onclick={() => (listCollapsed = true)}
             >
-              <!-- Chevron default points right; rotate 180° to point left = collapse -->
               <Icon name="chevron" size={14} style="transform:rotate(180deg)" />
             </button>
-          </div>
+        </div>
         </div>
         <div class="notes-items">
           {#if loading}
             <div class="notes-hint">{t("Loading…")}</div>
-          {:else if notes.length === 0}
+          {:else if visibleNotes.length === 0}
             <div class="notes-empty">
               <div class="notes-empty-glyph">📝</div>
               <div class="notes-empty-title">{t("No notes yet")}</div>
@@ -214,7 +228,7 @@
               </button>
             </div>
           {:else}
-            {#each notes as n (n.id)}
+            {#each visibleNotes as n (n.id)}
               <button
                 type="button"
                 class={"notes-item" + (n.id === selectedId ? " on" : "")}
@@ -489,6 +503,9 @@
     padding: 6px; gap: 2px;
   }
 
+  .notes-list-tools { display: flex; gap: 5px; align-items: center; padding: 6px; border-bottom: 1px solid var(--border); }
+  .notes-search { min-width: 0; flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--fg); background: var(--surface); font: inherit; font-size: var(--t-2xs, 11px); }
+  .notes-sort { max-width: 90px; padding: 5px 3px; border: 1px solid var(--border); border-radius: 6px; color: var(--fg-muted); background: var(--surface); font: inherit; font-size: var(--t-2xs, 10px); }
   .notes-item {
     display: flex; flex-direction: column; gap: 2px; text-align: left;
     padding: 8px 10px; border-radius: 8px; cursor: pointer;

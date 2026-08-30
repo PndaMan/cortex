@@ -18,13 +18,15 @@
     if (!el) return;
     const start = el.selectionStart;
     const end = el.selectionEnd;
-    const before = value.slice(0, start);
-    const sel = value.slice(start, end);
-    const after = value.slice(end);
+    // Read the DOM value as the source of truth: a parent render can lag one
+    // microtask behind input, and toolbar actions must never drop that keystroke.
+    const current = el.value;
+    const before = current.slice(0, start);
+    const sel = current.slice(start, end);
+    const after = current.slice(end);
     const { text, selStart, selEnd } = transform(sel);
     const next = before + text + after;
     onChange(next);
-    // Restore focus + selection after Svelte updates the bound value.
     queueMicrotask(() => {
       el.focus();
       el.setSelectionRange(start + selStart, start + selEnd);
@@ -91,6 +93,15 @@
     };
     reader.readAsDataURL(f);
   }
+  function insertToken(prefix: string, suffix = "", placeholder = "text") {
+    applySelection((sel) => {
+      const inner = sel || placeholder;
+      return { text: prefix + inner + suffix, selStart: prefix.length, selEnd: prefix.length + inner.length };
+    });
+  }
+
+  function wikilink() { insertToken("[[", "]]", "Note title"); }
+  function tag() { insertToken("#", "", "tag"); }
 
   function bold()   { wrap("**", "bold"); }
   function italic() { wrap("*", "italic"); }
@@ -123,6 +134,8 @@
     { id: "code",      label: t("Inline code (⌘E)"),   glyph: "`",   run: code },
     { id: "codeblock", label: t("Code block"),          glyph: "{ }", run: codeBlock },
     { id: "link",      label: t("Link (⌘K)"),           icon: "link", run: link },
+    { id: "wikilink",  label: t("Internal note link"),  glyph: "[[ ]]", run: wikilink },
+    { id: "tag",       label: t("Tag"),                 glyph: "#",    run: tag },
     { id: "image",     label: t("Insert image"),        icon: "camera", run: pickImage },
     { id: "quote",     label: t("Quote"),               glyph: "❝",  run: () => prefixLines((l) => "> " + l, "Quote") },
   ];
