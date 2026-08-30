@@ -337,6 +337,12 @@ pub struct Note {
     pub source_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Stable, vault-unique filename key. Existing rows use their id.
+    pub slug: String,
+    /// User-facing folder path, never interpreted as a filesystem path by the DB.
+    pub folder: String,
+    /// JSON object containing user-defined frontmatter/properties.
+    pub properties: serde_json::Value,
 }
 
 // ---- calendar events / tasks ------------------------------------------

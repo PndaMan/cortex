@@ -427,6 +427,9 @@ pub fn run() {
             notes::update_note,
             notes::delete_note,
             notes::note_to_source,
+            notes::list_note_links,
+            notes::list_backlinks,
+            notes::note_graph,
             // calendar
             calendar::create_event,
             calendar::list_events,

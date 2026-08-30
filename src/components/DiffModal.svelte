@@ -2,6 +2,7 @@
   import { app } from "../lib/store.svelte";
   import Icon from "../components/Icon.svelte";
   import * as api from "../lib/api";
+  import { t } from "../lib/i18n.svelte";
   import type { CsSection as ApiCsSection, CheatsheetVersionMeta } from "../lib/api";
   import { flip } from "svelte/animate";
 
@@ -56,7 +57,7 @@
             }));
         }
       } catch (e) {
-        app.pushToast({ kind: "error", title: "Couldn't load draft", body: String(e) });
+        app.pushToast({ kind: "error", title: t("Couldn't load draft"), body: String(e) });
       } finally {
         loading = false;
       }
@@ -175,7 +176,7 @@
     try {
       versions = await api.listCheatsheetVersions(sid, app.cheatTopicId ?? undefined);
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Couldn't load history", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Couldn't load history"), body: String(e) });
     } finally {
       histLoading = false;
     }
@@ -191,19 +192,17 @@
       const secs = await api.getCheatsheetVersion(meta.id);
       viewing = { meta, sections: secs };
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Couldn't load version", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Couldn't load version"), body: String(e) });
     }
   }
 
   async function restoreVersion(meta: CheatsheetVersionMeta) {
     if (restoringId) return;
     const ok = await app.confirm({
-      title: "Restore this version?",
+      title: t("Restore this version?"),
       body:
-        `This replaces the current cheatsheet with the version from ` +
-        `${fmtTime(meta.created_at)}. Your current sheet is snapshotted first, ` +
-        `so you can undo by restoring that.`,
-      okLabel: "Restore",
+        t("This replaces the current cheatsheet with the version from {time}. Your current sheet is snapshotted first, so you can undo by restoring that.", { time: fmtTime(meta.created_at) }),
+      okLabel: t("Restore"),
     });
     if (!ok) return;
     restoringId = meta.id;
@@ -213,13 +212,13 @@
       app.scheduleSync(); // restored content is a change → push to homelab
       app.pushToast({
         kind: "success",
-        title: "Version restored",
-        body: "The cheatsheet now matches the selected version.",
+        title: t("Version restored"),
+        body: t("The cheatsheet now matches the selected version."),
       });
       viewing = null;
       await loadHistory(); // the restore added new snapshot rows
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Restore failed", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Restore failed"), body: String(e) });
     } finally {
       restoringId = null;
     }
@@ -227,15 +226,15 @@
 
   // ── FOOTER: homelab sync awareness ───────────────────────────
   const syncLabel = $derived.by(() => {
-    if (app.syncState === "off") return "sync off";
-    if (app.syncState === "syncing") return "syncing…";
-    if (app.syncState === "error") return "sync error";
+    if (app.syncState === "off") return t("sync off");
+    if (app.syncState === "syncing") return t("syncing…");
+    if (app.syncState === "error") return t("sync error");
     if (app.syncLastAt > 0) {
       const mins = Math.max(0, Math.round((Date.now() - app.syncLastAt) / 60000));
-      const ago = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : `${Math.round(mins / 60)}h ago`;
-      return `synced · ${ago}`;
+      const ago = mins < 1 ? t("just now") : mins < 60 ? t("{n}m ago", { n: mins }) : t("{n}h ago", { n: Math.round(mins / 60) });
+      return t("synced · {ago}", { ago });
     }
-    return "synced";
+    return t("synced");
   });
   const syncConfigured = $derived(app.syncState !== "off");
 </script>
@@ -248,7 +247,7 @@
     onmousedown={close}
     role="dialog"
     aria-modal="true"
-    aria-label="Cheatsheet review"
+    aria-label={t("Cheatsheet review")}
     tabindex="-1"
   >
     <!-- Modal panel — stop propagation so backdrop click doesn't close when clicking inside -->
@@ -260,7 +259,7 @@
       <!-- Header -->
       <header class="diff-head">
         <div>
-          <div class="eyebrow">Cheatsheet review</div>
+          <div class="eyebrow">{t("Cheatsheet review")}</div>
           <div class="diff-title mono">
             <span class="badge badge--web" style="margin-left: 0;">
               <span class="dot"></span>{sourceLabel}
@@ -268,14 +267,14 @@
           </div>
         </div>
         <div class="diff-head-tools">
-          <div class="seg" role="tablist" aria-label="Review section">
+          <div class="seg" role="tablist" aria-label={t("Review section")}>
             <button
               class="seg-opt{tab === 'draft' ? ' on' : ''}"
               role="tab"
               aria-selected={tab === "draft"}
               onclick={() => (tab = "draft")}
             >
-              Draft changes{#if remaining.length}<span class="diff-tab-count">{remaining.length}</span>{/if}
+              {t("Draft changes")}{#if remaining.length}<span class="diff-tab-count">{remaining.length}</span>{/if}
             </button>
             <button
               class="seg-opt{tab === 'history' ? ' on' : ''}"
@@ -283,7 +282,7 @@
               aria-selected={tab === "history"}
               onclick={() => (tab = "history")}
             >
-              History
+              {t("History")}
             </button>
           </div>
           <button class="btn btn--icon btn--sm btn--ghost" onclick={close}>
@@ -296,46 +295,44 @@
         <!-- ── DRAFT CHANGES (existing approve/reject flow, unchanged) ── -->
         <!-- Legend -->
         <div class="diff-legend mono">
-          <span><i class="lg add"></i> added</span>
-          <span><i class="lg del"></i> removed</span>
+          <span><i class="lg add"></i> {t("added")}</span>
+          <span><i class="lg del"></i> {t("removed")}</span>
           <span class="diff-keys">
-            <span class="kbd">j</span><span class="kbd">k</span> move ·
-            <span class="kbd">a</span> accept ·
-            <span class="kbd">x</span> reject ·
-            <span class="kbd">A</span> all ·
-            <span class="kbd">s</span> view
+            <span class="kbd">j</span><span class="kbd">k</span> {t("move")} ·
+            <span class="kbd">a</span> {t("accept")} ·
+            <span class="kbd">x</span> {t("reject")} ·
+            <span class="kbd">A</span> {t("all")} ·
+            <span class="kbd">s</span> {t("view")}
           </span>
           <div class="grow"></div>
-          <div class="seg-toggle" title="Toggle with s">
-            <button class={view === "inline" ? "on" : ""} onclick={() => (view = "inline")}>Inline</button>
-            <button class={view === "split" ? "on" : ""} onclick={() => (view = "split")}>Side-by-side</button>
+          <div class="seg-toggle" title={t("Toggle with s")}>
+            <button class={view === "inline" ? "on" : ""} onclick={() => (view = "inline")}>{t("Inline")}</button>
+            <button class={view === "split" ? "on" : ""} onclick={() => (view = "split")}>{t("Side-by-side")}</button>
           </div>
         </div>
 
         <!-- Diff body -->
         <div class="diff-body" bind:this={bodyEl}>
           {#if loading}
-            <div class="mono faint" style="display:flex;align-items:center;justify-content:center;min-height:200px;">Loading draft…</div>
+            <div class="mono faint" style="display:flex;align-items:center;justify-content:center;min-height:200px;">{t("Loading draft…")}</div>
           {:else if !hasSheet}
             <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:240px;text-align:center;padding:24px;">
               <Icon name="diamond" size={26} color="var(--fg3)" />
-              <div class="read" style="font-size:18px;color:var(--fg-bright);">No cheatsheet yet</div>
+              <div class="read" style="font-size:18px;color:var(--fg-bright);">{t("No cheatsheet yet")}</div>
               <p class="mono faint" style="max-width:360px;line-height:1.5;">
                 {#if app.activeSubjectId}
-                  Generate a cheatsheet for this subject first — proposed changes
-                  and version history will appear here.
+                  {t("Generate a cheatsheet for this subject first — proposed changes and version history will appear here.")}
                 {:else}
-                  Open a subject to review its cheatsheet draft changes and history.
+                  {t("Open a subject to review its cheatsheet draft changes and history.")}
                 {/if}
               </p>
             </div>
           {:else if sections.length === 0}
             <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:240px;text-align:center;padding:24px;">
               <Icon name="check" size={26} color="var(--ok)" />
-              <div class="read" style="font-size:18px;color:var(--fg-bright);">No pending changes</div>
+              <div class="read" style="font-size:18px;color:var(--fg-bright);">{t("No pending changes")}</div>
               <p class="mono faint" style="max-width:360px;line-height:1.5;">
-                Nothing is awaiting review for this subject. Regenerate the cheatsheet
-                to propose additions, or browse <button class="diff-linkbtn" onclick={() => (tab = "history")}>History</button>.
+                {t("Nothing is awaiting review for this subject. Regenerate the cheatsheet to propose additions, or browse")} <button class="diff-linkbtn" onclick={() => (tab = "history")}>{t("History")}</button>.
               </p>
             </div>
           {:else}
@@ -361,21 +358,21 @@
                   <button
                     class="btn btn--sm btn--ghost"
                     onclick={() => resolve(sec.id, "reject")}
-                    title="Reject (x)"
+                    title={t("Reject (x)")}
                   >
-                    <span class="kbd">x</span> Reject
+                    <span class="kbd">x</span> {t("Reject")}
                   </button>
                   <button
                     class="btn btn--sm btn--primary"
                     onclick={() => resolve(sec.id, "accept")}
-                    title="Accept section (a)"
+                    title={t("Accept section (a)")}
                   >
-                    <span class="kbd" style="border-color: currentColor;">a</span> Accept section
+                    <span class="kbd" style="border-color: currentColor;">a</span> {t("Accept section")}
                   </button>
                 {:else if r === "accept"}
-                  <span class="resolved-tag ok"><Icon name="check" size={13} /> merged</span>
+                  <span class="resolved-tag ok"><Icon name="check" size={13} /> {t("merged")}</span>
                 {:else if r === "reject"}
-                  <span class="resolved-tag err"><Icon name="x" size={12} /> rejected</span>
+                  <span class="resolved-tag err"><Icon name="x" size={12} /> {t("rejected")}</span>
                 {/if}
               </div>
 
@@ -391,7 +388,7 @@
               {:else}
                 <div class="diff-split">
                   <div class="ds-col">
-                    <div class="ds-col-l mono">Current</div>
+                    <div class="ds-col-l mono">{t("Current")}</div>
                     {#each sec.changes.filter((c) => c.type !== "add") as c, i (i)}
                       <div class="diff-line {c.type === 'del' ? 'del' : ''}">
                         <span class="txt read">{c.text}</span>
@@ -399,7 +396,7 @@
                     {/each}
                   </div>
                   <div class="ds-col">
-                    <div class="ds-col-l mono">Proposed</div>
+                    <div class="ds-col-l mono">{t("Proposed")}</div>
                     {#each sec.changes.filter((c) => c.type !== "del") as c, i (i)}
                       <div class="diff-line {c.type === 'add' ? 'add' : ''}">
                         <span class="txt read">{c.text}</span>
@@ -416,19 +413,19 @@
         <!-- ── HISTORY (editable: view + restore) ── -->
         <div class="diff-body">
           {#if histLoading}
-            <div class="mono faint" style="display:flex;align-items:center;justify-content:center;min-height:200px;">Loading history…</div>
+            <div class="mono faint" style="display:flex;align-items:center;justify-content:center;min-height:200px;">{t("Loading history…")}</div>
           {:else if viewing}
             <!-- Read-only render of one stored version -->
             <div class="cmdk-group">
               <button class="diff-linkbtn" onclick={() => (viewing = null)}>
-                ← Back to versions
+                {t("← Back to versions")}
               </button>
             </div>
             <div class="set-card" style="padding:14px;">
               <div class="diff-sec-head" style="margin-bottom:10px;">
-                <h3>{viewing.meta.note || "version"}</h3>
+                <h3>{viewing.meta.note || t("version")}</h3>
                 <div class="grow"></div>
-                <span class="mono faint">{fmtTime(viewing.meta.created_at)} · {viewing.meta.section_count} sec</span>
+                <span class="mono faint">{fmtTime(viewing.meta.created_at)} · {t("{n} sec", { n: viewing.meta.section_count })}</span>
               </div>
               {#each viewing.sections as sec (sec.id)}
                 {#if !sec.id.startsWith("__topic__")}
@@ -455,42 +452,41 @@
                   disabled={restoringId === viewing.meta.id}
                 >
                   <Icon name="refresh" size={13} />
-                  {restoringId === viewing.meta.id ? "Restoring…" : "Restore this version"}
+                  {restoringId === viewing.meta.id ? t("Restoring…") : t("Restore this version")}
                 </button>
               </div>
             </div>
           {:else if versions.length === 0}
             <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:240px;text-align:center;padding:24px;">
               <Icon name="refresh" size={26} color="var(--fg3)" />
-              <div class="read" style="font-size:18px;color:var(--fg-bright);">No versions yet</div>
+              <div class="read" style="font-size:18px;color:var(--fg-bright);">{t("No versions yet")}</div>
               <p class="mono faint" style="max-width:360px;line-height:1.5;">
-                Edits and regenerations of this cheatsheet are recorded here — you'll
-                be able to view and restore them.
+                {t("Edits and regenerations of this cheatsheet are recorded here — you'll be able to view and restore them.")}
               </p>
             </div>
           {:else}
             <div class="cmdk-group">
-              <div class="gl">Versions — newest first</div>
+              <div class="gl">{t("Versions — newest first")}</div>
               {#each versions as v, i (v.id)}
                 <div class="diff-hist-row set-card">
                   <div class="diff-hist-meta">
                     <span class="diff-hist-when mono">{fmtTime(v.created_at)}</span>
                     <span class="diff-hist-note">
-                      {i === 0 ? "current" : v.note} · {v.section_count} section{v.section_count !== 1 ? "s" : ""}
+                      {i === 0 ? t("current") : v.note} · {t("{n} section{s}", { n: v.section_count, s: v.section_count !== 1 ? "s" : "" })}
                     </span>
                   </div>
                   <div class="grow"></div>
                   <button class="btn btn--sm btn--ghost" onclick={() => viewVersion(v)}>
-                    <Icon name="doc" size={12} /> View
+                    <Icon name="doc" size={12} /> {t("View")}
                   </button>
                   <button
                     class="btn btn--sm btn--primary"
                     onclick={() => restoreVersion(v)}
                     disabled={i === 0 || restoringId === v.id}
-                    title={i === 0 ? "This is already the current sheet" : "Restore this version"}
+                    title={i === 0 ? t("This is already the current sheet") : t("Restore this version")}
                   >
                     <Icon name="refresh" size={12} />
-                    {restoringId === v.id ? "Restoring…" : "Restore"}
+                    {restoringId === v.id ? t("Restoring…") : t("Restore")}
                   </button>
                 </div>
               {/each}
@@ -501,23 +497,23 @@
 
       <!-- Footer -->
       <footer class="diff-foot">
-        <div class="diff-foot-sync mono faint" title="Homelab sync">
+        <div class="diff-foot-sync mono faint" title={t("Homelab sync")}>
           <span class="dot" class:dot--on={syncConfigured && app.syncState !== 'error'}></span>
           {syncLabel}
           {#if syncConfigured}
             <button class="diff-linkbtn" onclick={() => app.syncNow()} disabled={app.syncState === 'syncing'}>
-              Sync now
+              {t("Sync now")}
             </button>
           {/if}
         </div>
         <div class="grow"></div>
         {#if tab === "draft" && hasSheet && remaining.length}
-          <button class="btn btn--sm btn--ghost" onclick={close}>Later</button>
+          <button class="btn btn--sm btn--ghost" onclick={close}>{t("Later")}</button>
           <button class="btn btn--sm btn--primary" onclick={acceptAll}>
-            <span class="kbd" style="border-color: currentColor;">A</span> Approve all &amp; merge
+            <span class="kbd" style="border-color: currentColor;">A</span> {t("Approve all & merge")}
           </button>
         {:else}
-          <button class="btn btn--sm btn--ghost" onclick={close}>Close</button>
+          <button class="btn btn--sm btn--ghost" onclick={close}>{t("Close")}</button>
         {/if}
       </footer>
     </div>

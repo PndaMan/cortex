@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   // Structured infographic payload (NotebookLM-style poster). Older materials may
   // still carry a raw { svg } payload — we fall back to rendering that.
@@ -53,16 +54,16 @@
   <div class="infographic-page">
     {#if onExit}
       <div class="infographic-toolbar">
-        <button class="btn btn--icon btn--sm btn--ghost" onclick={onExit} title="Back to materials">
+        <button class="btn btn--icon btn--sm btn--ghost" onclick={onExit} title={t("Back to materials")}>
           <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={14} /></span>
         </button>
-        <span class="mono faint" style="font-size: var(--t-xs);">Infographic</span>
+        <span class="mono faint" style="font-size: var(--t-xs);">{t("Infographic")}</span>
       </div>
     {/if}
 
     {#if image}
       <div class="infographic-canvas">
-        <img class="poster-img" src={image} alt={data?.title ?? "infographic"} />
+        <img class="poster-img" src={image} alt={data?.title ?? t("infographic")} />
       </div>
     {:else if hasPoster}
       <div class="poster">
@@ -72,7 +73,7 @@
         </header>
         {#if takeaway}
           <div class="poster-takeaway">
-            <span class="ptk-label mono">KEY TAKEAWAY</span>
+            <span class="ptk-label mono">{t("KEY TAKEAWAY")}</span>
             <p class="ptk-text">{takeaway}</p>
           </div>
         {/if}
@@ -104,7 +105,7 @@
 
           {#if timeline.length}
             <section class="poster-timeline">
-              <h2 class="ptl-heading"><span aria-hidden="true">🕑</span> Timeline</h2>
+              <h2 class="ptl-heading"><span aria-hidden="true">🕑</span> {t("Timeline")}</h2>
               <ol class="ptl-track">
                 {#each timeline as ev, i (i)}
                   <li class="ptl-item">
@@ -126,7 +127,7 @@
     {:else}
       <div class="infographic-empty">
         <Icon name="grid" size={26} color="var(--fg-faint)" />
-        <p class="mono faint" style="margin-top: 12px;">No infographic content.</p>
+        <p class="mono faint" style="margin-top: 12px;">{t("No infographic content.")}</p>
       </div>
     {/if}
   </div>

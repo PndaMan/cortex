@@ -29,6 +29,14 @@ export const isAndroid = /Android/i.test(ua());
 /** True on a phone/tablet build (or when the dev force-flag is set). */
 export const isMobile = forcedMobile() || isIOS || isAndroid;
 
+/** True when running inside the Tauri webview (backend commands available).
+ *  In a plain `vite` browser tab there is no Tauri runtime: `invoke` and
+ *  `listen` hand back promises that never settle, which used to hang app
+ *  boot on the loading screen. Callers gate backend-only work on this. */
+export const isTauri =
+  typeof window !== "undefined" &&
+  ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
+
 /** Toggle the dev preview flag then reload. Also reachable as window.setForceMobile. */
 export function setForceMobile(on: boolean): void {
   try {

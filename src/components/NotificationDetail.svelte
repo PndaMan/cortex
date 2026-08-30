@@ -4,6 +4,7 @@
   // so the experience is identical everywhere. Sits above every other overlay.
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
+  import { t } from "../lib/i18n.svelte";
   import Icon from "./Icon.svelte";
 
   const d = $derived(app.detail);
@@ -23,11 +24,11 @@
   function rel(ms: number): string {
     const diff = ms - Date.now();
     const abs = Math.abs(diff), day = 86400000, fut = diff > 0;
-    if (abs < 3600000) { const m = Math.max(1, Math.round(abs / 60000)); return fut ? `in ${m}m` : `${m}m ago`; }
-    if (abs < day) { const h = Math.round(abs / 3600000); return fut ? `in ${h}h` : `${h}h ago`; }
+    if (abs < 3600000) { const m = Math.max(1, Math.round(abs / 60000)); return fut ? t("in {n}m", { n: m }) : t("{n}m ago", { n: m }); }
+    if (abs < day) { const h = Math.round(abs / 3600000); return fut ? t("in {n}h", { n: h }) : t("{n}h ago", { n: h }); }
     const dd = Math.round(abs / day);
-    if (fut) return dd === 1 ? "tomorrow" : `in ${dd} days`;
-    return dd === 1 ? "yesterday" : `${dd} days ago`;
+    if (fut) return dd === 1 ? t("tomorrow") : t("in {n} days", { n: dd });
+    return dd === 1 ? t("yesterday") : t("{n} days ago", { n: dd });
   }
   // Readable plain text from Moodle's HTML (safer than rendering arbitrary HTML).
   function htmlToText(html: string): string {
@@ -41,7 +42,7 @@
       .replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
   }
   const iconFor = (k: string) => (k === "announcement" ? "chat" : k === "exam" ? "star" : "calendar");
-  const kindLabel = (k: string) => (k === "announcement" ? "Announcement" : k === "exam" ? "Exam" : "Deadline");
+  const kindLabel = (k: string) => (k === "announcement" ? t("Announcement") : k === "exam" ? t("Exam") : t("Deadline"));
 
   function goToSubject() {
     if (!d?.subjectId) return;
@@ -69,14 +70,13 @@
           <div class="nd-kind mono">{kindLabel(d.kind)}</div>
           <h2 class="nd-title">{d.title}</h2>
         </div>
-        <button class="btn btn--icon btn--sm btn--ghost" title="Close" aria-label="Close" onclick={() => app.closeDetail()}>
-          <Icon name="x" size={15} />
+        <button class="btn btn--icon btn--sm btn--ghost" title={t("Close")} aria-label={t("Close")} onclick={() => app.closeDetail()}>
         </button>
       </header>
 
       <div class="nd-meta">
         {#if d.course}<span class="nd-chip">{d.course}</span>{/if}
-        {#if d.ts}<span class="nd-when mono">{d.kind === "announcement" ? "posted" : "due"} {fmtFull(d.ts)} · {rel(d.ts)}</span>{/if}
+        {#if d.ts}<span class="nd-when mono">{d.kind === "announcement" ? t("posted") : t("due")} {fmtFull(d.ts)} · {rel(d.ts)}</span>{/if}
       </div>
 
       <div class="nd-body">
@@ -84,10 +84,10 @@
           {#if d.message.trim()}
             <p class="nd-text read">{htmlToText(d.message)}</p>
           {:else}
-            <p class="nd-empty">No content — open it in Moodle for the full post.</p>
+            <p class="nd-empty">{t("No content — open it in Moodle for the full post.")}</p>
           {/if}
         {:else}
-          <p class="nd-text read">{kindLabel(d.kind)} {d.ts ? `due ${fmtFull(d.ts)}` : ""}{d.course ? ` for ${d.course}` : ""}.</p>
+          <p class="nd-text read">{kindLabel(d.kind)} {d.ts ? t("due") + " " + fmtFull(d.ts) : ""}{d.course ? t("for {name}", { name: d.course }) : ""}.</p>
         {/if}
       </div>
 
@@ -102,9 +102,9 @@
             onclick={() =>
               d.url &&
               api.openExternal(d.url).catch((e) =>
-                app.pushToast({ kind: "error", title: "Couldn't open the link", body: String(e) })
+                app.pushToast({ kind: "error", title: t("Couldn't open the link"), body: String(e) })
               )}
-          ><Icon name="external" size={12} /> Open in Moodle</button>
+          ><Icon name="external" size={12} /> {t("Open in Moodle")}</button>
         {/if}
       </footer>
     </div>

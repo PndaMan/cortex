@@ -2,6 +2,7 @@
   import { app } from "../lib/store.svelte";
   import { rec } from "../lib/recorder.svelte";
   import Icon from "./Icon.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   // ─────────────────────────────────────────────────────────────────────────
   // RECORDING LIVE ACTIVITY — the lecture-recorder twin of the Pomodoro
@@ -102,7 +103,7 @@
     style={positionStyle}
     role="button"
     tabindex="0"
-    aria-label="Lecture recording, {rec.mm}:{rec.ss} elapsed. Click to open the recorder."
+    aria-label={t("Lecture recording, {mm}:{ss} elapsed. Click to open the recorder.", { mm: rec.mm, ss: rec.ss })}
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}
@@ -112,26 +113,26 @@
     {#if rec.status === "transcribing"}
       <span class="ra-dot ra-dot--busy"></span>
       <div class="ra-body">
-        <div class="ra-phase mono">TRANSCRIBING</div>
-        <div class="ra-time mono">{rec.note || "Whisper…"}</div>
+        <div class="ra-phase mono">{t("TRANSCRIBING")}</div>
+        <div class="ra-time mono">{rec.note || t("Whisper…")}</div>
       </div>
     {:else if rec.status === "review"}
       <span class="ra-dot ra-dot--review"></span>
       <div class="ra-body">
-        <div class="ra-phase mono">UNSAVED TAKE</div>
-        <div class="ra-time mono">{rec.reviewDuration} · tap to save</div>
+        <div class="ra-phase mono">{t("UNSAVED TAKE")}</div>
+        <div class="ra-time mono">{rec.reviewDuration} · {t("tap to save")}</div>
       </div>
     {:else}
       <span class="ra-dot" class:live={!rec.paused}></span>
       <div class="ra-body">
-        <div class="ra-phase mono">{rec.paused ? "PAUSED" : "RECORDING"}</div>
+        <div class="ra-phase mono">{rec.paused ? t("PAUSED") : t("RECORDING")}</div>
         <div class="ra-time mono">{rec.mm}:{rec.ss}</div>
       </div>
       <div class="ra-actions">
-        <button class="ra-btn" title={rec.paused ? "Resume" : "Pause"} onclick={togglePause}>
+        <button class="ra-btn" title={rec.paused ? t("Resume") : t("Pause")} onclick={togglePause}>
           <Icon name={rec.paused ? "play" : "pause"} size={11} />
         </button>
-        <button class="ra-btn ra-btn--stop" title="Stop & review" onclick={stop}>
+        <button class="ra-btn ra-btn--stop" title={t("Stop & review")} onclick={stop}>
           <span class="ra-stop-sq"></span>
         </button>
       </div>

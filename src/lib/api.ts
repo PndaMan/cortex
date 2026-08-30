@@ -626,6 +626,9 @@ export interface Note {
   source_id: string | null;
   created_at: number;
   updated_at: number;
+  slug: string;
+  folder: string;
+  properties: Record<string, unknown>;
 }
 export const createNote = (
   title: string,
@@ -636,6 +639,13 @@ export const createNote = (
 export const listNotes = (subjectId?: string | null) =>
   invoke<Note[]>("list_notes", { subjectId });
 export const getNote = (id: string) => invoke<Note>("get_note", { id });
+export interface NoteLink { source_note_id: string; target_note_id: string | null; target_key: string; display_text: string; position: number }
+export interface NoteGraphNode { id: string; title: string }
+export interface NoteGraphEdge { source: string; target: string | null; target_key: string }
+export interface NoteGraph { nodes: NoteGraphNode[]; edges: NoteGraphEdge[] }
+export const listNoteLinks = (id: string) => invoke<NoteLink[]>("list_note_links", { id });
+export const listBacklinks = (id: string) => invoke<NoteLink[]>("list_backlinks", { id });
+export const noteGraph = (subjectId?: string | null) => invoke<NoteGraph>("note_graph", { subjectId });
 export const updateNote = (id: string, title: string, body: string) =>
   invoke<Note>("update_note", { id, title, body });
 export const deleteNote = (id: string) => invoke<void>("delete_note", { id });

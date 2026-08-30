@@ -3,15 +3,16 @@
   import * as api from "../lib/api";
   import Icon from "../components/Icon.svelte";
   import { jobs, type JobKind } from "../lib/jobs.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   // ── Material type definitions ──────────────────────────────
   const GEN_TYPES = [
-    { id: "flashcards", label: "Flashcards",      ico: "cards", desc: "Spaced-repetition deck",    color: "var(--accent)"      },
-    { id: "quiz",       label: "Quiz",             ico: "check", desc: "MCQ · short answer · cloze", color: "var(--info)"        },
-    { id: "audio",      label: "Audio overview",   ico: "music", desc: "Two-host podcast",           color: "var(--mode-select)" },
-    { id: "slideshow",  label: "Slides",           ico: "grid",  desc: "Presentation slide deck",     color: "var(--warn)"        },
-    { id: "infographic",label: "Infographic",      ico: "grid",  desc: "One-poster summary",         color: "var(--ok)"          },
-    { id: "mindmap",    label: "Mind map",          ico: "link",  desc: "Concept map of the topic",    color: "var(--info)"        },
+    { id: "flashcards", label: t("Flashcards"),      ico: "cards", desc: t("Spaced-repetition deck"),    color: "var(--accent)"      },
+    { id: "quiz",       label: t("Quiz"),             ico: "check", desc: t("MCQ · short answer · cloze"), color: "var(--info)"        },
+    { id: "audio",      label: t("Audio overview"),   ico: "music", desc: t("Two-host podcast"),           color: "var(--mode-select)" },
+    { id: "slideshow",  label: t("Slides"),           ico: "grid",  desc: t("Presentation slide deck"),     color: "var(--warn)"        },
+    { id: "infographic",label: t("Infographic"),      ico: "grid",  desc: t("One-poster summary"),         color: "var(--ok)"          },
+    { id: "mindmap",    label: t("Mind map"),          ico: "link",  desc: t("Concept map of the topic"),    color: "var(--info)"        },
   ] as const;
 
   const srcLabel: Record<string, string> = {
@@ -65,8 +66,8 @@
   const multi = $derived(topicNames.length > 1);
 
   const tm = $derived(GEN_TYPES.find(t => t.id === type)!);
-  const suffixFor = (t: string) =>
-    ({ flashcards: " — flashcards", quiz: " — quiz", audio: " — deep dive", slideshow: " — slides", infographic: " — infographic", mindmap: " — mind map" } as Record<string, string>)[t] ?? "";
+  const suffixFor = (kind: string) =>
+    ({ flashcards: t(" — flashcards"), quiz: t(" — quiz"), audio: t(" — deep dive"), slideshow: t(" — slides"), infographic: t(" — infographic"), mindmap: t(" — mind map") } as Record<string, string>)[kind] ?? "";
   const suggested = $derived.by(() => {
     const suffix = suffixFor(type);
     if (selSources.length === 1) {
@@ -101,7 +102,7 @@
   function generate() {
     const sub = app.activeSubject;
     if (!sub) {
-      app.pushToast({ kind: "error", title: "No active subject", body: "Select a subject first." });
+      app.pushToast({ kind: "error", title: t("No active subject"), body: t("Select a subject first.") });
       return;
     }
 
@@ -144,14 +145,14 @@
 <div class="genmat2">
   <!-- Header -->
   <div class="gm2-head">
-    <button class="btn btn--icon btn--sm btn--ghost" onclick={cancel} title="Back">
+    <button class="btn btn--icon btn--sm btn--ghost" onclick={cancel} title={t("Back")}>
       <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={14} /></span>
     </button>
     <div>
-      <div class="eyebrow">Generate material</div>
-      <h1 class="addpage-title">New study material</h1>
+      <div class="eyebrow">{t("Generate material")}</div>
+      <h1 class="addpage-title">{t("New study material")}</h1>
       <div class="mono faint" style="font-size: var(--t-xs)">
-        from {app.activeSubject?.name ?? "your subject"} · pick a format and sources
+        {t("from {name} · pick a format and sources", { name: app.activeSubject?.name ?? t("your subject") })}
       </div>
     </div>
   </div>
@@ -160,7 +161,7 @@
     <!-- LEFT — format, count, details -->
     <div class="gm2-left">
       <div class="gm2-block">
-        <div class="onb-label mono">FORMAT</div>
+        <div class="onb-label mono">{t("FORMAT")}</div>
         <div class="gm2-formats">
           {#each GEN_TYPES as t (t.id)}
             <button class="gm2-format{type === t.id ? ' on' : ''}" onclick={() => (type = t.id)}>
@@ -177,12 +178,12 @@
 
       {#if countLimit && countValue !== null}
         <div class="gm2-block">
-          <div class="onb-label mono">{type === "quiz" ? "QUESTIONS" : "CARDS"}</div>
+          <div class="onb-label mono">{type === "quiz" ? t("QUESTIONS") : t("CARDS")}</div>
           <div class="gm2-count">
             <div class="gm2-step">
-              <button class="btn btn--icon btn--sm" onclick={() => setCount(countValue - 1)} aria-label="fewer" disabled={countValue <= countLimit.min}>−</button>
+              <button class="btn btn--icon btn--sm" onclick={() => setCount(countValue - 1)} aria-label={t("fewer")} disabled={countValue <= countLimit.min}>−</button>
               <span class="mono gm2-step-v">{countValue}</span>
-              <button class="btn btn--icon btn--sm" onclick={() => setCount(countValue + 1)} aria-label="more" disabled={countValue >= countLimit.max}>+</button>
+              <button class="btn btn--icon btn--sm" onclick={() => setCount(countValue + 1)} aria-label={t("more")} disabled={countValue >= countLimit.max}>+</button>
             </div>
             <div class="seg gm2-count-presets">
               {#each [Math.round(countLimit.def / 2), countLimit.def, Math.min(countLimit.max, countLimit.def * 2)] as p}
@@ -196,31 +197,31 @@
       <div class="gm2-block">
         <div class="field">
           <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label class="onb-label mono">TITLE <span class="gm2-label-hint">auto-suggested</span></label>
-          <input class="input" bind:value={title} placeholder={suggested || "Select sources first…"} />
+          <label class="onb-label mono">{t("TITLE")} <span class="gm2-label-hint">{t("auto-suggested")}</span></label>
+          <input class="input" bind:value={title} placeholder={suggested || t("Select sources first…")} />
         </div>
         <div class="field">
           <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label class="onb-label mono">CUSTOM INSTRUCTIONS <span class="gm2-label-hint">optional</span></label>
+          <label class="onb-label mono">{t("CUSTOM INSTRUCTIONS")} <span class="gm2-label-hint">{t("optional")}</span></label>
           <textarea
             class="input set-textarea"
             bind:value={customPrompt}
             rows="3"
-            placeholder={`e.g. “Focus on exam-likely topics”, “Explain like I'm new to ${app.activeSubject?.name ?? "this"}”, “Emphasise dates and order”…`}
+            placeholder={t("e.g. “Focus on exam-likely topics”, “Explain like I'm new to {name}”, “Emphasise dates and order”…", { name: app.activeSubject?.name ?? t("this") })}
           ></textarea>
         </div>
         <div class="gm-autotag">
           <div class="gm-autotag-l">
             <Icon name="lock" size={13} color="var(--fg-faint)" />
-            <span class="mono">Auto-filed under topic</span>
+            <span class="mono">{t("Auto-filed under topic")}</span>
           </div>
           {#if autoTopic}
             <div class="gm-autotag-r">
               <span class="topic-tag mono"><Icon name="chevron" size={9} /> {autoTopic}</span>
-              {#if multi}<span class="mono faint">spans {topicNames.length} topics</span>{/if}
+              {#if multi}<span class="mono faint">{t("spans {n} topics", { n: topicNames.length })}</span>{/if}
             </div>
           {:else}
-            <span class="mono faint">select sources to assign a topic</span>
+            <span class="mono faint">{t("select sources to assign a topic")}</span>
           {/if}
         </div>
       </div>
@@ -229,12 +230,12 @@
     <!-- RIGHT — source selection (scrolls within the panel) -->
     <div class="gm2-right">
       <div class="gm2-right-head">
-        <span class="onb-label mono" style="margin:0">SOURCES</span>
-        <span class="faint mono">{sel.length} selected</span>
+        <span class="onb-label mono" style="margin:0">{t("SOURCES")}</span>
+        <span class="faint mono">{t("{n} selected", { n: sel.length })}</span>
       </div>
       <div class="gm2-panel">
         {#if subjectTopics.length === 0}
-          <p class="mono faint" style="font-size: var(--t-sm); padding: 8px;">No sources found for this subject. Add sources first.</p>
+          <p class="mono faint" style="font-size: var(--t-sm); padding: 8px;">{t("No sources found for this subject. Add sources first.")}</p>
         {:else}
           <div class="gm-sources">
             {#each subjectTopics as topic (topic.id)}
@@ -274,9 +275,9 @@
 
   <!-- Sticky footer — always visible, no scrolling to reach Generate -->
   <div class="add-foot gm2-foot">
-    <button class="btn btn--ghost" onclick={cancel}>Cancel</button>
+    <button class="btn btn--ghost" onclick={cancel}>{t("Cancel")}</button>
     <button class="btn btn--primary" disabled={!ready} onclick={generate}>
-      <Icon name="bolt" size={13} /> Generate {tm.label.toLowerCase()}
+      <Icon name="bolt" size={13} /> {t("Generate {x}", { x: tm.label.toLowerCase() })}
     </button>
   </div>
 </div>

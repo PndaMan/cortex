@@ -4,6 +4,7 @@
   // on sources, notes, calendar events and materials. Reuses the command
   // palette's design-system classes so it reads as a sibling overlay.
   import { app } from "../lib/store.svelte";
+  import { t } from "../lib/i18n.svelte";
   import * as api from "../lib/api";
   import Icon from "./Icon.svelte";
 
@@ -16,11 +17,11 @@
   let runId = 0; // drop stale responses when the user keeps typing
 
   const GROUPS: Record<string, { label: string; icon: string }> = {
-    chunk: { label: "Related content", icon: "search" },
-    source: { label: "Sources", icon: "doc" },
-    note: { label: "Notes", icon: "pencil" },
-    event: { label: "Calendar", icon: "calendar" },
-    material: { label: "Materials", icon: "grid" },
+    chunk: { label: t("Related content"), icon: "search" },
+    source: { label: t("Sources"), icon: "doc" },
+    note: { label: t("Notes"), icon: "pencil" },
+    event: { label: t("Calendar"), icon: "calendar" },
+    material: { label: t("Materials"), icon: "grid" },
   };
   // Exact matches first — Enter must land on a predictable target; semantic
   // "related content" chunks trail at the bottom.
@@ -114,7 +115,7 @@
           bind:value={q}
           onkeydown={onKey}
           autofocus
-          placeholder="Search everything — notes, sources, transcripts, events…"
+          placeholder={t("Search everything — notes, sources, transcripts, events…")}
         />
         <span class="kbd">esc</span>
       </div>
@@ -122,11 +123,11 @@
       <div style:max-height="46vh" style:overflow-y="auto" style:overflow-x="hidden">
         {#if q.trim() && !searching && flat.length === 0}
           <div style:padding="22px" style:text-align="center" style:color="var(--fg-faint)" style:font-size="var(--t-sm)">
-            No matches
+            {t("No matches")}
           </div>
         {:else if searching && flat.length === 0}
           <div style:padding="22px" style:text-align="center" style:color="var(--fg-faint)" style:font-size="var(--t-sm)">
-            Searching…
+            {t("Searching…")}
           </div>
         {/if}
 

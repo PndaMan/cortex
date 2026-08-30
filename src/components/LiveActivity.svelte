@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   // ─────────────────────────────────────────────────────────────────────────
   // LIVE ACTIVITY — a small floating widget that mirrors the app-wide Pomodoro
@@ -117,8 +118,8 @@
       class:dragging
       class:break={isBreak}
       style={positionStyle}
-      title="Expand focus timer"
-      aria-label="Pomodoro timer, {pomo.mmss} remaining. Expand."
+      title={t("Expand focus timer")}
+      aria-label={t("Pomodoro timer, {n} remaining. Expand.", { n: pomo.mmss })}
       onpointerdown={onPointerDown}
       onpointermove={onPointerMove}
       onpointerup={onPointerUp}
@@ -146,7 +147,7 @@
       style={positionStyle}
       role="button"
       tabindex="0"
-      aria-label="Pomodoro live activity. {pomo.phaseLabel}, {pomo.mmss} remaining. Click to open the full timer."
+      aria-label={t("Pomodoro live activity. {phase}, {n} remaining. Click to open the full timer.", { phase: pomo.phaseLabel, n: pomo.mmss })}
       onpointerdown={onPointerDown}
       onpointermove={onPointerMove}
       onpointerup={onPointerUp}
@@ -173,10 +174,10 @@
       </div>
 
       <div class="la-actions">
-        <button class="la-btn" title={pomo.running ? "Pause" : "Start"} onclick={togglePlay}>
+        <button class="la-btn" title={pomo.running ? t("Pause") : t("Start")} onclick={togglePlay}>
           <Icon name={pomo.running ? "pause" : "play"} size={11} />
         </button>
-        <button class="la-btn" title="Minimise" aria-label="Minimise" onclick={toggleMin}>
+        <button class="la-btn" title={t("Minimise")} aria-label={t("Minimise")} onclick={toggleMin}>
           <Icon name="x" size={10} />
         </button>
       </div>

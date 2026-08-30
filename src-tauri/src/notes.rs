@@ -61,6 +61,24 @@ pub fn delete_note(state: State<AppState>, id: String) -> Result<()> {
     repo::delete_note(&c, &id)
 }
 
+#[tauri::command]
+pub fn list_note_links(state: State<AppState>, id: String) -> Result<Vec<repo::NoteLink>> {
+    let c = state.db.lock().unwrap();
+    repo::list_note_links(&c, &id)
+}
+
+#[tauri::command]
+pub fn list_backlinks(state: State<AppState>, id: String) -> Result<Vec<repo::NoteLink>> {
+    let c = state.db.lock().unwrap();
+    repo::list_backlinks(&c, &id)
+}
+
+#[tauri::command]
+pub fn note_graph(state: State<AppState>, subject_id: Option<String>) -> Result<repo::NoteGraph> {
+    let c = state.db.lock().unwrap();
+    repo::note_graph(&c, subject_id.as_deref())
+}
+
 /// Convert a note into a first-class source: create a `kind="note"` source,
 /// link it back to the note, then chunk + embed the note body using the same
 /// pipeline `add_source` uses. Heavy work runs in `spawn_blocking`.

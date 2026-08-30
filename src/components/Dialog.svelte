@@ -3,6 +3,7 @@
   // window.confirm / window.prompt. Driven entirely by app.dialog; resolves via
   // app.resolveDialog. Mounted once globally in App.svelte.
   import { app } from "../lib/store.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   let inputEl = $state<HTMLInputElement | null>(null);
   let draft = $state("");
@@ -61,7 +62,7 @@
         />
       {/if}
       <div class="dlg-actions">
-        <button class="btn btn--ghost btn--sm" type="button" onclick={cancel}>Cancel</button>
+        <button class="btn btn--ghost btn--sm" type="button" onclick={cancel}>{t("Cancel")}</button>
         <button
           class={"btn btn--sm " + (app.dialog.danger ? "btn--danger" : "btn--primary")}
           type="button"

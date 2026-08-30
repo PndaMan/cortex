@@ -4,6 +4,7 @@
   import Icon from "../components/Icon.svelte";
   import Picker from "../components/Picker.svelte";
   import { isMobile } from "../lib/platform";
+  import { t } from "../lib/i18n.svelte";
 
   // ─────────────────────────────────────────────────────────────────────────
   // The capture engine lives in src/lib/recorder.svelte.ts (global) so a
@@ -22,7 +23,7 @@
     app.subjects.map((s) => ({ id: s.id, label: s.code ? `${s.name} · ${s.code}` : s.name })),
   );
   const topicOptions = $derived([
-    { id: "", label: "— no topic —" },
+    { id: "", label: t("— no topic —") },
     ...(app.subjects.find((s) => s.id === rec.reviewSubjectId)?.topics ?? []).map((t) => ({ id: t.id, label: t.name })),
   ]);
 
@@ -140,7 +141,7 @@
     input.value = ""; // allow re-picking the same file
     if (!file) return;
     if (!app.activeSubject) {
-      app.pushToast({ kind: "error", title: "Open a subject first", body: "Select a subject before adding audio." });
+      app.pushToast({ kind: "error", title: t("Open a subject first"), body: t("Select a subject before adding audio.") });
       return;
     }
     try {
@@ -191,47 +192,47 @@
     <div class="rev-card">
       <div class="rev-chrome mono">
         <span class="rev-led"></span>
-        REVIEW &amp; SAVE
+        {t("REVIEW & SAVE")}
         <span class="grow"></span>
-        <span class="rev-dur">{rec.reviewSourceLabel === "uploaded" ? "FILE" : rec.reviewDuration}</span>
+        <span class="rev-dur">{rec.reviewSourceLabel === "uploaded" ? t("FILE") : rec.reviewDuration}</span>
       </div>
 
       <div class="rev-body">
         <div class="field">
-          <span class="onb-label mono">NAME <span class="faint">how this source is titled</span></span>
+          <span class="onb-label mono">{t("NAME")} <span class="faint">{t("how this source is titled")}</span></span>
           <!-- svelte-ignore a11y_autofocus -->
           <input
             class="input"
             autofocus
             bind:value={rec.reviewName}
-            placeholder="Untitled recording"
+            placeholder={t("Untitled recording")}
           />
         </div>
 
         <div class="field" style:margin-top="16px">
-          <span class="onb-label mono">SUBJECT <span class="faint">which course this lecture belongs to</span></span>
+          <span class="onb-label mono">{t("SUBJECT")} <span class="faint">{t("which course this lecture belongs to")}</span></span>
           <Picker
             value={rec.reviewSubjectId}
             onChange={(id) => rec.setReviewSubject(id)}
             options={subjectOptions}
-            placeholder="Pick a subject"
+            placeholder={t("Pick a subject")}
           />
         </div>
 
         <div class="field" style:margin-top="16px">
-          <span class="onb-label mono">TOPIC <span class="faint">where this recording lives</span></span>
+          <span class="onb-label mono">{t("TOPIC")} <span class="faint">{t("where this recording lives")}</span></span>
           <Picker
             value={rec.reviewTopicId}
             onChange={(id) => (rec.reviewTopicId = id)}
             options={topicOptions}
-            placeholder="— no topic —"
+            placeholder={t("— no topic —")}
           />
         </div>
 
         <div class="rev-speakers" style:margin-top="16px">
           <div class="rev-speakers-l">
-            <span class="onb-label mono">MULTIPLE PEOPLE SPEAKING</span>
-            <span class="rev-speakers-d">Label the transcript by voice — “Speaker 1 / Speaker 2” (homelab WhisperX or a diarizing cloud model).</span>
+            <span class="onb-label mono">{t("MULTIPLE PEOPLE SPEAKING")}</span>
+            <span class="rev-speakers-d">{t("Label the transcript by voice — “Speaker 1 / Speaker 2” (homelab WhisperX or a diarizing cloud model).")}</span>
           </div>
           <button
             type="button"
@@ -244,15 +245,15 @@
         </div>
 
         <div class="rev-meta mono faint">
-          <span class="rev-meta-item"><Icon name="bolt" size={11} color="var(--fg-faint)" />{rec.reviewSourceLabel === "uploaded" ? "Uploaded audio file" : `Captured ${rec.reviewDuration}`}</span>
+          <span class="rev-meta-item"><Icon name="bolt" size={11} color="var(--fg-faint)" />{rec.reviewSourceLabel === "uploaded" ? t("Uploaded audio file") : t("Captured {n}", { n: rec.reviewDuration })}</span>
           {#if rec.reviewTranscript.trim()}
-            <span class="rev-meta-item"><Icon name="doc" size={11} color="var(--fg-faint)" />Live transcript captured</span>
+            <span class="rev-meta-item"><Icon name="doc" size={11} color="var(--fg-faint)" />{t("Live transcript captured")}</span>
           {/if}
         </div>
 
         {#if rec.reviewTranscript.trim()}
           <div class="field" style:margin-top="14px">
-            <span class="onb-label mono">TRANSCRIPT PREVIEW <span class="faint">re-transcribed precisely on save</span></span>
+            <span class="onb-label mono">{t("TRANSCRIPT PREVIEW")} <span class="faint">{t("re-transcribed precisely on save")}</span></span>
             <div class="rev-transcript read">{rec.reviewTranscript}</div>
           </div>
         {/if}
@@ -263,13 +264,13 @@
       </div>
 
       <div class="rev-actions">
-        <button class="btn btn--ghost rev-discard" onclick={() => rec.discardReview()}>Discard</button>
+        <button class="btn btn--ghost rev-discard" onclick={() => rec.discardReview()}>{t("Discard")}</button>
         <span class="grow"></span>
-        <button class="btn btn--primary" onclick={() => rec.confirmSave()}>Save recording</button>
+        <button class="btn btn--primary" onclick={() => rec.confirmSave()}>{t("Save recording")}</button>
       </div>
 
       <div class="rev-hint mono faint">
-        <span class="kbd">⏎</span> save · <span class="kbd">esc</span> discard
+        <span class="kbd">⏎</span> {t("save")} · <span class="kbd">esc</span> {t("discard")}
       </div>
     </div>
   </div>
@@ -279,7 +280,7 @@
   <div class="rec-stage">
     <div class="rec-status mono">
       <span class="rec-led{rec.live ? ' live' : ''}"></span>
-      {rec.status === "transcribing" ? "TRANSCRIBING" : rec.recording ? (rec.paused ? "PAUSED" : "RECORDING") : rec.status === "done" ? "DONE" : "READY"}
+      {rec.status === "transcribing" ? t("TRANSCRIBING") : rec.recording ? (rec.paused ? t("PAUSED") : t("RECORDING")) : rec.status === "done" ? t("DONE") : t("READY")}
       <span class="grow"></span>
       <span class="rec-clock">{rec.mm}:{rec.ss}</span>
     </div>
@@ -295,25 +296,25 @@
       {#if rec.status === "transcribing"}
         <span class="is-spin" style:width="22px" style:height="22px"></span>
       {:else if !rec.recording}
-        <button class="rec-btn rec-btn--go" onclick={() => rec.start()} title="Start recording">
+        <button class="rec-btn rec-btn--go" onclick={() => rec.start()} title={t("Start recording")}>
           <span class="rec-btn-dot"></span>
         </button>
       {:else}
-        <button class="btn btn--icon" onclick={() => rec.togglePause()} title={rec.paused ? "Resume" : "Pause"}>
+        <button class="btn btn--icon" onclick={() => rec.togglePause()} title={rec.paused ? t("Resume") : t("Pause")}>
           {#if rec.paused}<Icon name="play" size={15} />{:else}<Icon name="pause" size={15} />{/if}
         </button>
-        <button class="rec-btn rec-btn--stop" onclick={() => rec.stop()} title="Stop & save"><span class="rec-stop-sq"></span></button>
-        <button class="btn btn--icon" onclick={() => rec.tagMoment()} title="Tag moment (m)"><Icon name="bolt" size={15} color="var(--warn)" /></button>
+        <button class="rec-btn rec-btn--stop" onclick={() => rec.stop()} title={t("Stop & save")}><span class="rec-stop-sq"></span></button>
+        <button class="btn btn--icon" onclick={() => rec.tagMoment()} title={t("Tag moment (m)")}><Icon name="bolt" size={15} color="var(--warn)" /></button>
       {/if}
     </div>
 
     <div class="rec-hint mono faint">
       {#if rec.status === "transcribing"}
-        Transcribing with Whisper…
+        {t("Transcribing with Whisper…")}
       {:else if !rec.recording}
-        Press <span class="kbd">␣</span> or click to start · output becomes a transcribed source
+        {t("Press")} <span class="kbd">␣</span> {t("or click to start · output becomes a transcribed source")}
       {:else}
-        <span class="kbd">m</span> tag moment · <span class="kbd">space</span> pause · <span class="kbd">⏎</span> stop &amp; save · leaving this screen keeps recording
+        <span class="kbd">m</span> {t("tag moment")} · <span class="kbd">space</span> {t("pause")} · <span class="kbd">⏎</span> {t("stop & save")} · {t("leaving this screen keeps recording")}
       {/if}
     </div>
 
@@ -324,10 +325,10 @@
     <!-- Fallback: upload a pre-recorded audio file (always available, emphasised on error) -->
     {#if rec.status !== "transcribing"}
       <div class="rec-upload mono faint" style:margin-top={rec.errorMsg ? "12px" : "18px"}>
-        {#if rec.errorMsg}Can't use the mic? {/if}
+        {#if rec.errorMsg}{t("Can't use the mic?")}{/if}
         <label class="btn btn--ghost btn--sm" style:cursor="pointer">
           <Icon name="doc" size={13} />
-          Upload an audio file
+          {t("Upload an audio file")}
           <input type="file" accept="audio/*" onchange={uploadAudioFile} style:display="none" />
         </label>
       </div>
@@ -344,10 +345,10 @@
     {#if isMobile}
       <div style:display="flex" style:gap="10px" style:margin-top="18px">
         {#if rec.recording}
-          <button class="btn btn--ghost btn--sm" onclick={discard}>Discard</button>
-          <button class="btn btn--ghost btn--sm" onclick={leave}>Hide (keeps recording)</button>
+          <button class="btn btn--ghost btn--sm" onclick={discard}>{t("Discard")}</button>
+          <button class="btn btn--ghost btn--sm" onclick={leave}>{t("Hide (keeps recording)")}</button>
         {:else}
-          <button class="btn btn--ghost btn--sm" onclick={leave}>Close</button>
+          <button class="btn btn--ghost btn--sm" onclick={leave}>{t("Close")}</button>
         {/if}
       </div>
     {/if}
@@ -358,24 +359,24 @@
   {#if !isMobile}
   <aside class="rec-transcript">
     <div class="rt-head">
-      <span class="rt-eyebrow mono">LIVE TRANSCRIPT</span>
+      <span class="rt-eyebrow mono">{t("LIVE TRANSCRIPT")}</span>
       <span class="grow"></span>
       {#if rec.status === "transcribing"}
-        <span class="status-pill status-pill--draft"><span class="dot dot--pulse"></span>processing</span>
+        <span class="status-pill status-pill--draft"><span class="dot dot--pulse"></span>{t("processing")}</span>
       {:else if rec.live && rec.liveTranscriptOn && rec.liveUpdating}
-        <span class="status-pill status-pill--draft"><span class="dot dot--pulse"></span>transcribing…</span>
+        <span class="status-pill status-pill--draft"><span class="dot dot--pulse"></span>{t("transcribing…")}</span>
       {:else if rec.live && rec.liveTranscriptOn}
-        <span class="status-pill status-pill--draft"><span class="dot dot--pulse"></span>listening</span>
+        <span class="status-pill status-pill--draft"><span class="dot dot--pulse"></span>{t("listening")}</span>
       {/if}
       <!-- Closing the panel also stops live transcription; "t" toggles it. -->
-      <button class="btn btn--icon btn--sm btn--ghost rt-collapse" title="Close transcript (t)" onclick={() => rec.toggleTranscriptPanel()}>
+      <button class="btn btn--icon btn--sm btn--ghost rt-collapse" title={t("Close transcript (t)")} onclick={() => rec.toggleTranscriptPanel()}>
         <Icon name="chevron" size={13} />
       </button>
-      <span class="kbd rt-kbd" title="Press t to toggle">t</span>
+      <span class="kbd rt-kbd" title={t("Press t to toggle")}>t</span>
     </div>
     <div class="rt-body" bind:this={rtBody} onscroll={onRtScroll}>
       {#if rec.status === "transcribing"}
-        <div class="rt-empty mono faint">{rec.note || "Running Whisper on your recording…"}</div>
+        <div class="rt-empty mono faint">{rec.note || t("Running Whisper on your recording…")}</div>
         {#if rec.liveFinal.trim()}
           <p class="rt-live read rt-live--dim">{rec.liveFinal}</p>
         {:else if rec.liveBackendText.trim()}
@@ -388,39 +389,38 @@
             {rec.liveFinal}<span class="rt-interim">{rec.liveInterim}</span>
           </p>
         {:else}
-          <div class="rt-listening mono faint"><span class="rt-shimmer">Listening</span><span class="rt-ell"></span></div>
+          <div class="rt-listening mono faint"><span class="rt-shimmer">{t("Listening")}</span><span class="rt-ell"></span></div>
         {/if}
       {:else if rec.recording && rec.whisperMissing}
         <!-- Backend fallback tried, came back empty: no Whisper installed. Be honest. -->
         <div class="rt-note rt-note--warn mono">
-          <span class="rt-note-title">Live transcript needs Whisper</span>
-          No Whisper backend answered. Configure a homelab Whisper server in Settings, or install
-          faster-whisper locally — the recording is still saved and transcribed when you stop.
+          <span class="rt-note-title">{t("Live transcript needs Whisper")}</span>
+          {t("No Whisper backend answered. Configure a homelab Whisper server in Settings, or install faster-whisper locally — the recording is still saved and transcribed when you stop.")}
         </div>
       {:else if rec.recording}
         <!-- Backend chunked fallback (WebKitGTK / Tauri Linux): refreshes every ~7s. -->
         {#if rec.liveBackendText.trim()}
           <p class="rt-live read">{rec.liveBackendText}</p>
         {:else}
-          <div class="rt-listening mono faint"><span class="rt-shimmer">Listening</span><span class="rt-ell"></span></div>
+          <div class="rt-listening mono faint"><span class="rt-shimmer">{t("Listening")}</span><span class="rt-ell"></span></div>
         {/if}
       {:else}
         <div class="rt-empty mono faint">
-          Hit record to capture a lecture. On stop, Cortex transcribes it with Whisper and saves it as a searchable source.
-          A live transcript appears here while you record — close it with <span class="kbd">t</span>; closed means transcription is off until you reopen it.
-          Leaving this screen mid-recording keeps capturing — a small floating widget follows you around the app.
+          {t("Hit record to capture a lecture. On stop, Cortex transcribes it with Whisper and saves it as a searchable source.")}
+          {t("A live transcript appears here while you record — close it with")} <span class="kbd">t</span>{t("; closed means transcription is off until you reopen it.")}
+          {t("Leaving this screen mid-recording keeps capturing — a small floating widget follows you around the app.")}
         </div>
       {/if}
     </div>
     {#if rec.recording}
-      <button class="btn btn--ghost btn--sm rt-close" onclick={discard}>Discard recording</button>
+      <button class="btn btn--ghost btn--sm rt-close" onclick={discard}>{t("Discard recording")}</button>
     {:else}
-      <button class="btn btn--ghost btn--sm rt-close" onclick={leave}>Close</button>
+      <button class="btn btn--ghost btn--sm rt-close" onclick={leave}>{t("Close")}</button>
     {/if}
   </aside>
 
   {#if rec.transcriptCollapsed}
-    <button class="rt-reopen mono" title="Open live transcript (t)" onclick={() => rec.toggleTranscriptPanel()}>
+    <button class="rt-reopen mono" title={t("Open live transcript (t)")} onclick={() => rec.toggleTranscriptPanel()}>
       <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={13} /></span>
       <span class="kbd rt-kbd">t</span>
     </button>

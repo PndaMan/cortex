@@ -10,13 +10,14 @@
   import GeneratingCard from "../components/GeneratingCard.svelte";
   import Picker from "../components/Picker.svelte";
   import { jobs } from "../lib/jobs.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   const TABS = [
-    { id: "cheatsheet", label: "Cheatsheet", icon: "book" },
-    { id: "sources", label: "Sources", icon: "doc" },
-    { id: "chats", label: "Chats", icon: "chat" },
-    { id: "materials", label: "Materials", icon: "grid" },
-    { id: "citations", label: "Planner", icon: "cards" },
+    { id: "cheatsheet", label: t("Cheatsheet"), icon: "book" },
+    { id: "sources", label: t("Sources"), icon: "doc" },
+    { id: "chats", label: t("Chats"), icon: "chat" },
+    { id: "materials", label: t("Materials"), icon: "grid" },
+    { id: "citations", label: t("Planner"), icon: "cards" },
   ] as const;
 
   // Collapsed tab menu (narrow widths / touch): one trigger opens a popover of all
@@ -40,8 +41,8 @@
   // Cheatsheet view keeps in sync with its tab selection.
   const scopeLabel = $derived(
     app.cheatTopicId
-      ? (subj?.topics.find((t) => t.id === app.cheatTopicId)?.name ?? "Whole subject")
-      : "Whole subject"
+      ? (subj?.topics.find((t) => t.id === app.cheatTopicId)?.name ?? t("Whole subject"))
+      : t("Whole subject")
   );
 
   // Load ALL sources for the subject (including ones with no topic, which the
@@ -84,7 +85,7 @@
 
   async function deleteSrc(e: MouseEvent, src: Source) {
     e.stopPropagation();
-    if (!(await app.confirm({ title: "Delete this source?", danger: true, okLabel: "Delete" }))) return;
+    if (!(await app.confirm({ title: t("Delete this source?"), danger: true, okLabel: t("Delete") }))) return;
     await app.deleteSource(src.id); // toasts + refreshes the store internally
     loadSources(); // reload the local list this tab renders from
   }
@@ -102,13 +103,13 @@
   }
 
   async function deleteTopicGroup(topicId: string, name: string) {
-    if (!(await app.confirm({ title: `Delete topic "${name}"?`, body: "This empty topic will be removed.", danger: true, okLabel: "Delete" }))) return;
+    if (!(await app.confirm({ title: t("Delete topic \"{n}\"?", { n: name }), body: t("This empty topic will be removed."), danger: true, okLabel: t("Delete") }))) return;
     await app.deleteTopic(topicId); // toasts + refreshes store internally
     loadSources();
   }
 
   async function addTopic() {
-    const name = await app.prompt({ title: "Add topic", label: "Topic name", placeholder: "e.g. Determinism" });
+    const name = await app.prompt({ title: t("Add topic"), label: t("Topic name"), placeholder: t("e.g. Determinism") });
     if (name) {
       await app.createTopic(name); // adds to active subject + toasts + refreshes
       loadSources();
@@ -122,7 +123,7 @@
     }
     return [...m.entries()].map(([k, items]) => ({
       key: k,
-      name: k === "__none__" ? "Ungrouped" : (subj?.topics.find((t) => t.id === k)?.name ?? "Ungrouped"),
+      name: k === "__none__" ? t("Ungrouped") : (subj?.topics.find((t) => t.id === k)?.name ?? t("Ungrouped")),
       items,
     }));
   });
@@ -156,14 +157,14 @@
   }
   const moveTargets = $derived([
     ...(subj?.topics ?? []).map((t) => ({ id: t.id, label: "→ " + t.name })),
-    { id: "__none__", label: "→ no topic" },
+    { id: "__none__", label: t("→ no topic") },
   ]);
   async function bulkDelete() {
     const n = selIds.length;
     if (n === 0) return;
-    if (!(await app.confirm({ title: `Delete ${n} source${n === 1 ? "" : "s"}?`, danger: true, okLabel: "Delete" }))) return;
+    if (!(await app.confirm({ title: t("Delete {n} source{c}?", { n, c: n === 1 ? "" : "s" }), danger: true, okLabel: t("Delete") }))) return;
     for (const id of selIds) { try { await api.deleteSource(id); } catch (e) { /* keep going */ } }
-    app.pushToast({ kind: "success", title: `Deleted ${n} source${n === 1 ? "" : "s"}` });
+    app.pushToast({ kind: "success", title: t("Deleted {n} source{c}", { n, c: n === 1 ? "" : "s" }) });
     clearSel();
     await app.refresh();
     loadSources();
@@ -173,7 +174,7 @@
     const tid = target === "__none__" ? null : target;
     const n = selIds.length;
     for (const id of selIds) { try { await api.moveSource(id, subj.id, tid); } catch (e) { /* keep going */ } }
-    app.pushToast({ kind: "success", title: `Moved ${n} source${n === 1 ? "" : "s"}` });
+    app.pushToast({ kind: "success", title: t("Moved {n} source{c}", { n, c: n === 1 ? "" : "s" }) });
     clearSel();
     await app.refresh();
     loadSources();
@@ -182,13 +183,13 @@
     const sid = subj?.id;
     const ids = selIds;
     if (!sid || ids.length === 0) return;
-    app.pushToast({ kind: "info", title: `Re-ingesting ${ids.length} source${ids.length === 1 ? "" : "s"}…`, body: "Re-OCR / re-chunk in progress." });
+    app.pushToast({ kind: "info", title: t("Re-ingesting {n} source{c}…", { n: ids.length, c: ids.length === 1 ? "" : "s" }), body: t("Re-OCR / re-chunk in progress.") });
     clearSel();
     for (const id of ids) {
       // Surface each as a running job card so progress is visible.
       jobs.start({
         kind: "source",
-        label: srcList.find((s) => s.id === id)?.name ?? "source",
+        label: srcList.find((s) => s.id === id)?.name ?? t("source"),
         subjectId: sid,
         topicId: null,
         run: () => api.reingestSource(id),
@@ -207,7 +208,7 @@
         class="st-id st-id--clickable"
         role="button"
         tabindex="0"
-        title="Open subject details"
+        title={t("Open subject details")}
         onclick={() => app.openSubjectPanel()}
         onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); app.openSubjectPanel(); } }}
       >
@@ -218,7 +219,7 @@
         </div>
         <button
           class="btn btn--icon btn--sm btn--ghost"
-          title="Edit subject"
+          title={t("Edit subject")}
           onclick={(e) => { e.stopPropagation(); editSubject(); }}
         >
           <Icon name="pencil" size={12} />
@@ -283,40 +284,40 @@
         <div class="workspace-scroll">
           <div class="sources-page">
             <div class="sources-toolbar">
-              <span class="label">{srcList.length} {srcList.length === 1 ? "source" : "sources"} · {groups.length} {groups.length === 1 ? "group" : "groups"}</span>
+              <span class="label">{srcList.length} {srcList.length === 1 ? t("source") : t("sources")} · {groups.length} {groups.length === 1 ? t("group") : t("groups")}</span>
               <div class="grow"></div>
               {#if srcList.length > 0}
-                <button class="btn btn--sm btn--ghost" onclick={selectAll} title="Select all sources">
-                  <Icon name="check" size={12} /> {allSelected ? "Deselect all" : "Select all"}
+                <button class="btn btn--sm btn--ghost" onclick={selectAll} title={t("Select all sources")}>
+                  <Icon name="check" size={12} /> {allSelected ? t("Deselect all") : t("Select all")}
                 </button>
               {/if}
               <button class="btn btn--sm btn--ghost" onclick={addTopic}>
-                <Icon name="plus" size={12} /> Add topic
+                <Icon name="plus" size={12} /> {t("Add topic")}
               </button>
               <button class="btn btn--sm btn--primary" onclick={() => app.setView("add-source")}>
-                <Icon name="plus" size={12} /> Add source
+                <Icon name="plus" size={12} /> {t("Add source")}
               </button>
             </div>
 
             {#if selIds.length > 0}
               <div class="src-bulkbar">
-                <span class="mono">{selIds.length} selected</span>
+                <span class="mono">{t("{n} selected", { n: selIds.length })}</span>
                 <div class="grow"></div>
                 <div style:width="170px">
                   <Picker
                     value=""
                     onChange={(id) => bulkMove(id)}
                     options={moveTargets}
-                    placeholder="Move to…"
+                    placeholder={t("Move to…")}
                   />
                 </div>
-                <button class="btn btn--sm" onclick={bulkReingest} title="Re-OCR / re-chunk selected sources">
-                  <Icon name="refresh" size={12} /> Re-ingest
+                <button class="btn btn--sm" onclick={bulkReingest} title={t("Re-OCR / re-chunk selected sources")}>
+                  <Icon name="refresh" size={12} /> {t("Re-ingest")}
                 </button>
                 <button class="btn btn--sm sv-delete" onclick={bulkDelete}>
-                  <Icon name="x" size={12} /> Delete
+                  <Icon name="x" size={12} /> {t("Delete")}
                 </button>
-                <button class="btn btn--sm btn--ghost" onclick={clearSel}>Clear</button>
+                <button class="btn btn--sm btn--ghost" onclick={clearSel}>{t("Clear")}</button>
               </div>
             {/if}
 
@@ -333,7 +334,7 @@
                     <div class="grow"></div>
                     <button
                       class="btn btn--icon btn--sm btn--ghost"
-                      title="Edit topic"
+                      title={t("Edit topic")}
                       onclick={() => editTopicGroup(g.key, g.name)}
                     >
                       <Icon name="pencil" size={12} />
@@ -341,7 +342,7 @@
                     {#if g.items.length === 0}
                       <button
                         class="btn btn--icon btn--sm btn--ghost"
-                        title="Delete empty topic"
+                        title={t("Delete empty topic")}
                         onclick={() => deleteTopicGroup(g.key, g.name)}
                       >
                         <Icon name="x" size={12} />
@@ -359,13 +360,13 @@
                       tabindex="0"
                       onclick={() => tileClick(src)}
                       onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); tileClick(src); } }}
-                      title={selecting ? "Toggle selection" : "Open source"}
+                      title={selecting ? t("Toggle selection") : t("Open source")}
                     >
                       <div class="stl-top">
                         <button
                           class="src-check{sel[src.id] ? ' on' : ''}"
                           onclick={(e) => toggleSel(src.id, e)}
-                          title="Select source"
+                          title={t("Select source")}
                           aria-pressed={!!sel[src.id]}
                         >
                           {#if sel[src.id]}<Icon name="check" size={10} />{/if}
@@ -375,21 +376,21 @@
                         </span>
                         <span
                           class="status-pill status-pill--{src.status === 'ready' ? 'ready' : src.status === 'error' ? 'error' : 'pending'}"
-                          title={src.status === 'ready' ? 'Ready' : src.status === 'error' ? 'Failed — re-ingest' : 'Not generated yet'}
+                          title={src.status === 'ready' ? t("Ready") : src.status === 'error' ? t("Failed — re-ingest") : t("Not generated yet")}
                         >
                           <span class="dot"></span>
                         </span>
                         <div class="grow"></div>
                         <button
                           class="btn btn--icon btn--sm btn--ghost"
-                          title="Edit source"
+                          title={t("Edit source")}
                           onclick={(e) => editSrc(e, src)}
                         >
                           <Icon name="pencil" size={12} />
                         </button>
                         <button
                           class="btn btn--icon btn--sm btn--ghost"
-                          title="Delete source"
+                          title={t("Delete source")}
                           onclick={(e) => deleteSrc(e, src)}
                         >
                           <Icon name="x" size={12} />
@@ -397,7 +398,7 @@
                       </div>
                       <div class="stl-name mono">{src.name}</div>
                       {#if src.meta}
-                        <div class="stl-meta mono">{src.meta} · {src.status === "ready" ? "embedded" : src.status === "error" ? "error" : (app.ingestProgress[src.id]?.detail ?? "ingesting…")}</div>
+                        <div class="stl-meta mono">{src.meta} · {src.status === "ready" ? t("embedded") : src.status === "error" ? t("error") : (app.ingestProgress[src.id]?.detail ?? t("ingesting…"))}</div>
                       {/if}
                       {#if src.tags && src.tags.length > 0}
                         <div class="stl-tags">
@@ -423,10 +424,10 @@
                 style:color="var(--fg-faint)"
               >
                 <Icon name="doc" size={26} color="var(--fg-faint)" />
-                <h1 class="read" style:font-size="var(--r-xl)" style:color="var(--fg-bright)" style:font-weight="500">No sources yet</h1>
-                <p class="mono muted">Add a lecture, PDF, link, recording or photo to start building this subject.</p>
+                <h1 class="read" style:font-size="var(--r-xl)" style:color="var(--fg-bright)" style:font-weight="500">{t("No sources yet")}</h1>
+                <p class="mono muted">{t("Add a lecture, PDF, link, recording or photo to start building this subject.")}</p>
                 <button class="btn btn--primary" onclick={() => app.setView("add-source")}>
-                  <Icon name="plus" size={13} /> Add source
+                  <Icon name="plus" size={13} /> {t("Add source")}
                 </button>
               </div>
             {/if}
@@ -451,13 +452,13 @@
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:62vh;padding:48px 32px;text-align:center;color:var(--fg-faint)">
       <Icon name="diamond" size={30} color="var(--fg-faint)" />
       {#if app.subjects.length === 0}
-        <p class="read" style="font-size:var(--r-lg);color:var(--fg-bright);margin:4px 0 0">No subjects yet</p>
-        <p style="max-width:360px;margin:0">Add your first subject to start building cheatsheets, flashcards and more.</p>
+        <p class="read" style="font-size:var(--r-lg);color:var(--fg-bright);margin:4px 0 0">{t("No subjects yet")}</p>
+        <p style="max-width:360px;margin:0">{t("Add your first subject to start building cheatsheets, flashcards and more.")}</p>
         <button class="btn btn--primary btn--sm" style="margin-top:6px" onclick={() => app.setView("add-subject")}>
-          <Icon name="plus" size={13} /> New subject
+          <Icon name="plus" size={13} /> {t("New subject")}
         </button>
       {:else}
-        <p style="margin:0">Select a subject from the sidebar to get started.</p>
+        <p style="margin:0">{t("Select a subject from the sidebar to get started.")}</p>
       {/if}
     </div>
   </div>

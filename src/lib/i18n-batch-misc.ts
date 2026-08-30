@@ -1,0 +1,246 @@
+// Batch dictionary for the "misc" migration set:
+// views/Recorder.svelte, views/SourceViewer.svelte, shell/MobileShell.svelte,
+// components/{AudioPlayer, LiveActivity, RecordingActivity, RichText,
+// MarkdownEditor, InfographicView, MindMapView, SlideshowView, GeneratingCard,
+// LeaderPane, ModelSearch, EmojiPicker, Picker, ToastStack}.svelte
+// Key = exact English source string; value = Russian translation.
+// Merged into src/lib/i18n-ru.ts by the integrator. Do not import anywhere.
+
+export const ru: Record<string, string> = {
+  // ── Recorder.svelte ──────────────────────────────────────────────────────
+  "— no topic —": "— без темы —",
+  "Open a subject first": "Сначала откройте предмет",
+  "Select a subject before adding audio.": "Выберите предмет, прежде чем добавлять аудио.",
+  "REVIEW & SAVE": "ПРОВЕРКА И СОХРАНЕНИЕ",
+  "FILE": "ФАЙЛ",
+  "NAME": "НАЗВАНИЕ",
+  "how this source is titled": "как будет назван этот источник",
+  "Untitled recording": "Запись без названия",
+  "SUBJECT": "ПРЕДМЕТ",
+  "which course this lecture belongs to": "к какому курсу относится эта лекция",
+  "Pick a subject": "Выберите предмет",
+  "TOPIC": "ТЕМА",
+  "where this recording lives": "где хранится эта запись",
+  "MULTIPLE PEOPLE SPEAKING": "ГОВОРЯТ НЕСКОЛЬКО ЧЕЛОВЕК",
+  "Label the transcript by voice — “Speaker 1 / Speaker 2” (homelab WhisperX or a diarizing cloud model).":
+    "Размечайте транскрипт по голосам — «Спикер 1 / Спикер 2» (домашний WhisperX или облачная модель с диаризацией).",
+  "Uploaded audio file": "Загруженный аудиофайл",
+  "Captured {n}": "Записано {n}",
+  "Live transcript captured": "Живая транскрипция сохранена",
+  "TRANSCRIPT PREVIEW": "ПРЕДПРОСМОТР ТРАНСКРИПТА",
+  "re-transcribed precisely on save": "точная повторная транскрипция при сохранении",
+  "Discard": "Отменить",
+  "Save recording": "Сохранить запись",
+  "save": "сохранить",
+  "discard": "отменить",
+  "TRANSCRIBING": "ТРАНСКРИПЦИЯ",
+  "PAUSED": "ПАУЗА",
+  "RECORDING": "ЗАПИСЬ",
+  "DONE": "ГОТОВО",
+  "READY": "ГОТОВ",
+  "Start recording": "Начать запись",
+  "Resume": "Продолжить",
+  "Pause": "Пауза",
+  "Stop & save": "Стоп и сохранить",
+  "Tag moment (m)": "Отметить момент (m)",
+  "Transcribing with Whisper…": "Транскрибируем через Whisper…",
+  "Press": "Нажмите",
+  "or click to start · output becomes a transcribed source": "или щёлкните, чтобы начать · результат станет транскрибированным источником",
+  "tag moment": "отметить момент",
+  "stop & save": "стоп и сохранить",
+  "leaving this screen keeps recording": "уходя с этого экрана, запись не прерывается",
+  "Can't use the mic?": "Нет доступа к микрофону?",
+  "Upload an audio file": "Загрузить аудиофайл",
+  "Hide (keeps recording)": "Скрыть (запись продолжится)",
+  "Close": "Закрыть",
+  "LIVE TRANSCRIPT": "ЖИВОЙ ТРАНСКРИПТ",
+  "processing": "обработка",
+  "transcribing…": "транскрибация…",
+  "listening": "слушаем",
+  "Close transcript (t)": "Закрыть транскрипт (t)",
+  "pause": "пауза",
+  "Press t to toggle": "Нажмите t, чтобы переключить",
+  "Running Whisper on your recording…": "Запускаем Whisper для вашей записи…",
+  "Listening": "Слушаем",
+  "Live transcript needs Whisper": "Для живого транскрипта нужен Whisper",
+  "No Whisper backend answered. Configure a homelab Whisper server in Settings, or install faster-whisper locally — the recording is still saved and transcribed when you stop.":
+    "Бэкенд Whisper не ответил. Настройте домашний сервер Whisper в настройках или установите faster-whisper локально — запись всё равно сохранится и будет транскрибирована после остановки.",
+  "Hit record to capture a lecture. On stop, Cortex transcribes it with Whisper and saves it as a searchable source.":
+    "Нажмите запись, чтобы зафиксировать лекцию. После остановки Cortex транскрибирует её через Whisper и сохранит как доступный для поиска источник.",
+  "A live transcript appears here while you record — close it with": "Во время записи здесь появляется живой транскрипт — закройте его клавишей",
+  "; closed means transcription is off until you reopen it.": "; когда он закрыт, транскрипция выключена, пока вы её не включите снова.",
+  "Leaving this screen mid-recording keeps capturing — a small floating widget follows you around the app.":
+    "Уход с этого экрана во время записи не прерывает её — за вами последует небольшой плавающий виджет.",
+  "Discard recording": "Отменить запись",
+  "Open live transcript (t)": "Открыть живой транскрипт (t)",
+
+  // ── SourceViewer.svelte ──────────────────────────────────────────────────
+  "Delete this source?": "Удалить этот источник?",
+  "Delete": "Удалить",
+  "Back": "Назад",
+  "Search": "Поиск",
+  "Edit source": "Изменить источник",
+  "Delete source": "Удалить источник",
+  "Failed to ingest": "Не удалось обработать",
+  "This source couldn't be parsed. Try deleting and re-adding it.":
+    "Этот источник не удалось разобрать. Попробуйте удалить его и добавить заново.",
+  "Rendering pages…": "Рендерим страницы…",
+  "Couldn't render PDF:": "Не удалось отрисовать PDF:",
+  "Overview": "Обзор",
+  "No overview yet — a markdown summary is generated automatically after transcription and saved to Notes as “Summary — {name}”.":
+    "Обзора пока нет — markdown-резюме создаётся автоматически после транскрипции и сохраняется в заметки как «Summary — {name}».",
+  "Transcript": "Транскрипт",
+  "Hide transcript": "Скрыть транскрипт",
+  "View transcript": "Показать транскрипт",
+  "No transcript available yet.": "Транскрипта пока нет.",
+  "✓ {n} chunks embedded · {dim}-dim vectors": "✓ встроено фрагментов: {n} · векторы размерности {dim}",
+  "Source fully parsed and embedded. Each chunk below is stored with its vector.":
+    "Источник полностью разобран и встроен. Каждый фрагмент ниже хранится со своим вектором.",
+  "not embedded / ingesting": "не встроен / обрабатывается",
+  "No chunks found — the source may still be ingesting or failed to parse.":
+    "Фрагменты не найдены — источник ещё обрабатывается или не удалось его разобрать.",
+  "document": "документ",
+  "image": "изображение",
+
+  // ── MobileShell.svelte ───────────────────────────────────────────────────
+  "Home": "Главная",
+  "Add source": "Добавить источник",
+  "Record lecture": "Записать лекцию",
+  "Calendar": "Календарь",
+  "Notes": "Заметки",
+  "Insights": "Аналитика",
+  "New subject": "Новый предмет",
+  "Settings": "Настройки",
+  "Menu": "Меню",
+  "Notifications": "Уведомления",
+  "Ask Cortex": "Спросить Cortex",
+  "Ask": "Спросить",
+  "Close menu": "Закрыть меню",
+  "Chat": "Чат",
+
+  // ── AudioPlayer.svelte ───────────────────────────────────────────────────
+  "Audio overview": "Аудиообзор",
+  "Audio ready": "Аудио готово",
+  "Generated a real audio overview.": "Создан настоящий аудиообзор.",
+  "Couldn't generate audio": "Не удалось создать аудио",
+  "Back to materials": "Назад к материалам",
+  "host": "ведущий",
+  "co-host": "со-ведущий",
+  "No audio script.": "Нет сценария аудио.",
+  "● Real audio — narrated by your cloud voices.": "● Настоящее аудио — начитано вашими облачными голосами.",
+  "Generating audio…": "Генерируем аудио…",
+  "Generate real audio": "Создать настоящее аудио",
+  "Offline preview uses on-device voices — install": "Автономный предпросмотр использует встроенные голоса — установите",
+  "or": "или",
+  "for spoken playback, or generate real audio above.": "для озвучивания или создайте настоящее аудио выше.",
+  "Back 15s": "Назад на 15 с",
+  "Forward 15s": "Вперёд на 15 с",
+  "{n} turns · synced": "реплик: {n} · синхронизировано",
+  "no script": "нет сценария",
+
+  // ── LiveActivity.svelte ──────────────────────────────────────────────────
+  "Expand focus timer": "Развернуть таймер фокуса",
+  "Pomodoro timer, {n} remaining. Expand.": "Таймер Pomodoro, осталось {n}. Развернуть.",
+  "Pomodoro live activity. {phase}, {n} remaining. Click to open the full timer.":
+    "Pomodoro в реальном времени. {phase}, осталось {n}. Нажмите, чтобы открыть полный таймер.",
+  "Start": "Запустить",
+  "Minimise": "Свернуть",
+
+  // ── RecordingActivity.svelte ─────────────────────────────────────────────
+  "Lecture recording, {mm}:{ss} elapsed. Click to open the recorder.":
+    "Запись лекции, прошло {mm}:{ss}. Нажмите, чтобы открыть рекордер.",
+  "Whisper…": "Whisper…",
+  "UNSAVED TAKE": "НЕСОХРАНЁННАЯ ЗАПИСЬ",
+  "tap to save": "нажмите, чтобы сохранить",
+  "Stop & review": "Стоп и проверить",
+
+  // ── RichText.svelte ──────────────────────────────────────────────────────
+  "Note": "Заметка",
+  "Tip": "Совет",
+  "Warning": "Предупреждение",
+  "Important": "Важно",
+  "Example": "Пример",
+  "Source": "Источник",
+
+  // ── MarkdownEditor.svelte ────────────────────────────────────────────────
+  "Bold (⌘B)": "Полужирный (⌘B)",
+  "Italic (⌘I)": "Курсив (⌘I)",
+  "Heading 1 (⌘1)": "Заголовок 1 (⌘1)",
+  "Heading 2 (⌘2)": "Заголовок 2 (⌘2)",
+  "Bullet list": "Маркированный список",
+  "Numbered list": "Нумерованный список",
+  "Inline code (⌘E)": "Код в строке (⌘E)",
+  "Code block": "Блок кода",
+  "Link (⌘K)": "Ссылка (⌘K)",
+  "Insert image": "Вставить изображение",
+  "Quote": "Цитата",
+  "Formatting": "Форматирование",
+  "Editor view": "Вид редактора",
+  "Write": "Писать",
+  "Preview": "Предпросмотр",
+  "Write your notes in Markdown…": "Пишите заметки в Markdown…",
+  "Nothing to preview yet.": "Пока нечего показывать.",
+
+  // ── InfographicView.svelte ───────────────────────────────────────────────
+  "Infographic": "Инфографика",
+  "KEY TAKEAWAY": "ГЛАВНОЕ",
+  "Timeline": "Хронология",
+  "No infographic content.": "Нет содержимого инфографики.",
+  "infographic": "инфографика",
+
+  // ── MindMapView.svelte ───────────────────────────────────────────────────
+  "Mind map": "Интеллект-карта",
+  "No mind-map content.": "Нет содержимого интеллект-карты.",
+  "Expand all": "Развернуть все",
+  "Collapse all": "Свернуть все",
+
+  // ── SlideshowView.svelte ─────────────────────────────────────────────────
+  "Slideshow": "Презентация",
+  "Toggle speaker notes": "Показать заметки докладчика",
+  "No slides available.": "Слайдов нет.",
+  "Speaker notes": "Заметки докладчика",
+  "Prev": "Назад",
+  "Next": "Далее",
+  "Slide {n}": "Слайд {n}",
+
+  // ── GeneratingCard.svelte ────────────────────────────────────────────────
+  "Stop generating {kind}?": "Остановить генерацию ({kind})?",
+  "It stops being tracked and the result is discarded.": "Задача перестанет отслеживаться, результат будет удалён.",
+  "Stop": "Остановить",
+  "Generating {kind}…": "Генерируем: {kind}…",
+  "Stop generating": "Остановить генерацию",
+  "Couldn't generate {kind}": "Не удалось сгенерировать: {kind}",
+  "Unknown error": "Неизвестная ошибка",
+  "Dismiss": "Скрыть",
+
+  // ── LeaderPane.svelte ────────────────────────────────────────────────────
+  "Space leader — context actions": "Пробел — контекстные действия",
+
+  // ── ModelSearch.svelte ───────────────────────────────────────────────────
+  "Loading models…": "Загружаем модели…",
+  "Search models or type your own name…": "Ищите модели или введите своё название…",
+  "Search models…": "Поиск моделей…",
+  "Select…": "Выберите…",
+  "No models match “{q}”": "Нет моделей по запросу «{q}»",
+  "Use “{id}”": "Использовать «{id}»",
+  "Custom model id": "Свой id модели",
+  "+{n} more — keep typing to narrow": "+{n} далее — продолжайте вводить для уточнения",
+
+  // ── EmojiPicker.svelte ───────────────────────────────────────────────────
+  "Study": "Учёба",
+  "Science": "Наука",
+  "Tech": "Технологии",
+  "Math": "Математика",
+  "Arts": "Искусство",
+  "Symbols": "Символы",
+  "Objects": "Предметы",
+  "Nature": "Природа",
+  "Animals": "Животные",
+  "Food": "Еда",
+  "Activity": "Активности",
+  "Places": "Места",
+  "Faces": "Лица",
+  "Pick an emoji": "Выберите эмодзи",
+
+  // ── ToastStack.svelte ────────────────────────────────────────────────────
+};

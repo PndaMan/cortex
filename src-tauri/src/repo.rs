@@ -6,6 +6,7 @@ use crate::error::{Error, Result};
 use crate::models::*;
 use crate::vector::{blob_to_f32s, cosine};
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // ---- subjects ----------------------------------------------------------
@@ -668,16 +669,12 @@ pub fn text_search(conn: &Connection, query: &str, per_kind: usize) -> Result<Ve
     let mut stmt = conn.prepare(
         "SELECT id, subject_id, title, substr(body, 1, 160) FROM notes \
          WHERE title LIKE ?1 ESCAPE '\\' OR body LIKE ?1 ESCAPE '\\' \
-         ORDER BY updated_at DESC LIMIT ?2",
+            OR id IN (SELECT note_id FROM note_tags WHERE tag LIKE ?1 ESCAPE '\\') \
+         ORDER BY CASE WHEN title = ?3 THEN 0 ELSE 1 END, updated_at DESC, id ASC LIMIT ?2",
     )?;
-    let rows = stmt.query_map(params![pat, per_kind as i64], |r| {
+    let rows = stmt.query_map(params![pat, per_kind as i64, query], |r| {
         Ok(SearchHit {
-            kind: "note".into(),
-            id: r.get(0)?,
-            subject_id: r.get(1)?,
-            title: r.get(2)?,
-            snippet: r.get(3)?,
-            score: 0.0,
+            kind: "note".into(), id: r.get(0)?, subject_id: r.get(1)?, title: r.get(2)?, snippet: r.get(3)?, score: 0.0,
         })
     })?;
     out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
@@ -1799,78 +1796,152 @@ pub fn delete_all_content(conn: &Connection) -> Result<()> {
 // ---- notes -------------------------------------------------------------
 
 fn map_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
+    let properties: String = r.get(10)?;
     Ok(Note {
-        id: r.get(0)?,
-        subject_id: r.get(1)?,
-        topic_id: r.get(2)?,
-        title: r.get(3)?,
-        body: r.get(4)?,
-        source_id: r.get(5)?,
-        created_at: r.get(6)?,
-        updated_at: r.get(7)?,
+        id: r.get(0)?, subject_id: r.get(1)?, topic_id: r.get(2)?, title: r.get(3)?, body: r.get(4)?,
+        source_id: r.get(5)?, created_at: r.get(6)?, updated_at: r.get(7)?, slug: r.get(8)?, folder: r.get(9)?,
+        properties: serde_json::from_str(&properties).unwrap_or_else(|_| serde_json::json!({})),
     })
 }
 
-const NOTE_COLS: &str =
-    "id, subject_id, topic_id, title, body, source_id, created_at, updated_at";
 
-pub fn insert_note(
-    conn: &Connection,
-    subject_id: Option<&str>,
-    topic_id: Option<&str>,
-    title: &str,
-    body: &str,
-) -> Result<String> {
-    let id = new_id();
-    let ts = now_ms();
-    conn.execute(
-        "INSERT INTO notes (id, subject_id, topic_id, title, body, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-        params![id, subject_id, topic_id, title, body, ts],
-    )?;
-    Ok(id)
-}
+pub const MAX_NOTE_BODY: usize = 2_000_000;
+pub const MAX_NOTE_LINK: usize = 512;
+pub const MAX_NOTE_TAG: usize = 128;
 
-pub fn list_notes(conn: &Connection, subject_id: Option<&str>) -> Result<Vec<Note>> {
-    let sql = format!(
-        "SELECT {NOTE_COLS} FROM notes
-         WHERE (?1 IS NULL OR subject_id=?1) ORDER BY updated_at DESC"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![subject_id], map_note)?;
-    Ok(rows.collect::<rusqlite::Result<_>>()?)
-}
-
-pub fn get_note(conn: &Connection, id: &str) -> Result<Note> {
-    let sql = format!("SELECT {NOTE_COLS} FROM notes WHERE id=?1");
-    conn.query_row(&sql, params![id], map_note)
-        .optional()?
-        .ok_or_else(|| Error::NotFound(format!("note {id}")))
-}
-
-pub fn update_note(conn: &Connection, id: &str, title: &str, body: &str) -> Result<()> {
-    let n = conn.execute(
-        "UPDATE notes SET title=?2, body=?3, updated_at=?4 WHERE id=?1",
-        params![id, title, body, now_ms()],
-    )?;
-    if n == 0 {
-        return Err(Error::NotFound(format!("note {id}")));
+pub fn validate_note_value(value: &str, field: &str, max: usize) -> Result<()> {
+    if value.chars().count() > max { return Err(Error::Other(format!("{field} is too long"))); }
+    if value.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t')) {
+        return Err(Error::Other(format!("{field} contains invalid control characters")));
     }
     Ok(())
 }
 
-/// Link a note to the source generated when it was converted.
-pub fn set_note_source(conn: &Connection, id: &str, source_id: &str) -> Result<()> {
-    conn.execute(
-        "UPDATE notes SET source_id=?2, updated_at=?3 WHERE id=?1",
-        params![id, source_id, now_ms()],
-    )?;
+/// Extract wikilinks outside fenced code blocks.
+pub fn parse_note_links(body: &str) -> Result<Vec<NoteLink>> {
+    validate_note_value(body, "note body", MAX_NOTE_BODY)?;
+    let mut result = Vec::new(); let mut fenced = false; let mut pos = 0_i64;
+    for line in body.lines() {
+        let t = line.trim_start();
+        if t.starts_with("```") || t.starts_with("~~~") { fenced = !fenced; continue; }
+        if fenced { continue; }
+        let mut rest = line;
+        while let Some(i) = rest.find("[[") {
+            let tail = &rest[i + 2..]; let Some(end) = tail.find("]]" ) else { break; };
+            let token = &tail[..end]; let (key, display) = token.split_once('|').unwrap_or((token, token));
+            let key = key.trim(); let display = display.trim();
+            if !key.is_empty() && key.chars().count() <= MAX_NOTE_LINK && display.chars().count() <= MAX_NOTE_LINK && !token.chars().any(|c| c.is_control()) {
+                result.push(NoteLink { source_note_id: String::new(), target_note_id: None, target_key: key.into(), display_text: display.into(), position: pos }); pos += 1;
+            }
+            rest = &tail[end + 2..];
+        }
+    }
+    Ok(result)
+}
+
+/// Extract hashtags outside fenced code blocks and an optional `tags` property.
+pub fn parse_note_tags(body: &str, properties: &serde_json::Value) -> Result<Vec<String>> {
+    validate_note_value(body, "note body", MAX_NOTE_BODY)?;
+    let mut tags = Vec::new(); let mut fenced = false;
+    for line in body.lines() {
+        let t = line.trim_start(); if t.starts_with("```") || t.starts_with("~~~") { fenced = !fenced; continue; } if fenced { continue; }
+        let chars: Vec<char> = line.chars().collect(); let mut i = 0;
+        while i < chars.len() { if chars[i] == '#' && (i == 0 || chars[i-1].is_whitespace()) { let mut j = i + 1; while j < chars.len() && (chars[j].is_alphanumeric() || matches!(chars[j], '_' | '-' | '/')) { j += 1; } if j > i + 1 { tags.push(chars[i+1..j].iter().collect()); } i = j; } else { i += 1; } }
+    }
+    if let Some(v) = properties.get("tags") { match v { serde_json::Value::String(s) => tags.extend(s.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from)), serde_json::Value::Array(a) => tags.extend(a.iter().filter_map(|v| v.as_str()).map(String::from)), _ => {} } }
+    tags.sort(); tags.dedup(); for tag in &tags { validate_note_value(tag, "note tag", MAX_NOTE_TAG)?; } Ok(tags)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteLink { pub source_note_id: String, pub target_note_id: Option<String>, pub target_key: String, pub display_text: String, pub position: i64 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteGraphNode { pub id: String, pub title: String }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteGraphEdge { pub source: String, pub target: Option<String>, pub target_key: String }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteGraph { pub nodes: Vec<NoteGraphNode>, pub edges: Vec<NoteGraphEdge> }
+
+pub fn replace_note_index(conn: &Connection, note_id: &str, body: &str, properties: &serde_json::Value) -> Result<()> {
+    let links = parse_note_links(body)?;
+    let tags = parse_note_tags(body, properties)?;
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM note_links WHERE source_note_id=?1", params![note_id])?;
+    tx.execute("DELETE FROM note_tags WHERE note_id=?1", params![note_id])?;
+    let ts = now_ms();
+    for link in links {
+        let target_id: Option<String> = tx.query_row("SELECT id FROM notes WHERE id=?1 OR slug=?1 OR title=?1 LIMIT 1", params![link.target_key], |r| r.get(0)).optional()?;
+        tx.execute("INSERT INTO note_links (source_note_id,target_note_id,target_key,display_text,position,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?6)", params![note_id, target_id, link.target_key, link.display_text, link.position, ts])?;
+    }
+    for tag in tags { tx.execute("INSERT INTO note_tags (note_id,tag,created_at,updated_at) VALUES (?1,?2,?3,?3)", params![note_id, tag, ts])?; }
+    tx.commit()?;
     Ok(())
 }
 
+
+pub fn insert_note(conn: &Connection, subject_id: Option<&str>, topic_id: Option<&str>, title: &str, body: &str) -> Result<String> {
+    validate_note_value(title, "note title", 512)?; validate_note_value(body, "note body", MAX_NOTE_BODY)?;
+    let id = new_id(); let ts = now_ms();
+    conn.execute("INSERT INTO notes (id,subject_id,topic_id,title,body,slug,folder,properties,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?1,'','{}',?6,?6)", params![id, subject_id, topic_id, title, body, ts])?;
+    replace_note_index(conn, &id, body, &serde_json::json!({}))?;
+    Ok(id)
+}
+
+pub fn list_notes(conn: &Connection, subject_id: Option<&str>) -> Result<Vec<Note>> {
+    let mut stmt = conn.prepare("SELECT id,subject_id,topic_id,title,body,source_id,created_at,updated_at,slug,folder,properties FROM notes WHERE (?1 IS NULL OR subject_id=?1) ORDER BY updated_at DESC, id ASC")?;
+    let rows = stmt.query_map(params![subject_id], map_note)?; Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn get_note(conn: &Connection, id: &str) -> Result<Note> {
+    conn.query_row("SELECT id,subject_id,topic_id,title,body,source_id,created_at,updated_at,slug,folder,properties FROM notes WHERE id=?1", params![id], map_note).optional()?.ok_or_else(|| Error::NotFound(format!("note {id}")))
+}
+
+pub fn update_note(conn: &Connection, id: &str, title: &str, body: &str) -> Result<()> {
+    validate_note_value(title, "note title", 512)?; validate_note_value(body, "note body", MAX_NOTE_BODY)?;
+    let n = conn.execute("UPDATE notes SET title=?2,body=?3,updated_at=?4 WHERE id=?1", params![id,title,body,now_ms()])?;
+    if n == 0 { return Err(Error::NotFound(format!("note {id}"))); }
+    let properties = get_note(conn, id)?.properties; replace_note_index(conn, id, body, &properties)
+}
+
+/// Link a note to the source generated when it was converted.
+pub fn set_note_source(conn: &Connection, id: &str, source_id: &str) -> Result<()> {
+    conn.execute("UPDATE notes SET source_id=?2,updated_at=?3 WHERE id=?1", params![id,source_id,now_ms()])?; Ok(())
+}
+
 pub fn delete_note(conn: &Connection, id: &str) -> Result<()> {
-    conn.execute("DELETE FROM notes WHERE id=?1", params![id])?;
-    Ok(())
+    conn.execute("DELETE FROM notes WHERE id=?1", params![id])?; Ok(())
+}
+
+/// Return outgoing links for a note, with deterministic position ordering.
+pub fn list_note_links(conn: &Connection, note_id: &str) -> Result<Vec<NoteLink>> {
+    let mut stmt = conn.prepare("SELECT source_note_id,target_note_id,target_key,display_text,position FROM note_links WHERE source_note_id=?1 ORDER BY position ASC")?;
+    let rows = stmt.query_map(params![note_id], |r| Ok(NoteLink { source_note_id: r.get(0)?, target_note_id: r.get(1)?, target_key: r.get(2)?, display_text: r.get(3)?, position: r.get(4)? }))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Return links targeting a note. Unresolved links are intentionally excluded.
+pub fn list_backlinks(conn: &Connection, note_id: &str) -> Result<Vec<NoteLink>> {
+    let mut stmt = conn.prepare("SELECT source_note_id,target_note_id,target_key,display_text,position FROM note_links WHERE target_note_id=?1 ORDER BY source_note_id ASC, position ASC")?;
+    let rows = stmt.query_map(params![note_id], |r| Ok(NoteLink { source_note_id: r.get(0)?, target_note_id: r.get(1)?, target_key: r.get(2)?, display_text: r.get(3)?, position: r.get(4)? }))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn search_notes(conn: &Connection, query: &str, limit: usize, offset: usize) -> Result<Vec<Note>> {
+    let limit = limit.clamp(1, 100) as i64;
+    let offset = offset.min(10_000) as i64;
+    let pat = format!("%{}%", query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+    let mut stmt = conn.prepare("SELECT id,subject_id,topic_id,title,body,source_id,created_at,updated_at,slug,folder,properties FROM notes WHERE title LIKE ?1 ESCAPE '\\' OR body LIKE ?1 ESCAPE '\\' OR id IN (SELECT note_id FROM note_tags WHERE tag LIKE ?1 ESCAPE '\\') ORDER BY CASE WHEN title = ?2 THEN 0 ELSE 1 END, updated_at DESC, id ASC LIMIT ?3 OFFSET ?4")?;
+    let rows = stmt.query_map(params![pat, query, limit, offset], map_note)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn note_graph(conn: &Connection, subject_id: Option<&str>) -> Result<NoteGraph> {
+    let mut stmt = conn.prepare("SELECT id,title FROM notes WHERE (?1 IS NULL OR subject_id=?1) ORDER BY id ASC LIMIT 500")?;
+    let rows = stmt.query_map(params![subject_id], |r| Ok(NoteGraphNode { id: r.get(0)?, title: r.get(1)? }))?;
+    let nodes = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut stmt = conn.prepare("SELECT l.source_note_id,l.target_note_id,l.target_key FROM note_links l JOIN notes n ON n.id=l.source_note_id WHERE (?1 IS NULL OR n.subject_id=?1) ORDER BY l.source_note_id ASC,l.position ASC LIMIT 2000")?;
+    let rows = stmt.query_map(params![subject_id], |r| Ok(NoteGraphEdge { source: r.get(0)?, target: r.get(1)?, target_key: r.get(2)? }))?;
+    let edges = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(NoteGraph { nodes, edges })
 }
 
 // ---- calendar events / tasks ------------------------------------------
@@ -1883,6 +1954,7 @@ pub fn tags_to_text(tags: &[String]) -> Option<String> {
 fn text_to_tags(s: Option<String>) -> Vec<String> {
     s.map(|s| {
         s.split(';')
+
             .map(|x| x.trim().to_string())
             .filter(|x| !x.is_empty())
             .collect()
@@ -3789,5 +3861,25 @@ mod tests {
         assert_eq!(after.len(), 4, "before-restore + restored snapshots added");
         assert_eq!(after[0].note, "restored");
         assert_eq!(after[1].note, "before restore");
+    }
+    #[test]
+    fn note_workspace_indexes_links_tags_and_search_safely() {
+        let st = AppState::in_memory().unwrap();
+        let c = st.db.lock().unwrap();
+        let a = insert_note(&c, None, None, "Первая", "[[Вторая]] #лекции").unwrap();
+        let b = insert_note(&c, None, None, "Вторая", "текст").unwrap();
+        update_note(&c, &a, "Первая", &format!("[[{}|Вторая]] #лекции", b)).unwrap();
+        let links = list_note_links(&c, &a).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_note_id.as_deref(), Some(b.as_str()));
+        assert_eq!(list_backlinks(&c, &b).unwrap().len(), 1);
+        assert_eq!(search_notes(&c, "лекции", 20, 0).unwrap().len(), 1);
+        assert!(search_notes(&c, "%_", 20, 0).unwrap().is_empty());
+        assert!(parse_note_links("```\n[[hidden]]\n```\n[[shown]]").unwrap().iter().any(|x| x.target_key == "shown"));
+        let graph = note_graph(&c, None).unwrap();
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.edges.len(), 1);
+        delete_note(&c, &b).unwrap();
+        assert!(list_backlinks(&c, &b).unwrap().is_empty());
     }
 }

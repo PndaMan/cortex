@@ -3,6 +3,7 @@
   import * as api from "../lib/api";
   import { app } from "../lib/store.svelte";
   import Icon from "../components/Icon.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   let { onExit, questions: questionsProp }: { onExit?: () => void; questions?: { q: string; options: string[]; answer: number; explain: string }[] } = $props();
 
@@ -39,7 +40,7 @@
     const sid = app.activeSubjectId;
     if (sid) {
       api.recordAttempt(sid, "quiz", i, activeQs[i].q, isCorrect).catch((e: unknown) => {
-        app.pushToast({ kind: "error", title: "Record failed", body: String(e) });
+        app.pushToast({ kind: "error", title: t("Record failed"), body: String(e) });
       });
     }
   }
@@ -56,17 +57,17 @@
 
   async function startReview() {
     const sid = app.activeSubjectId;
-    if (!sid) { app.pushToast({ kind: "warning", title: "No subject selected" }); return; }
+    if (!sid) { app.pushToast({ kind: "warning", title: t("No subject selected") }); return; }
     try {
       const wrong = await api.reviewSet(sid, "quiz");
       if (wrong.length === 0) {
-        app.pushToast({ kind: "success", title: "No wrong answers to review 🎉" });
+        app.pushToast({ kind: "success", title: t("No wrong answers to review 🎉") });
         return;
       }
       reviewKeys = wrong.map((w) => w.item_key);
       i = 0; picked = null; score = 0; done = false; answers = {};
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Review load failed", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Review load failed"), body: String(e) });
     }
   }
 </script>
@@ -77,23 +78,23 @@
       <div class="fc-done-glyph">
         <Icon name="check" size={22} color="var(--ok)" />
       </div>
-      <h2 class="read">{score} / {activeQs.length} correct</h2>
-      <p class="mono muted">{score === activeQs.length ? "Flawless — nice." : "Review the misses, then retry."}</p>
+      <h2 class="read">{score} / {activeQs.length} {t("correct")}</h2>
+      <p class="mono muted">{score === activeQs.length ? t("Flawless — nice.") : t("Review the misses, then retry.")}</p>
       <div class="row gap-2" style="justify-content: center">
-        <button class="btn btn--primary" onclick={restart}>Retry</button>
-        <button class="btn" onclick={startReview}>Review wrong answers</button>
+        <button class="btn btn--primary" onclick={restart}>{t("Retry")}</button>
+        <button class="btn" onclick={startReview}>{t("Review wrong answers")}</button>
         {#if onExit}
           <button class="btn" onclick={onExit}>
-            <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={12} /></span> Materials
+            <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={12} /></span> {t("Materials")}
           </button>
         {/if}
       </div>
 
       <div class="qz-review">
         <div class="qz-revise">
-          <p class="mono qz-revise-head">What to revise</p>
+          <p class="mono qz-revise-head">{t("What to revise")}</p>
           {#if wrongQs.length === 0}
-            <p class="read qz-revise-clear">Nothing to revise — you nailed every question.</p>
+            <p class="read qz-revise-clear">{t("Nothing to revise — you nailed every question.")}</p>
           {:else}
             <ul class="qz-revise-list">
               {#each wrongQs as wq (wq.q)}
@@ -112,13 +113,13 @@
                 <span class="quiz-key mono">{idx + 1}</span>
                 <p class="read">{q.q}</p>
                 <span class="qz-review-mark mono" class:ok={gotIt} class:err={!gotIt}>
-                  {gotIt ? "Correct" : "Revise"}
+                  {gotIt ? t("Correct") : t("Revise")}
                 </span>
               </div>
 
               {#if q.options.length === 0}
                 <p class="mono muted qz-review-empty">
-                  (This question is from a previous quiz — retake it to answer again.)
+                  {t("(This question is from a previous quiz — retake it to answer again.)")}
                 </p>
               {:else}
                 <div class="qz-review-opts">
@@ -133,8 +134,8 @@
                       <span class="quiz-key mono">{String.fromCharCode(65 + oi)}</span>
                       <span class="read">{opt}</span>
                       <span class="qz-review-tags">
-                        {#if isPick}<span class="badge qz-tag-you">Your answer</span>{/if}
-                        {#if isAnswer}<span class="badge qz-tag-correct">Correct</span>{/if}
+                        {#if isPick}<span class="badge qz-tag-you">{t("Your answer")}</span>{/if}
+                        {#if isAnswer}<span class="badge qz-tag-correct">{t("Correct")}</span>{/if}
                       </span>
                     </div>
                   {/each}
@@ -154,7 +155,7 @@
 
     <div class="fc-bar-row">
       {#if onExit}
-        <button class="btn btn--icon btn--sm btn--ghost" onclick={onExit} title="Back to materials">
+        <button class="btn btn--icon btn--sm btn--ghost" onclick={onExit} title={t("Back to materials")}>
           <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={13} /></span>
         </button>
       {/if}
@@ -162,15 +163,15 @@
         <div class="fc-bar" style:width="{(i / activeQs.length * 100)}%"></div>
       </div>
       {#if !done && !reviewKeys}
-        <button class="btn btn--sm" onclick={startReview} title="Review previously wrong answers">
-          Review wrong answers
+        <button class="btn btn--sm" onclick={startReview} title={t("Review previously wrong answers")}>
+          {t("Review wrong answers")}
         </button>
       {/if}
     </div>
 
     <div class="fc-meta mono">
-      <span>{reviewKeys ? "Review" : "Question"} {i + 1} / {activeQs.length}</span>
-      <span>Recursion · multiple choice</span>
+      <span>{reviewKeys ? t("Review") : t("Question")} {i + 1} / {activeQs.length}</span>
+      <span>{t("Recursion · multiple choice")}</span>
     </div>
 
     <div class="quiz-card">
@@ -179,7 +180,7 @@
       <div class="quiz-opts">
         {#if q.options.length === 0}
           <p class="mono muted" style="font-size: var(--t-sm); padding: 8px 0;">
-            (This question is from a previous quiz — retake that quiz to answer it again.)
+            {t("(This question is from a previous quiz — retake that quiz to answer it again.)")}
           </p>
         {:else}
           {#each q.options as opt, idx (idx)}
@@ -208,10 +209,10 @@
             class="mono"
             style:color={picked === q.answer ? "var(--ok)" : "var(--err)"}
           >
-            {picked === q.answer ? "Correct" : "Not quite"}
+            {picked === q.answer ? t("Correct") : t("Not quite")}
           </span>
           <button class="btn btn--sm btn--primary" onclick={next}>
-            {i + 1 >= activeQs.length ? "Finish" : "Next"}
+            {i + 1 >= activeQs.length ? t("Finish") : t("Next")}
             <Icon name="arrowR" size={12} />
           </button>
         </div>

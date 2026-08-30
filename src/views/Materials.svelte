@@ -11,15 +11,16 @@
   import MindMapView from "../components/MindMapView.svelte";
   import GeneratingCard from "../components/GeneratingCard.svelte";
   import { jobs } from "../lib/jobs.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   // material type metadata
   const MAT_TYPES: Record<string, { label: string; group: string; icon: string; color: string }> = {
-    flashcards:  { label: "Flashcards",      group: "Flashcards",       icon: "cards", color: "var(--accent)"       },
-    quiz:        { label: "Quiz",             group: "Quizzes",          icon: "check", color: "var(--info)"         },
-    audio:       { label: "Audio overview",   group: "Audio overviews",  icon: "music", color: "var(--mode-select)"  },
-    slideshow:   { label: "Slides",           group: "Slides",           icon: "grid",  color: "var(--warn)"         },
-    infographic: { label: "Infographic",      group: "Infographics",     icon: "grid",  color: "var(--ok)"           },
-    mindmap:     { label: "Mind map",          group: "Mind maps",        icon: "link",  color: "var(--info)"         },
+    flashcards:  { label: t("Flashcards"),      group: t("Flashcards"),       icon: "cards", color: "var(--accent)"       },
+    quiz:        { label: t("Quiz"),             group: t("Quizzes"),          icon: "check", color: "var(--info)"         },
+    audio:       { label: t("Audio overview"),   group: t("Audio overviews"),  icon: "music", color: "var(--mode-select)"  },
+    slideshow:   { label: t("Slides"),           group: t("Slides"),           icon: "grid",  color: "var(--warn)"         },
+    infographic: { label: t("Infographic"),      group: t("Infographics"),     icon: "grid",  color: "var(--ok)"           },
+    mindmap:     { label: t("Mind map"),          group: t("Mind maps"),        icon: "link",  color: "var(--info)"         },
   };
   const MAT_ORDER = ["flashcards", "quiz", "audio", "slideshow", "infographic", "mindmap"];
 
@@ -99,14 +100,14 @@
 
   function launchLabel(type: string): string {
     const map: Record<string, string> = {
-      flashcards: "Study",
-      quiz: "Start quiz",
-      audio: "Play",
-      infographic: "View",
-      slideshow: "View slides",
-      mindmap: "View map",
+      flashcards: t("Study"),
+      quiz: t("Start quiz"),
+      audio: t("Play"),
+      infographic: t("View"),
+      slideshow: t("View slides"),
+      mindmap: t("View map"),
     };
-    return map[type] ?? "Open";
+    return map[type] ?? t("Open");
   }
 
   function launch(m: Card) {
@@ -116,24 +117,24 @@
 
   async function renameMaterial(e: Event, m: Card) {
     e.stopPropagation();
-    const name = await app.prompt({ title: "Rename material", label: "Name", value: m.title, placeholder: m.title });
+    const name = await app.prompt({ title: t("Rename material"), label: t("Name"), value: m.title, placeholder: m.title });
     if (name && name.trim() && name.trim() !== m.title) {
       try {
         await api.renameMaterial(m.id, name.trim());
         if (app.activeSubject) loadMaterials(app.activeSubject.id);
       } catch (err) {
-        app.pushToast({ kind: "error", title: "Rename failed", body: String(err) });
+        app.pushToast({ kind: "error", title: t("Rename failed"), body: String(err) });
       }
     }
   }
   async function deleteMaterial(e: Event, m: Card) {
     e.stopPropagation();
-    if (!(await app.confirm({ title: `Delete "${m.title}"?`, danger: true, okLabel: "Delete" }))) return;
+    if (!(await app.confirm({ title: t("Delete \"{name}\"?", { name: m.title }), danger: true, okLabel: t("Delete") }))) return;
     try {
       await api.deleteMaterial(m.id);
       if (app.activeSubject) loadMaterials(app.activeSubject.id);
     } catch (err) {
-      app.pushToast({ kind: "error", title: "Delete failed", body: String(err) });
+      app.pushToast({ kind: "error", title: t("Delete failed"), body: String(err) });
     }
   }
   // Export a flashcard deck to an Anki .apkg via a native save dialog.
@@ -148,9 +149,9 @@
       });
       if (!dest) return;
       const n = await api.exportAnki(m.id, dest);
-      app.pushToast({ kind: "success", title: "Exported to Anki", body: `${n} card${n !== 1 ? "s" : ""} → ${dest}` });
+      app.pushToast({ kind: "success", title: t("Exported to Anki"), body: t("{n} card{s} → {dest}", { n, s: n !== 1 ? "s" : "", dest }) });
     } catch (err) {
-      app.pushToast({ kind: "error", title: "Anki export failed", body: String(err) });
+      app.pushToast({ kind: "error", title: t("Anki export failed"), body: String(err) });
     }
   }
 
@@ -160,7 +161,7 @@
   let importing = $state(false);
   async function importAnki() {
     const sub = app.activeSubject;
-    if (!sub) { app.pushToast({ kind: "warning", title: "Select a subject first" }); return; }
+    if (!sub) { app.pushToast({ kind: "warning", title: t("Select a subject first") }); return; }
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const picked = await open({
@@ -171,16 +172,16 @@
       if (!path) return;
       importing = true;
       const r = await api.importAnki(sub.id, path);
-      const decks = `${r.deck_count} deck${r.deck_count !== 1 ? "s" : ""}`;
-      const cards = `${r.card_count} card${r.card_count !== 1 ? "s" : ""}`;
+      const decks = r.deck_count === 1 ? t("{n} deck", { n: r.deck_count }) : t("{n} decks", { n: r.deck_count });
+      const cards = r.card_count === 1 ? t("{n} card", { n: r.card_count }) : t("{n} cards", { n: r.card_count });
       app.pushToast(
         r.skipped > 0
-          ? { kind: "warning", title: "Imported with skips", body: `${cards} across ${decks} · ${r.skipped} duplicate${r.skipped !== 1 ? "s" : ""} skipped` }
-          : { kind: "success", title: "Imported from Anki", body: `${cards} across ${decks}` }
+          ? { kind: "warning", title: t("Imported with skips"), body: t("{cards} across {decks} · {n} duplicate{s} skipped", { cards, decks, n: r.skipped, s: r.skipped !== 1 ? "s" : "" }) }
+          : { kind: "success", title: t("Imported from Anki"), body: t("{cards} across {decks}", { cards, decks }) }
       );
       loadMaterials(sub.id);
     } catch (err) {
-      app.pushToast({ kind: "error", title: "Anki import failed", body: String(err) });
+      app.pushToast({ kind: "error", title: t("Anki import failed"), body: String(err) });
     } finally {
       importing = false;
     }
@@ -227,28 +228,28 @@
     <div class="materials-page">
       <!-- toolbar -->
       <div class="sources-toolbar">
-        <span class="label">{materials.length} materials · generated from this subject</span>
+        <span class="label">{t("{n} materials · generated from this subject", { n: materials.length })}</span>
         <div class="grow"></div>
         <button
           class="btn btn--sm"
           onclick={importAnki}
           disabled={importing}
-          title="Import an Anki .apkg deck as flashcards"
+          title={t("Import an Anki .apkg deck as flashcards")}
         >
-          <Icon name="upload" size={12} /> {importing ? "Importing…" : "Import Anki"}
+          <Icon name="upload" size={12} /> {importing ? t("Importing…") : t("Import Anki")}
         </button>
         <button
           class="btn btn--sm"
           onclick={() => app.setView("exam")}
-          title="Take a timed, graded practice exam"
+          title={t("Take a timed, graded practice exam")}
         >
-          <Icon name="check" size={12} /> Exam mode
+          <Icon name="check" size={12} /> {t("Exam mode")}
         </button>
         <button
           class="btn btn--sm btn--primary"
           onclick={() => app.setView("gen-material")}
         >
-          <Icon name="bolt" size={12} /> Generate material
+          <Icon name="bolt" size={12} /> {t("Generate material")}
         </button>
       </div>
 
@@ -258,7 +259,7 @@
 
       {#if loading}
         <div class="mat-empty">
-          <span class="mono faint">Loading materials…</span>
+          <span class="mono faint">{t("Loading materials…")}</span>
         </div>
       {:else if materials.length === 0}
         <!-- empty state -->
@@ -266,13 +267,13 @@
           <div class="mat-empty-ico">
             <Icon name="bolt" size={26} color="var(--fg-faint)" />
           </div>
-          <h2 class="read mat-empty-h">No materials yet</h2>
-          <p class="mono faint mat-empty-sub">Generate flashcards, quizzes, study guides, slides, or infographics from your sources.</p>
+          <h2 class="read mat-empty-h">{t("No materials yet")}</h2>
+          <p class="mono faint mat-empty-sub">{t("Generate flashcards, quizzes, study guides, slides, or infographics from your sources.")}</p>
           <button
             class="btn btn--primary"
             onclick={() => app.setView("gen-material")}
           >
-            <Icon name="bolt" size={13} /> Generate material
+            <Icon name="bolt" size={13} /> {t("Generate material")}
           </button>
         </div>
       {:else}
@@ -281,7 +282,7 @@
           <button
             class="filter-chip{filter === 'all' ? ' on' : ''}"
             onclick={() => (filter = "all")}
-          >All topics</button>
+          >{t("All topics")}</button>
           {#each topics as t (t)}
             <button
               class="filter-chip{filter === t ? ' on' : ''}"
@@ -319,14 +320,14 @@
                       <span class="dot"></span>
                     </span>
                     {#if m.type === "flashcards"}
-                      <button class="btn btn--icon btn--sm btn--ghost mat-act" title="Export to Anki (.apkg)" aria-label="Export deck to Anki" onclick={(e) => exportAnki(e, m)}>
+                      <button class="btn btn--icon btn--sm btn--ghost mat-act" title={t("Export to Anki (.apkg)")} aria-label={t("Export deck to Anki")} onclick={(e) => exportAnki(e, m)}>
                         <Icon name="upload" size={12} />
                       </button>
                     {/if}
-                    <button class="btn btn--icon btn--sm btn--ghost mat-act" title="Rename" aria-label="Rename material" onclick={(e) => renameMaterial(e, m)}>
+                    <button class="btn btn--icon btn--sm btn--ghost mat-act" title={t("Rename")} aria-label={t("Rename material")} onclick={(e) => renameMaterial(e, m)}>
                       <Icon name="pencil" size={12} />
                     </button>
-                    <button class="btn btn--icon btn--sm btn--ghost mat-act" title="Delete" aria-label="Delete material" onclick={(e) => deleteMaterial(e, m)}>
+                    <button class="btn btn--icon btn--sm btn--ghost mat-act" title={t("Delete")} aria-label={t("Delete material")} onclick={(e) => deleteMaterial(e, m)}>
                       <Icon name="x" size={12} />
                     </button>
                   </div>

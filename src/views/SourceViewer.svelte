@@ -7,6 +7,7 @@
   import RichText from "../components/RichText.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
   import { isMobile } from "../lib/platform";
+  import { t } from "../lib/i18n.svelte";
   import { tick } from "svelte";
 
   // ---- state ----
@@ -154,7 +155,7 @@
   async function confirmDelete() {
     const src = app.activeSource;
     if (!src) return;
-    if (await app.confirm({ title: "Delete this source?", danger: true, okLabel: "Delete" })) {
+    if (await app.confirm({ title: t("Delete this source?"), danger: true, okLabel: t("Delete") })) {
       await app.deleteSource(src.id); // store action closes the viewer on success
     }
   }
@@ -239,7 +240,7 @@
       <button
         class="btn btn--icon btn--sm btn--ghost"
         onclick={() => app.closeSource()}
-        title="Back"
+        title={t("Back")}
       >
         <span style="display:block;transform:rotate(180deg)">
           <Icon name="chevron" size={13} color="currentColor" />
@@ -258,21 +259,21 @@
         {/if}
       {/if}
 
-      <button class="btn btn--icon btn--sm btn--ghost" title="Search">
+      <button class="btn btn--icon btn--sm btn--ghost" title={t("Search")}>
         <Icon name="search" size={13} />
       </button>
       {#if src}
         <button
           class="btn btn--icon btn--sm btn--ghost"
           onclick={editSource}
-          title="Edit source"
+          title={t("Edit source")}
         >
           <Icon name="pencil" size={13} color="currentColor" />
         </button>
         <button
           class="btn btn--icon btn--sm btn--ghost sv-delete"
           onclick={confirmDelete}
-          title="Delete source"
+          title={t("Delete source")}
         >
           <Icon name="x" size={13} color="currentColor" />
         </button>
@@ -284,10 +285,10 @@
       {#if src?.error}
         <!-- Failed ingest: surface the error prominently instead of an empty view -->
         <div class="pdf-page sv-error" style="width:100%;max-width:560px">
-          <h3 class="pdf-h" style="color:var(--err, var(--warn))">Failed to ingest</h3>
+          <h3 class="pdf-h" style="color:var(--err, var(--warn))">{t("Failed to ingest")}</h3>
           <p class="read pdf-note">{src.error}</p>
           <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--fg-muted)">
-            This source couldn't be parsed. Try deleting and re-adding it.
+            {t("This source couldn't be parsed. Try deleting and re-adding it.")}
           </p>
         </div>
       {:else if isPdfDoc && assetUrl}
@@ -296,18 +297,18 @@
           <!-- All pages via PDF.js (WKWebView's iframe shows only page 1) -->
           <div class="sv-pdf-pages" bind:this={pdfBox}></div>
           {#if pdfRendering}
-            <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--fg-muted);text-align:center;padding:12px">Rendering pages…</p>
+            <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--fg-muted);text-align:center;padding:12px">{t("Rendering pages…")}</p>
           {/if}
           {#if pdfError}
-            <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--err,var(--warn));text-align:center;padding:12px">Couldn't render PDF: {pdfError}</p>
+            <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--err,var(--warn));text-align:center;padding:12px">{t("Couldn't render PDF:")} {pdfError}</p>
           {/if}
         {:else}
-          <iframe class="sv-frame" src={assetUrl} title={src?.name ?? "document"}></iframe>
+          <iframe class="sv-frame" src={assetUrl} title={src?.name ?? t("document")}></iframe>
         {/if}
       {:else if isImage && assetUrl}
         <!-- Image preview, centered & fit -->
         <div class="sv-img-wrap">
-          <img class="sv-img" src={assetUrl} alt={src?.name ?? "image"} />
+          <img class="sv-img" src={assetUrl} alt={src?.name ?? t("image")} />
         </div>
       {:else if isAudio && assetUrl}
         <!-- Audio player + rendered overview note + transcript behind a toggle -->
@@ -315,24 +316,23 @@
           <audio class="sv-audio" controls src={assetUrl}></audio>
         </div>
         <div class="pdf-page" style="width:100%;max-width:560px">
-          <h3 class="pdf-h">Overview</h3>
+          <h3 class="pdf-h">{t("Overview")}</h3>
           {#if summaryNote}
             <RichText text={summaryNote.body} />
           {:else}
             <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--fg-muted)">
-              No overview yet — a markdown summary is generated automatically after
-              transcription and saved to Notes as “Summary — {src?.name}”.
+              {t("No overview yet — a markdown summary is generated automatically after transcription and saved to Notes as “Summary — {name}”.", { name: src?.name ?? "" })}
             </p>
           {/if}
         </div>
         <div class="pdf-page" style="width:100%;max-width:560px">
           <div class="sv-sec-head">
-            <h3 class="pdf-h">Transcript</h3>
+            <h3 class="pdf-h">{t("Transcript")}</h3>
             <button
               class="btn btn--sm btn--ghost"
               onclick={() => (showTranscript = !showTranscript)}
             >
-              {showTranscript ? "Hide transcript" : "View transcript"}
+              {showTranscript ? t("Hide transcript") : t("View transcript")}
             </button>
           </div>
           {#if showTranscript}
@@ -340,7 +340,7 @@
               <p class="read pdf-note sv-text">{transcript}</p>
             {:else}
               <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--fg-muted)">
-                No transcript available yet.
+                {t("No transcript available yet.")}
               </p>
             {/if}
           {/if}
@@ -362,15 +362,15 @@
         <div class="pdf-page" style="width:100%;max-width:560px">
           {#if chunks.length > 0}
             <h3 class="pdf-h" style="color:var(--ok)">
-              ✓ {chunks.length} chunk{chunks.length === 1 ? "" : "s"} embedded · {dim}-dim vectors
+              {t("✓ {n} chunks embedded · {dim}-dim vectors", { n: chunks.length, dim })}
             </h3>
             <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--fg-muted)">
-              Source fully parsed and embedded. Each chunk below is stored with its vector.
+              {t("Source fully parsed and embedded. Each chunk below is stored with its vector.")}
             </p>
           {:else}
-            <h3 class="pdf-h" style="color:var(--warn)">not embedded / ingesting</h3>
+            <h3 class="pdf-h" style="color:var(--warn)">{t("not embedded / ingesting")}</h3>
             <p class="pdf-note mono" style="font-size:var(--t-xs);color:var(--fg-muted)">
-              No chunks found — the source may still be ingesting or failed to parse.
+              {t("No chunks found — the source may still be ingesting or failed to parse.")}
             </p>
           {/if}
         </div>

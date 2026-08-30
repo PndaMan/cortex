@@ -3,6 +3,7 @@
   // current view using the webview's native window.find — highlights the match
   // and scrolls to it without mutating the DOM Svelte manages.
   import { app } from "../lib/store.svelte";
+  import { t } from "../lib/i18n.svelte";
   import Icon from "./Icon.svelte";
 
   let q = $state("");
@@ -35,18 +36,18 @@
       bind:this={inputEl}
       bind:value={q}
       class="input findbar-input"
-      placeholder="Find on page…"
+      placeholder={t("Find on page…")}
       oninput={() => (notFound = false)}
       onkeydown={onKey}
     />
-    {#if notFound}<span class="findbar-stat mono">no matches</span>{/if}
-    <button class="btn btn--icon btn--sm btn--ghost" onclick={() => find(true)} title="Previous (Shift+Enter)">
+    {#if notFound}<span class="findbar-stat mono">{t("no matches")}</span>{/if}
+    <button class="btn btn--icon btn--sm btn--ghost" onclick={() => find(true)} title={t("Previous (Shift+Enter)")}>
       <span style="display:inline-flex;transform:rotate(-90deg)"><Icon name="chevron" size={12} /></span>
     </button>
-    <button class="btn btn--icon btn--sm btn--ghost" onclick={() => find(false)} title="Next (Enter)">
+    <button class="btn btn--icon btn--sm btn--ghost" onclick={() => find(false)} title={t("Next (Enter)")}>
       <span style="display:inline-flex;transform:rotate(90deg)"><Icon name="chevron" size={12} /></span>
     </button>
-    <button class="btn btn--icon btn--sm btn--ghost" onclick={() => (app.findOpen = false)} title="Close (Esc)">
+    <button class="btn btn--icon btn--sm btn--ghost" onclick={() => (app.findOpen = false)} title={t("Close (Esc)")}>
       <Icon name="x" size={12} />
     </button>
   </div>

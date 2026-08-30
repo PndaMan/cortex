@@ -7,6 +7,7 @@
   import { tick } from "svelte";
   import { menuPosition, menuStyle, type MenuPos } from "../lib/dropdown";
   import { isMobile } from "../lib/platform";
+  import { t } from "../lib/i18n.svelte";
 
   let {
     value,
@@ -52,10 +53,10 @@
   });
   const searchPlaceholder = $derived(
     loading
-      ? "Loading models…"
+      ? t("Loading models…")
       : allowCustom
-        ? "Search models or type your own name…"
-        : "Search models…"
+        ? t("Search models or type your own name…")
+        : t("Search models…")
   );
 
   function toggle() {
@@ -104,7 +105,7 @@
   >
     {#if icon}<Icon name={icon} size={12} color="var(--fg-faint)" />{/if}
     <span class={"picker-val" + (cur || value ? "" : " ph")}>
-      {cur ? cur.label : value || placeholder || "Select…"}
+      {cur ? cur.label : value || placeholder || t("Select…")}
     </span>
     <Icon name="chevron" size={11} style="transform:rotate(90deg);color:var(--fg-faint)" />
   </button>
@@ -129,9 +130,9 @@
       </div>
       <div class="ms-list">
         {#if loading && options.length === 0}
-          <div class="ms-empty">Loading models…</div>
+          <div class="ms-empty">{t("Loading models…")}</div>
         {:else if shown.length === 0}
-          <div class="ms-empty">No models match “{q}”</div>
+          <div class="ms-empty">{t("No models match “{q}”", { q })}</div>
         {:else}
           {#if customCandidate}
             <button
@@ -141,8 +142,8 @@
             >
               <Icon name="plus" size={11} color="var(--accent)" />
               <span class="grow ms-text">
-                <span class="ms-label">Use “{customCandidate}”</span>
-                <span class="ms-sub mono">Custom model id</span>
+                <span class="ms-label">{t("Use “{id}”", { id: customCandidate })}</span>
+                <span class="ms-sub mono">{t("Custom model id")}</span>
               </span>
             </button>
           {/if}
@@ -161,7 +162,7 @@
             </button>
           {/each}
           {#if filtered.length > shown.length}
-            <div class="ms-more">+{filtered.length - shown.length} more — keep typing to narrow</div>
+            <div class="ms-more">{t("+{n} more — keep typing to narrow", { n: filtered.length - shown.length })}</div>
           {/if}
         {/if}
       </div>
