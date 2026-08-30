@@ -10,7 +10,20 @@
  * files, then delete them.
  */
 
+
 export const ru: Record<string, string> = {
+
+// ---- OCR (external vision endpoint) ----
+  "Text recognition (OCR)": "Распознавание текста (OCR)",
+  "How scanned PDFs and images become searchable text.": "Как отсканированные PDF и изображения превращаются в доступный для поиска текст.",
+  "By default OCR runs through the vision model (the": "По умолчанию OCR идёт через vision-модель (строка",
+  "row on the Models tab). Point it at any OpenAI-compatible vision endpoint instead — a free cloud tier or a local server like Ollama with": "на вкладке «Модели»). Вместо этого можно указать любой OpenAI-совместимый vision-endpoint — бесплатный облачный тариф или локальный сервер вроде Ollama с",
+  " — to keep scans off your main provider. Leave empty to use the vision model.": "— чтобы сканы не нагружали основной провайдер. Оставьте пустым, чтобы использовать vision-модель.",
+  "Your name": "Ваше имя",
+  "OCR endpoint URL": "URL OCR-endpoint",
+  "OCR API key": "API-ключ OCR",
+  "Bearer token for the OCR endpoint": "Bearer-токен для OCR-endpoint",
+  "Vision endpoint for text recognition (OCR)": "Vision-endpoint для распознавания текста (OCR)",
   " (including the ungrouped “General” sources)": " (включая источники без темы «General»)",
   " · nothing due right now": " · сейчас ничего не запланировано",
   " · {n} due now": " · к повторению сейчас: {n}",

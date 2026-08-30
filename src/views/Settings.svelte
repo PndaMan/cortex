@@ -226,6 +226,8 @@
     openai: "",
     custom_endpoint: "",
     custom_api_key: "",
+    ocr_endpoint: "",
+    ocr_api_key: "",
   });
   const keyMeta = [
     { id: "openrouter", label: "OpenRouter",              note: "openrouter.ai/keys",    placeholder: "sk-or-…" },
@@ -234,6 +236,8 @@
     { id: "openai",     label: "OpenAI",                  note: "platform.openai.com",    placeholder: "sk-…" },
     { id: "custom_endpoint", label: t("Custom endpoint URL"), note: t("OpenAI-compatible base URL"), placeholder: "https://…/v1" },
     { id: "custom_api_key", label: t("Custom endpoint API key"), note: t("Bearer token for the custom endpoint"), placeholder: "sk-…" },
+    { id: "ocr_endpoint", label: t("OCR endpoint URL"), note: t("Vision endpoint for text recognition (OCR)"), placeholder: "http://localhost:11434/v1" },
+    { id: "ocr_api_key", label: t("OCR API key"), note: t("Bearer token for the OCR endpoint"), placeholder: "sk-…" },
   ] as const;
   // show/hide per key
   let showKey = $state<Record<string, boolean>>({
@@ -243,6 +247,8 @@
     openai: false,
     custom_endpoint: false,
     custom_api_key: false,
+    ocr_endpoint: false,
+    ocr_api_key: false,
   });
 
   // ---- appearance state ----
@@ -347,6 +353,17 @@
   let testState  = $state<null | "testing" | "ok" | "fail">(null);
   let searxState = $state<null | "testing" | "ok" | "fail">(null);
   let whisperState = $state<null | "testing" | "ok" | "fail">(null);
+  // ---- OCR (external vision endpoint) ----
+  let ocrEndpoint = $state("");
+  let ocrKey      = $state("");
+  let ocrModel    = $state("");
+  function saveOcr() {
+    api.setSettings({
+      ocr_endpoint: ocrEndpoint.trim(),
+      ocr_api_key:  ocrKey.trim(),
+      ocr_model:    ocrModel.trim(),
+    }).catch(() => {});
+  }
 
   function saveWhisper() {
     api.setSetting("whisper_url", whisperUrl.trim()).catch(() => {});
@@ -1005,6 +1022,8 @@
       if (s.openai_api_key)     keys = { ...keys, openai: s.openai_api_key };
       if (s.custom_endpoint)    keys = { ...keys, custom_endpoint: s.custom_endpoint };
       if (s.custom_api_key)     keys = { ...keys, custom_api_key: s.custom_api_key };
+      if (s.ocr_endpoint)       keys = { ...keys, ocr_endpoint: s.ocr_endpoint };
+      if (s.ocr_api_key)        keys = { ...keys, ocr_api_key: s.ocr_api_key };
 
       // Models
       for (const taskId of ["chat","cheatsheet","audio","quiz","flashcard","embedding"] as TaskId[]) {
@@ -1044,6 +1063,9 @@
       if (s.whisper_cloud_url)   whisperCloudUrl = s.whisper_cloud_url;
       if (s.whisper_cloud_model) whisperCloudModel = s.whisper_cloud_model;
       if (s.whisper_api_key)     whisperApiKey = s.whisper_api_key;
+      if (s.ocr_endpoint)        ocrEndpoint = s.ocr_endpoint;
+      if (s.ocr_api_key)         ocrKey      = s.ocr_api_key;
+      if (s.ocr_model)           ocrModel    = s.ocr_model;
       if (s.homelab_token)       hlToken = s.homelab_token;
       // Live sync
       if (s.homelab_base)           hlBase = s.homelab_base;
@@ -1124,6 +1146,8 @@
       openai_api_key:     keys.openai,
       custom_endpoint:    keys.custom_endpoint,
       custom_api_key:     keys.custom_api_key,
+      ocr_endpoint:       keys.ocr_endpoint,
+      ocr_api_key:        keys.ocr_api_key,
     }).then(() => app.pushToast({ kind: "success", title: t("Keys saved"), body: t("Stored in the system keychain.") }))
       .catch(() => app.pushToast({ kind: "error", title: t("Save failed") }));
   }
@@ -1219,7 +1243,7 @@
   const statusLabel = (v: VerifyState, isSet = false) =>
     v === "checking" ? "checking…" : v ? (v.ok ? "connected" : v.detail) : (isSet ? "not checked" : "not set");
   const verifyIdForKey = (id: string) =>
-    id === "custom_endpoint" || id === "custom_api_key" ? "custom" : id;
+    id === "custom_endpoint" || id === "custom_api_key" ? "custom" : id === "ocr_endpoint" || id === "ocr_api_key" ? "ocr" : id;
   async function verifyKey(id: string) {
     const vid = verifyIdForKey(id);
     verify = { ...verify, [vid]: "checking" };
@@ -1301,6 +1325,7 @@
           <div class="set-card">
             <div class="set-row">
               <div class="set-row-l"><div class="set-row-t">{t("Display name")}</div></div>
+              <div class="set-row-r"><input class="input" bind:value={name} placeholder={t("Your name")} /></div>
             </div>
             <div class="set-row">
               <div class="set-row-l"><div class="set-row-t">{t("Pronouns")}</div></div>
@@ -1605,6 +1630,7 @@ Notes: {about}</pre>
         </div>
       </div>
 
+    {:else if tab === "appearance"}
       <div class="set-pane">
         <header class="set-head">
           <div class="eyebrow">{t("Appearance")}</div>
@@ -1995,6 +2021,31 @@ Notes: {about}</pre>
                 {/if}
               </div>
             {/if}
+          </div>
+        </section>
+
+        <!-- ═══ OCR — where scanned pages become text ═══ -->
+        <section class="set-group">
+          <div class="set-group-h">
+            <h3 class="set-group-t">{t("Text recognition (OCR)")}</h3>
+            <p class="set-group-d">{t("How scanned PDFs and images become searchable text.")}</p>
+          </div>
+          <div class="set-card">
+            <div class="set-row stacked">
+              <div class="set-row-d">{t("By default OCR runs through the vision model (the")} <span class="mono">Vision</span> {t("row on the Models tab). Point it at any OpenAI-compatible vision endpoint instead — a free cloud tier or a local server like Ollama with")} <span class="mono">llama3.2-vision</span>{t(" — to keep scans off your main provider. Leave empty to use the vision model.")}</div>
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">{t("OCR endpoint URL")}</div>
+              <input class="input mono" bind:value={ocrEndpoint} onchange={saveOcr} onblur={saveOcr} placeholder="http://localhost:11434/v1" />
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">{t("API key")} <span class="faint">{t("optional")}</span></div>
+              <input class="input mono" type="password" bind:value={ocrKey} onchange={saveOcr} onblur={saveOcr} placeholder="sk-…" />
+            </div>
+            <div class="set-row stacked">
+              <div class="set-row-t">{t("Model")}</div>
+              <input class="input mono" bind:value={ocrModel} onchange={saveOcr} onblur={saveOcr} placeholder="llama3.2-vision" />
+            </div>
           </div>
         </section>
 
