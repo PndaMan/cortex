@@ -226,8 +226,6 @@
     openai: "",
     custom_endpoint: "",
     custom_api_key: "",
-    ocr_endpoint: "",
-    ocr_api_key: "",
   });
   const keyMeta = [
     { id: "openrouter", label: "OpenRouter",              note: "openrouter.ai/keys",    placeholder: "sk-or-…" },
@@ -236,8 +234,6 @@
     { id: "openai",     label: "OpenAI",                  note: "platform.openai.com",    placeholder: "sk-…" },
     { id: "custom_endpoint", label: t("Custom endpoint URL"), note: t("OpenAI-compatible base URL"), placeholder: "https://…/v1" },
     { id: "custom_api_key", label: t("Custom endpoint API key"), note: t("Bearer token for the custom endpoint"), placeholder: "sk-…" },
-    { id: "ocr_endpoint", label: t("OCR endpoint URL"), note: t("Vision endpoint for text recognition (OCR)"), placeholder: "http://localhost:11434/v1" },
-    { id: "ocr_api_key", label: t("OCR API key"), note: t("Bearer token for the OCR endpoint"), placeholder: "sk-…" },
   ] as const;
   // show/hide per key
   let showKey = $state<Record<string, boolean>>({
@@ -247,8 +243,6 @@
     openai: false,
     custom_endpoint: false,
     custom_api_key: false,
-    ocr_endpoint: false,
-    ocr_api_key: false,
   });
 
   // ---- appearance state ----
@@ -357,12 +351,21 @@
   let ocrEndpoint = $state("");
   let ocrKey      = $state("");
   let ocrModel    = $state("");
-  function saveOcr() {
-    api.setSettings({
+  async function saveOcr() {
+    await api.setSettings({
       ocr_endpoint: ocrEndpoint.trim(),
       ocr_api_key:  ocrKey.trim(),
       ocr_model:    ocrModel.trim(),
-    }).catch(() => {});
+    });
+  }
+  async function verifyOcr() {
+    try {
+      await saveOcr();
+      verify = { ...verify, ocr: "checking" };
+      verify = { ...verify, ocr: await api.verifyProvider("ocr") };
+    } catch (e) {
+      verify = { ...verify, ocr: { ok: false, detail: String(e) } };
+    }
   }
 
   function saveWhisper() {
@@ -1022,8 +1025,6 @@
       if (s.openai_api_key)     keys = { ...keys, openai: s.openai_api_key };
       if (s.custom_endpoint)    keys = { ...keys, custom_endpoint: s.custom_endpoint };
       if (s.custom_api_key)     keys = { ...keys, custom_api_key: s.custom_api_key };
-      if (s.ocr_endpoint)       keys = { ...keys, ocr_endpoint: s.ocr_endpoint };
-      if (s.ocr_api_key)        keys = { ...keys, ocr_api_key: s.ocr_api_key };
 
       // Models
       for (const taskId of ["chat","cheatsheet","audio","quiz","flashcard","embedding"] as TaskId[]) {
@@ -1146,9 +1147,7 @@
       openai_api_key:     keys.openai,
       custom_endpoint:    keys.custom_endpoint,
       custom_api_key:     keys.custom_api_key,
-      ocr_endpoint:       keys.ocr_endpoint,
-      ocr_api_key:        keys.ocr_api_key,
-    }).then(() => app.pushToast({ kind: "success", title: t("Keys saved"), body: t("Stored in the system keychain.") }))
+    }).then(() => app.pushToast({ title: t("Keys saved"), body: t("Stored in the system keychain."), kind: "success" }))
       .catch(() => app.pushToast({ kind: "error", title: t("Save failed") }));
   }
 
@@ -2046,6 +2045,21 @@ Notes: {about}</pre>
               <div class="set-row-t">{t("Model")}</div>
               <input class="input mono" bind:value={ocrModel} onchange={saveOcr} onblur={saveOcr} placeholder="llama3.2-vision" />
             </div>
+            {#if verify.ocr === "checking"}
+              <div class="set-row">
+                <div class="set-row-d">{t("Checking…")}</div>
+                <button type="button" class="btn btn--ghost btn--sm" onclick={verifyOcr} disabled>
+                  <Icon name="refresh" size={12} /> {t("Checking…")}
+                </button>
+              </div>
+            {:else}
+              <div class="set-row">
+                <div class="set-row-d">{verify.ocr ? (verify.ocr.ok ? t("Connected") : verify.ocr.detail) : t("Save the endpoint, then verify the OCR connection.")}</div>
+                <button type="button" class="btn btn--ghost btn--sm" onclick={verifyOcr}>
+                  <Icon name="refresh" size={12} /> {t("Verify OCR")}
+                </button>
+              </div>
+            {/if}
           </div>
         </section>
 

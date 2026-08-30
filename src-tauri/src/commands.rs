@@ -4519,14 +4519,17 @@ fn spawn_lecture_summary(
         }
         // Keep the prompt inside a sane context window.
         let excerpt: String = transcript.chars().take(24_000).collect();
-        let system = "You summarize lecture transcripts for a student's study notes. \
-                      Be faithful to the transcript; do not invent content.";
+        // The product is Russian-first: automatic notes must not follow the
+        // model's default language or the transcript's occasionally English
+        // technical vocabulary. Keep the output language explicit and use
+        // Russian section headings so the Overview is consistently Russian.
+        let system = "Ты составляешь учебный обзор лекции для русскоязычного студента. Пиши весь ответ только на русском языке, включая заголовки, определения и вопросы. Будь точен относительно расшифровки и не выдумывай содержание.";
         let user = format!(
-            "Summarize this lecture transcript as Markdown with exactly these sections:\n\
-             ## Key points — 5-10 tight bullets\n\
-             ## Terms — each important term with a one-line definition\n\
-             ## Open questions — anything the lecturer left unresolved or flagged as exam-relevant (omit the section if none)\n\n\
-             Transcript:\n{excerpt}"
+            "Составь обзор этой лекции в Markdown строго с такими разделами:\n\
+             ## Главные мысли — 5–10 кратких пунктов\n\
+             ## Термины — каждый важный термин с определением в одну строку\n\
+             ## Открытые вопросы — всё, что лектор оставил нерешённым или отметил как важное к экзамену (не добавляй раздел, если вопросов нет)\n\n\
+             Расшифровка лекции:\n{excerpt}"
         );
         match model.complete(system, &user) {
             Ok(summary) if !summary.trim().is_empty() => {
