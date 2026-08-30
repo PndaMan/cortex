@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   // Themed date (and optional time) picker — a trigger button + a month-grid
   // popover. Replaces the native <input type="date">/<datetime-local> whose
@@ -9,7 +10,7 @@
   let {
     value,
     onChange,
-    placeholder = "Pick a date",
+    placeholder = t("Pick a date"),
     withTime = false,
   }: {
     value: string;
@@ -18,8 +19,8 @@
     withTime?: boolean;
   } = $props();
 
-  const DOW = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
-  const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const DOW = [t("Su"), t("Mo"), t("Tu"), t("We"), t("Th"), t("Fr"), t("Sa")];
+  const MONTHS = [t("January"),t("February"),t("March"),t("April"),t("May"),t("June"),t("July"),t("August"),t("September"),t("October"),t("November"),t("December")];
 
   let open = $state(false);
 
@@ -99,14 +100,13 @@
   </button>
 
   {#if open}
-    <div class="dp-back" role="presentation" onclick={() => (open = false)}></div>
-    <div class="dp-pop" role="dialog" aria-label="Choose a date">
+    <div class="dp-pop" role="dialog" aria-label={t("Choose a date")}>
       <div class="dp-head">
-        <button type="button" class="dp-nav" aria-label="Previous month" onclick={prevMonth}>
+        <button type="button" class="dp-nav" aria-label={t("Previous month")} onclick={prevMonth}>
           <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={12} /></span>
         </button>
         <span class="dp-title">{MONTHS[viewM]} {viewY}</span>
-        <button type="button" class="dp-nav" aria-label="Next month" onclick={nextMonth}>
+        <button type="button" class="dp-nav" aria-label={t("Next month")} onclick={nextMonth}>
           <Icon name="chevron" size={12} />
         </button>
       </div>
@@ -124,15 +124,15 @@
       </div>
       {#if withTime}
         <div class="dp-time">
-          <span class="dp-time-lbl">Time</span>
-          <input class="input dp-tnum" type="number" min="0" max="23" bind:value={hh} onchange={commitTime} aria-label="Hour" />
+          <span class="dp-time-lbl">{t("Time")}</span>
+          <input class="input dp-tnum" type="number" min="0" max="23" bind:value={hh} onchange={commitTime} aria-label={t("Hour")} />
           <span class="dp-colon">:</span>
-          <input class="input dp-tnum" type="number" min="0" max="59" bind:value={mi} onchange={commitTime} aria-label="Minute" />
-          <button type="button" class="dp-done" onclick={() => (open = false)}>Done</button>
+          <input class="input dp-tnum" type="number" min="0" max="59" bind:value={mi} onchange={commitTime} aria-label={t("Minute")} />
+          <button type="button" class="dp-done" onclick={() => (open = false)}>{t("Done")}</button>
         </div>
       {:else}
         <div class="dp-foot">
-          <button type="button" class="dp-quick" onclick={() => pickDay(new Date())}>Today</button>
+          <button type="button" class="dp-quick" onclick={() => pickDay(new Date())}>{t("Today")}</button>
         </div>
       {/if}
     </div>

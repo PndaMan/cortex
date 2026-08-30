@@ -25,6 +25,7 @@
   import LiveActivity from "./components/LiveActivity.svelte";
   import RecordingActivity from "./components/RecordingActivity.svelte";
   import { keybinds } from "./lib/keybinds.svelte";
+  import { initI18n } from "./lib/i18n.svelte";
   import { isMobile } from "./lib/platform";
   import MobileShell from "./shell/MobileShell.svelte";
 
@@ -72,6 +73,7 @@
   // Initialize app state on mount (loads subjects, seeds demo if empty, restores theme)
   $effect(() => {
     app.init();
+    void initI18n();
     const prefetch = setTimeout(() => {
       void loadSettings();
       void loadRecorder();

@@ -2,6 +2,7 @@
   // Rich, fully-themed edit modal — subjects/topics/sources with all their
   // fields. Driven by app.editing; saves through the store's update actions.
   import { app, SUBJECT_COLORS, TOPIC_GLYPHS } from "../lib/store.svelte";
+  import { t } from "../lib/i18n.svelte";
   import * as api from "../lib/api";
   import Picker from "./Picker.svelte";
   import EmojiPicker from "./EmojiPicker.svelte";
@@ -49,62 +50,62 @@
             id: tp.id,
             label: tp.name,
           })),
-          { id: "", label: "— no topic —" },
+          { id: "", label: t("— no topic —") },
         ]
       : []
   );
 
   async function save() {
-    const t = app.editing;
-    if (!t || !name.trim()) return;
-    if (t.kind === "subject") {
-      app.updateSubject(t.id, name.trim(), code.trim() || undefined, glyph.trim() || undefined, color);
+    const ed = app.editing;
+    if (!ed || !name.trim()) return;
+    if (ed.kind === "subject") {
+      app.updateSubject(ed.id, name.trim(), code.trim() || undefined, glyph.trim() || undefined, color);
       app.closeEdit();
-    } else if (t.kind === "topic") {
+    } else if (ed.kind === "topic") {
       const tags = tagsText.split(",").map((s) => s.trim()).filter(Boolean);
-      app.updateTopic(t.id, name.trim(), t.subjectId, glyph.trim() || undefined, tags);
+      app.updateTopic(ed.id, name.trim(), ed.subjectId, glyph.trim() || undefined, tags);
       app.closeEdit();
     } else {
       const tags = tagsText.split(",").map((s) => s.trim()).filter(Boolean);
       if (selectedSubjectId !== originalSubjectId) {
         // Subject changed → move the source to the new subject/topic.
         try {
-          await api.moveSource(t.id, selectedSubjectId, topicId || null);
+          await api.moveSource(ed.id, selectedSubjectId, topicId || null);
           await app.refresh();
-          app.pushToast({ kind: "success", title: "Source moved" });
+          app.pushToast({ kind: "success", title: t("Source moved") });
           app.closeEdit();
         } catch (e) {
-          app.pushToast({ kind: "error", title: "Move failed", body: String(e) });
+          app.pushToast({ kind: "error", title: t("Move failed"), body: String(e) });
         }
       } else {
         // Same subject → use normal update path (name/topic/tags).
-        app.updateSource(t.id, name.trim(), topicId || null, tags);
+        app.updateSource(ed.id, name.trim(), topicId || null, tags);
         app.closeEdit();
       }
     }
   }
 
   async function del() {
-    const t = app.editing;
-    if (!t) return;
-    const ok = await app.confirm({ title: `Delete this ${t.kind}?`, danger: true, okLabel: "Delete" });
+    const ed = app.editing;
+    if (!ed) return;
+    const ok = await app.confirm({ title: t("Delete this {kind}?", { kind: ed.kind }), danger: true, okLabel: t("Delete") });
     if (!ok) return;
-    if (t.kind === "subject") app.deleteSubject(t.id);
-    else if (t.kind === "topic") app.deleteTopic(t.id, t.subjectId);
-    else app.deleteSource(t.id);
+    if (ed.kind === "subject") app.deleteSubject(ed.id);
+    else if (ed.kind === "topic") app.deleteTopic(ed.id, ed.subjectId);
+    else app.deleteSource(ed.id);
     app.closeEdit();
   }
 
   async function archive() {
-    const t = app.editing;
-    if (!t || t.kind !== "subject") return;
+    const ed = app.editing;
+    if (!ed || ed.kind !== "subject") return;
     const ok = await app.confirm({
-      title: `Archive "${t.name}"?`,
-      body: "It's hidden everywhere but its data is kept. Restore it any time from Settings → Data.",
-      okLabel: "Archive",
+      title: t("Archive \"{name}\"?", { name: ed.name }),
+      body: t("It's hidden everywhere but its data is kept. Restore it any time from Settings → Data."),
+      okLabel: t("Archive"),
     });
     if (!ok) return;
-    await app.setSubjectArchived(t.id, true);
+    await app.setSubjectArchived(ed.id, true);
     app.closeEdit();
   }
 
@@ -116,47 +117,47 @@
   }
 
   const title = $derived(
-    app.editing?.kind === "subject" ? "Edit subject"
-      : app.editing?.kind === "topic" ? "Rename topic"
-      : "Edit source"
+    app.editing?.kind === "subject" ? t("Edit subject")
+      : app.editing?.kind === "topic" ? t("Rename topic")
+      : t("Edit source")
   );
 </script>
 
 <svelte:window onkeydown={onKey} />
 
 {#if app.editing}
-  {@const t = app.editing}
+  {@const ed = app.editing}
   <div class="edit-back" role="presentation" onmousedown={() => app.closeEdit()}>
     <div class="edit" role="dialog" aria-modal="true" tabindex="-1" onmousedown={(e) => e.stopPropagation()}>
       <div class="edit-title">{title}</div>
 
       <label class="edit-field">
-        <span class="edit-lbl">{t.kind === "topic" ? "Topic name" : "Name"}</span>
-        <input bind:this={firstInput} bind:value={name} class="input" placeholder="Name" />
+        <span class="edit-lbl">{ed.kind === "topic" ? t("Topic name") : t("Name")}</span>
+        <input bind:this={firstInput} bind:value={name} class="input" placeholder={t("Name")} />
       </label>
 
-      {#if t.kind === "topic"}
+      {#if ed.kind === "topic"}
         <div class="edit-field">
-          <span class="edit-lbl">Icon</span>
+          <span class="edit-lbl">{t("Icon")}</span>
           <EmojiPicker value={glyph} onPick={(e) => (glyph = e)} />
         </div>
         <label class="edit-field">
-          <span class="edit-lbl">Tags <span class="faint">e.g. A2 · chat &amp; deadlines group by tag</span></span>
-          <input bind:value={tagsText} class="input" placeholder="comma, separated, tags" />
+          <span class="edit-lbl">{t("Tags")} <span class="faint">{t("e.g. A2 · chat & deadlines group by tag")}</span></span>
+          <input bind:value={tagsText} class="input" placeholder={t("comma, separated, tags")} />
         </label>
       {/if}
 
-      {#if t.kind === "subject"}
+      {#if ed.kind === "subject"}
         <label class="edit-field">
-          <span class="edit-lbl">Code</span>
-          <input bind:value={code} class="input" placeholder="e.g. PHIL-101" />
+          <span class="edit-lbl">{t("Code")}</span>
+          <input bind:value={code} class="input" placeholder={t("e.g. PHIL-101")} />
         </label>
         <div class="edit-field">
-          <span class="edit-lbl">Glyph</span>
+          <span class="edit-lbl">{t("Glyph")}</span>
           <EmojiPicker value={glyph} onPick={(e) => (glyph = e)} />
         </div>
         <div class="edit-field">
-          <span class="edit-lbl">Color</span>
+          <span class="edit-lbl">{t("Color")}</span>
           <div class="edit-colors">
             {#each SUBJECT_COLORS as c}
               <button
@@ -167,43 +168,43 @@
                 onclick={() => (color = c)}
               ></button>
             {/each}
-            <input type="color" bind:value={color} class="swatch-custom" aria-label="Custom color" />
+            <input type="color" bind:value={color} class="swatch-custom" aria-label={t("Custom color")} />
           </div>
         </div>
       {/if}
 
-      {#if t.kind === "source"}
+      {#if ed.kind === "source"}
         <div class="edit-field">
-          <span class="edit-lbl">Subject</span>
+          <span class="edit-lbl">{t("Subject")}</span>
           <Picker
             value={selectedSubjectId}
             onChange={(id) => { selectedSubjectId = id; topicId = ""; }}
             options={subjectOptions}
-            placeholder="— select subject —"
+            placeholder={t("— select subject —")}
           />
         </div>
         <div class="edit-field">
-          <span class="edit-lbl">Topic</span>
+          <span class="edit-lbl">{t("Topic")}</span>
           <Picker
             value={topicId}
             onChange={(id) => (topicId = id)}
             options={topicOptions}
-            placeholder="— no topic —"
+            placeholder={t("— no topic —")}
           />
         </div>
         <label class="edit-field">
-          <span class="edit-lbl">Tags</span>
-          <input bind:value={tagsText} class="input" placeholder="comma, separated, tags" />
+          <span class="edit-lbl">{t("Tags")}</span>
+          <input bind:value={tagsText} class="input" placeholder={t("comma, separated, tags")} />
         </label>
       {/if}
 
       <div class="edit-actions">
-        <button class="btn btn--danger btn--sm" type="button" style="margin-right:auto" onclick={del}>Delete</button>
-        {#if t.kind === "subject"}
-          <button class="btn btn--ghost btn--sm" type="button" onclick={archive}>Archive</button>
+        <button class="btn btn--danger btn--sm" type="button" style="margin-right:auto" onclick={del}>{t("Delete")}</button>
+        {#if ed.kind === "subject"}
+          <button class="btn btn--ghost btn--sm" type="button" onclick={archive}>{t("Archive")}</button>
         {/if}
-        <button class="btn btn--ghost btn--sm" type="button" onclick={() => app.closeEdit()}>Cancel</button>
-        <button class="btn btn--primary btn--sm" type="button" onclick={save}>Save</button>
+        <button class="btn btn--ghost btn--sm" type="button" onclick={() => app.closeEdit()}>{t("Cancel")}</button>
+        <button class="btn btn--primary btn--sm" type="button" onclick={save}>{t("Save")}</button>
       </div>
     </div>
   </div>

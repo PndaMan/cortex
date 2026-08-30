@@ -2,6 +2,7 @@
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import Icon from "./Icon.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   const SUGGESTED_TAGS = ["lecture", "exam-relevant", "needs-review", "key-concept", "worked-example", "reference"];
 
@@ -69,19 +70,19 @@
         const topicId = (m?.topicId ?? app.activeSubject?.topics[0]?.id) || undefined;
         const res = await api.saveRecording(
           subjectId,
-          name || "Untitled recording",
+          name || t("Untitled recording"),
           audio,
           topicId,
         );
         await app.refresh();
         app.pushToast({
           kind: res.warning ? "warning" : "success",
-          title: "Recording saved",
-          body: res.warning ?? `${name || "Untitled recording"} · ${res.chunk_count} chunks embedded.`,
+          title: t("Recording saved"),
+          body: res.warning ?? t("{name} · {n} chunks embedded.", { name: name || t("Untitled recording"), n: res.chunk_count }),
         });
         app.metaModal = null;
       } catch (e) {
-        app.pushToast({ kind: "error", title: "Couldn't save recording", body: String(e) });
+        app.pushToast({ kind: "error", title: t("Couldn't save recording"), body: String(e) });
       } finally {
         saving = false;
       }
@@ -92,8 +93,8 @@
     // persist. Rather than emit a false "updated" success, acknowledge and close.
     app.pushToast({
       kind: "info",
-      title: isRecord ? "Nothing to save" : "Details noted",
-      body: name || (isRecord ? "No recording attached" : "No backing source to update"),
+      title: isRecord ? t("Nothing to save") : t("Details noted"),
+      body: name || (isRecord ? t("No recording attached") : t("No backing source to update")),
     });
     app.metaModal = null;
   }
@@ -116,8 +117,8 @@
     <div class="meta-modal" role="presentation" onmousedown={e => e.stopPropagation()}>
       <header class="meta-head">
         <div>
-          <div class="eyebrow">{isRecord ? "Save recording" : "Edit source"}</div>
-          <div class="meta-title-h mono">{isRecord ? "New lecture recording" : "Source details"}</div>
+          <div class="eyebrow">{isRecord ? t("Save recording") : t("Edit source")}</div>
+          <div class="meta-title-h mono">{isRecord ? t("New lecture recording") : t("Source details")}</div>
         </div>
         <button class="btn btn--icon btn--sm btn--ghost" onclick={close}>
           <Icon name="x" size={12} />
@@ -128,14 +129,14 @@
         {#if isRecord}
           <div class="meta-rec-note mono">
             <Icon name="check" size={13} color="var(--ok)" />
-            Recorded {app.metaModal?.meta ?? ""} · transcribed. Confirm where it lives before saving.
+            {t("Recorded {meta} · transcribed. Confirm where it lives before saving.", { meta: app.metaModal?.meta ?? "" })}
           </div>
         {/if}
 
         <!-- Title field -->
         <div class="field">
           <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label class="onb-label mono">SOURCE TITLE</label>
+          <label class="onb-label mono">{t("SOURCE TITLE")}</label>
           <div class="meta-title-row">
             <span class={"badge badge--" + (type === "audio" ? "audio" : type)}>
               <span class="dot"></span>{typeLabel}
@@ -145,7 +146,7 @@
               class="input"
               autofocus
               bind:value={title}
-              placeholder="Give this source a clear name…"
+              placeholder={t("Give this source a clear name…")}
             />
           </div>
         </div>
@@ -154,7 +155,7 @@
         <div class="meta-grid">
           <div class="field">
             <!-- svelte-ignore a11y_label_has_associated_control -->
-            <label class="onb-label mono">SUBJECT</label>
+            <label class="onb-label mono">{t("SUBJECT")}</label>
             <div class="picker">
               <button type="button" class="picker-btn">
                 <Icon name="diamond" size={12} color="var(--fg-faint)" />
@@ -165,11 +166,11 @@
           </div>
           <div class="field">
             <!-- svelte-ignore a11y_label_has_associated_control -->
-            <label class="onb-label mono">TOPIC</label>
+            <label class="onb-label mono">{t("TOPIC")}</label>
             <div class="picker">
               <button type="button" class="picker-btn">
                 <Icon name="chevron" size={12} color="var(--fg-faint)" />
-                <span class="picker-val {topicDraft ? '' : 'ph'}">{topicDraft || "Choose topic"}</span>
+                <span class="picker-val {topicDraft ? '' : 'ph'}">{topicDraft || t("Choose topic")}</span>
                 <Icon name="chevron" size={11} style="transform:rotate(90deg);color:var(--fg-faint)" />
               </button>
             </div>
@@ -179,7 +180,7 @@
         <!-- Tags -->
         <div class="field">
           <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label class="onb-label mono">TAGS</label>
+          <label class="onb-label mono">{t("TAGS")}</label>
           <div class="tag-editor">
             {#each tags as t}
               <span class="src-tag editable">
@@ -192,7 +193,7 @@
             <input
               class="tag-input mono"
               bind:value={tagDraft}
-              placeholder={tags.length ? "add…" : "type a tag, press Enter…"}
+              placeholder={tags.length ? t("add…") : t("type a tag, press Enter…")}
               onkeydown={handleTagKeyDown}
             />
           </div>
@@ -207,9 +208,9 @@
       </div>
 
       <footer class="meta-foot">
-        <button class="btn btn--ghost" onclick={close}>Cancel</button>
+        <button class="btn btn--ghost" onclick={close}>{t("Cancel")}</button>
         <button class="btn btn--primary" onclick={save} disabled={saving}>
-          <Icon name="check" size={13} /> {isRecord ? "Save source" : "Save changes"}
+          <Icon name="check" size={13} /> {isRecord ? t("Save source") : t("Save changes")}
         </button>
       </footer>
     </div>

@@ -6,6 +6,7 @@
   // destination lives there), an Ask→chat full sheet, and the shared overlays.
   import { app } from "../lib/store.svelte";
   import Icon from "../components/Icon.svelte";
+  import { t } from "../lib/i18n.svelte";
   import logo from "../assets/cortex-logo.png";
 
   // Views (reused as-is). Heavy ones are lazy-loaded on first visit, like App.svelte.
@@ -154,32 +155,32 @@
   );
 
   const NAV = [
-    { id: "dashboard",   icon: "home",     label: "Home" },
-    { id: "add-source",  icon: "doc",      label: "Add source" },
-    { id: "recorder",    icon: "record",   label: "Record lecture" },
-    { id: "calendar",    icon: "calendar", label: "Calendar" },
-    { id: "notes",       icon: "reader",   label: "Notes" },
-    { id: "analytics",   icon: "chart",    label: "Insights" },
-    { id: "add-subject", icon: "plus",     label: "New subject" },
-    { id: "settings",    icon: "settings", label: "Settings" },
+    { id: "dashboard",   icon: "home",     label: t("Home") },
+    { id: "add-source",  icon: "doc",      label: t("Add source") },
+    { id: "recorder",    icon: "record",   label: t("Record lecture") },
+    { id: "calendar",    icon: "calendar", label: t("Calendar") },
+    { id: "notes",       icon: "reader",   label: t("Notes") },
+    { id: "analytics",   icon: "chart",    label: t("Insights") },
+    { id: "add-subject", icon: "plus",     label: t("New subject") },
+    { id: "settings",    icon: "settings", label: t("Settings") },
   ] as const;
 </script>
 
 <div class="m-shell">
   <header class="m-header">
     {#if isDeep}
-      <button class="m-iconbtn" onclick={back} aria-label="Back">
+      <button class="m-iconbtn" onclick={back} aria-label={t("Back")}>
         <Icon name="chevron" size={18} style="transform:rotate(180deg)" />
       </button>
     {:else}
-      <button class="m-iconbtn" onclick={() => (drawerOpen = true)} aria-label="Menu">
+      <button class="m-iconbtn" onclick={() => (drawerOpen = true)} aria-label={t("Menu")}>
         <Icon name="menu" size={18} />
       </button>
     {/if}
     <!-- Static brand: the user knows which screen they're on, so we don't repeat it. -->
     <h1 class="page-title m-title"><img class="m-logo" src={logo} alt="" />Cortex</h1>
     <span class="m-spacer"></span>
-    <button class="m-iconbtn m-bell" onclick={() => app.toggleNotifications()} aria-label="Notifications">
+    <button class="m-iconbtn m-bell" onclick={() => app.toggleNotifications()} aria-label={t("Notifications")}>
       <Icon name="bell" size={18} />
       {#if app.unreadCount > 0}
         <span class="m-badge">{app.unreadCount > 99 ? "99+" : app.unreadCount}</span>
@@ -219,25 +220,25 @@
   </main>
 
   {#if showAsk}
-    <button class="m-ask" onclick={() => (app.chatOpen = true)} aria-label="Ask Cortex">
-      <Icon name="chat" size={18} /> Ask
+    <button class="m-ask" onclick={() => (app.chatOpen = true)} aria-label={t("Ask Cortex")}>
+      <Icon name="chat" size={18} /> {t("Ask")}
     </button>
   {/if}
 </div>
 
 <!-- Nav drawer: every destination (formerly split across the bottom bar + More). -->
 {#if drawerOpen}
-  <button class="m-drawer-back" aria-label="Close menu" onclick={() => (drawerOpen = false)}></button>
-  <nav class="m-drawer" aria-label="Menu">
+  <button class="m-drawer-back" aria-label={t("Close menu")} onclick={() => (drawerOpen = false)}></button>
+  <nav class="m-drawer" aria-label={t("Menu")}>
     <div class="m-drawer-head">
       <span class="page-title m-drawer-brand"><img class="m-logo" src={logo} alt="" />Cortex</span>
-      <button class="m-iconbtn" onclick={() => (drawerOpen = false)} aria-label="Close menu"><Icon name="x" size={16} /></button>
+      <button class="m-iconbtn" onclick={() => (drawerOpen = false)} aria-label={t("Close menu")}><Icon name="x" size={16} /></button>
     </div>
     <button class="m-row m-nav{activeNav === 'home' ? ' on' : ''}" onclick={() => go("dashboard")}>
-      <Icon name="home" size={18} /><span class="m-row-l">Home</span>
+      <Icon name="home" size={18} /><span class="m-row-l">{t("Home")}</span>
     </button>
     <button class="m-row m-nav" onclick={openSearch}>
-      <Icon name="search" size={18} /><span class="m-row-l">Search</span>
+      <Icon name="search" size={18} /><span class="m-row-l">{t("Search")}</span>
     </button>
     {#each NAV.slice(1) as n (n.id)}
       <button class="m-row m-nav{activeNav === n.id ? ' on' : ''}" onclick={() => go(n.id)}>
@@ -249,7 +250,7 @@
 
 <!-- Chat as a full-screen sheet -->
 {#if app.chatOpen}
-  <div class="m-sheet m-sheet--full" role="dialog" aria-label="Chat">
+  <div class="m-sheet m-sheet--full" role="dialog" aria-label={t("Chat")}>
     <ChatPanel
       onClose={() => (app.chatOpen = false)}
       onFullscreen={() => { app.chatOpen = false; app.setView("subject"); app.subjectTab = "chats"; }}

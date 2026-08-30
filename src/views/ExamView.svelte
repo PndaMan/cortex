@@ -6,6 +6,7 @@
   import { app } from "../lib/store.svelte";
   import * as api from "../lib/api";
   import Icon from "../components/Icon.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   type Screen = "setup" | "generating" | "run" | "results";
 
@@ -41,7 +42,7 @@
   // ── generate + start ─────────────────────────────────────────
   async function startNew() {
     const sub = app.activeSubject;
-    if (!sub) { app.pushToast({ kind: "error", title: "No active subject", body: "Open a subject first." }); return; }
+    if (!sub) { app.pushToast({ kind: "error", title: t("No active subject"), body: t("Open a subject first.") }); return; }
     if (mcqCount + writtenCount === 0) return;
     screen = "generating";
     genError = null;
@@ -60,7 +61,7 @@
     } catch (err) {
       genError = err instanceof Error ? err.message : String(err);
       screen = "setup";
-      app.pushToast({ kind: "error", title: "Couldn't generate exam", body: genError });
+      app.pushToast({ kind: "error", title: t("Couldn't generate exam"), body: genError });
     }
   }
 
@@ -118,9 +119,9 @@
 
   async function confirmSubmit() {
     const ok = await app.confirm({
-      title: "Submit exam?",
-      body: "Your answers will be graded and the exam locked.",
-      okLabel: "Submit",
+      title: t("Submit exam?"),
+      body: t("Your answers will be graded and the exam locked."),
+      okLabel: t("Submit"),
     });
     if (ok) void doSubmit(false);
   }
@@ -130,7 +131,7 @@
     submitted = true;
     stopTimer();
     submitting = true;
-    if (auto) app.pushToast({ kind: "info", title: "Time's up", body: "Submitting your exam…" });
+    if (auto) app.pushToast({ kind: "info", title: t("Time's up"), body: t("Submitting your exam…") });
     const payload: api.ExamAnswerInput[] = questions.map((q) => ({
       id: q.id,
       choice: runAnswers[q.id]?.choice ?? null,
@@ -142,7 +143,7 @@
       void loadPast();
     } catch (err) {
       submitted = false; // allow a retry on failure
-      app.pushToast({ kind: "error", title: "Submit failed", body: err instanceof Error ? err.message : String(err) });
+      app.pushToast({ kind: "error", title: t("Submit failed"), body: err instanceof Error ? err.message : String(err) });
     } finally {
       submitting = false;
     }
@@ -156,9 +157,9 @@
     try {
       results = await api.remarkExam(exam.id);
       void loadPast();
-      app.pushToast({ kind: "success", title: "Remarked", body: "Same rubric, fresh grading run." });
+      app.pushToast({ kind: "success", title: t("Remarked"), body: t("Same rubric, fresh grading run.") });
     } catch (err) {
-      app.pushToast({ kind: "error", title: "Remark failed", body: err instanceof Error ? err.message : String(err) });
+      app.pushToast({ kind: "error", title: t("Remark failed"), body: err instanceof Error ? err.message : String(err) });
     } finally {
       remarking = false;
     }
@@ -174,7 +175,7 @@
         results = full.results;
         screen = "results";
       } catch (err) {
-        app.pushToast({ kind: "error", title: "Couldn't open exam", body: String(err) });
+        app.pushToast({ kind: "error", title: t("Couldn't open exam"), body: String(err) });
       }
     } else {
       // ready / in_progress → (re)start it
@@ -183,17 +184,17 @@
         exam = started;
         beginRun(started);
       } catch (err) {
-        app.pushToast({ kind: "error", title: "Couldn't open exam", body: String(err) });
+        app.pushToast({ kind: "error", title: t("Couldn't open exam"), body: String(err) });
       }
     }
   }
 
   async function deletePast(e: api.ExamRec, ev: MouseEvent) {
     ev.stopPropagation();
-    const ok = await app.confirm({ title: "Delete exam?", body: e.title, danger: true, okLabel: "Delete" });
+    const ok = await app.confirm({ title: t("Delete exam?"), body: e.title, danger: true, okLabel: t("Delete") });
     if (!ok) return;
     try { await api.deleteExam(e.id); await loadPast(); } catch (err) {
-      app.pushToast({ kind: "error", title: "Delete failed", body: String(err) });
+      app.pushToast({ kind: "error", title: t("Delete failed"), body: String(err) });
     }
   }
 
@@ -234,28 +235,28 @@
     <!-- Setup mirrors a Settings tab: set-pane shell, set-head, set-groups + set-cards. -->
     <div class="set-pane">
       <header class="set-head">
-        <div class="eyebrow">Exam mode</div>
-        <h1 class="set-title">Sit a timed exam</h1>
-        <p class="set-sub">Generate a timed MCQ + written exam from {app.activeSubject?.name ?? "your subject"} and have it graded instantly.</p>
+        <div class="eyebrow">{t("Exam mode")}</div>
+        <h1 class="set-title">{t("Sit a timed exam")}</h1>
+        <p class="set-sub">{t("Generate a timed MCQ + written exam from {name} and have it graded instantly.", { name: app.activeSubject?.name ?? t("your subject") })}</p>
       </header>
 
       {#if !app.activeSubject}
         <div class="set-card">
-          <div class="set-row"><div class="set-row-l"><div class="set-row-d">Open a subject to create an exam.</div></div></div>
+          <div class="set-row"><div class="set-row-l"><div class="set-row-d">{t("Open a subject to create an exam.")}</div></div></div>
         </div>
       {:else}
         <!-- Topics: small dashed tag-chip-add chips with a check when selected, like
              Settings → Profile → "Explain with". -->
         <section class="set-group">
           <div class="set-group-h">
-            <h3 class="set-group-t">Topics</h3>
-            <p class="set-group-d">Leave all unselected to cover the whole subject.</p>
+            <h3 class="set-group-t">{t("Topics")}</h3>
+            <p class="set-group-d">{t("Leave all unselected to cover the whole subject.")}</p>
           </div>
           <div class="set-card">
             <div class="set-row stacked">
               <div class="set-row-r">
                 {#if topics.length === 0}
-                  <div class="set-row-d">No topics yet — the exam will use all of this subject's sources.</div>
+                  <div class="set-row-d">{t("No topics yet — the exam will use all of this subject's sources.")}</div>
                 {:else}
                   <div class="tag-suggest" style="margin-top:0">
                     {#each topics as t (t.id)}
@@ -277,17 +278,17 @@
 
         <!-- Format: seg duration + two stepper rows, exactly the Settings pomodoro pattern. -->
         <section class="set-group">
-          <div class="set-group-h"><h3 class="set-group-t">Format</h3></div>
+          <div class="set-group-h"><h3 class="set-group-t">{t("Format")}</h3></div>
           <div class="set-card">
             <div class="set-row">
               <div class="set-row-l">
-                <div class="set-row-t">Duration</div>
-                <div class="set-row-d">How long the countdown runs.</div>
+                <div class="set-row-t">{t("Duration")}</div>
+                <div class="set-row-d">{t("How long the countdown runs.")}</div>
               </div>
               <div class="set-row-r">
                 <div class="seg">
                   {#each DURATIONS as d}
-                    <button type="button" class={"seg-opt" + (duration === d ? " on" : "")} onclick={() => (duration = d)}>{d} min</button>
+                    <button type="button" class={"seg-opt" + (duration === d ? " on" : "")} onclick={() => (duration = d)}>{t("{n} min", { n: d })}</button>
                   {/each}
                 </div>
               </div>
@@ -295,28 +296,28 @@
 
             <div class="set-row">
               <div class="set-row-l">
-                <div class="set-row-t">Multiple choice</div>
-                <div class="set-row-d">One mark each.</div>
+                <div class="set-row-t">{t("Multiple choice")}</div>
+                <div class="set-row-d">{t("One mark each.")}</div>
               </div>
               <div class="set-row-r">
                 <div class="exam-step">
-                  <button class="btn btn--icon btn--sm" onclick={() => clampMcq(mcqCount - 1)} disabled={mcqCount <= 0} aria-label="fewer multiple choice questions">−</button>
+                  <button class="btn btn--icon btn--sm" onclick={() => clampMcq(mcqCount - 1)} disabled={mcqCount <= 0} aria-label={t("fewer multiple choice questions")}>−</button>
                   <span class="mono exam-step-v">{mcqCount}</span>
-                  <button class="btn btn--icon btn--sm" onclick={() => clampMcq(mcqCount + 1)} disabled={mcqCount >= 30} aria-label="more multiple choice questions">+</button>
+                  <button class="btn btn--icon btn--sm" onclick={() => clampMcq(mcqCount + 1)} disabled={mcqCount >= 30} aria-label={t("more multiple choice questions")}>+</button>
                 </div>
               </div>
             </div>
 
             <div class="set-row">
               <div class="set-row-l">
-                <div class="set-row-t">Written</div>
-                <div class="set-row-d">Two to five marks each, graded by the model.</div>
+                <div class="set-row-t">{t("Written")}</div>
+                <div class="set-row-d">{t("Two to five marks each, graded by the model.")}</div>
               </div>
               <div class="set-row-r">
                 <div class="exam-step">
-                  <button class="btn btn--icon btn--sm" onclick={() => clampWritten(writtenCount - 1)} disabled={writtenCount <= 0} aria-label="fewer written questions">−</button>
+                  <button class="btn btn--icon btn--sm" onclick={() => clampWritten(writtenCount - 1)} disabled={writtenCount <= 0} aria-label={t("fewer written questions")}>−</button>
                   <span class="mono exam-step-v">{writtenCount}</span>
-                  <button class="btn btn--icon btn--sm" onclick={() => clampWritten(writtenCount + 1)} disabled={writtenCount >= 15} aria-label="more written questions">+</button>
+                  <button class="btn btn--icon btn--sm" onclick={() => clampWritten(writtenCount + 1)} disabled={writtenCount >= 15} aria-label={t("more written questions")}>+</button>
                 </div>
               </div>
             </div>
@@ -326,14 +327,14 @@
         <!-- Primary action + summary, mirroring GenerateMaterial's footer. -->
         <div class="exam-cta">
           <button class="btn btn--primary" onclick={startNew} disabled={!canStart}>
-            <Icon name="bolt" size={13} /> Generate &amp; start
+            <Icon name="bolt" size={13} /> {t("Generate & start")}
           </button>
-          <span class="mono faint">{mcqCount + writtenCount} questions · {duration} min</span>
+          <span class="mono faint">{t("{n} questions · {m} min", { n: mcqCount + writtenCount, m: duration })}</span>
         </div>
 
         {#if pastExams.length > 0}
           <section class="set-group">
-            <div class="set-group-h"><h3 class="set-group-t">Past exams</h3></div>
+            <div class="set-group-h"><h3 class="set-group-t">{t("Past exams")}</h3></div>
             <div class="set-card">
               {#each pastExams as e (e.id)}
                 <div
@@ -346,15 +347,15 @@
                   <div class="set-row-l">
                     <div class="set-row-t">{e.title}</div>
                     <div class="set-row-d">
-                      {e.status === "graded" ? "Graded" : e.status === "in_progress" ? "In progress" : "Ready to start"}
+                      {e.status === "graded" ? t("Graded") : e.status === "in_progress" ? t("In progress") : t("Ready to start")}
                     </div>
                   </div>
                   <div class="set-row-r exam-past-r">
                     {#if e.status === "graded"}
                       <span class="mono exam-past-score">{Math.round(e.score ?? 0)}%</span>
                     {/if}
-                    <span class="badge">{e.status === "graded" ? "graded" : e.status === "in_progress" ? "resume" : "start"}</span>
-                    <button class="btn btn--icon btn--sm btn--ghost" title="Delete exam" aria-label="Delete exam" onclick={(ev) => deletePast(e, ev)}>
+                    <span class="badge">{e.status === "graded" ? t("graded") : e.status === "in_progress" ? t("resume") : t("start")}</span>
+                    <button class="btn btn--icon btn--sm btn--ghost" title={t("Delete exam")} aria-label={t("Delete exam")} onclick={(ev) => deletePast(e, ev)}>
                       <Icon name="x" size={12} />
                     </button>
                   </div>
@@ -372,8 +373,8 @@
       <div class="exam-gen-card">
         <span class="is-spin"></span>
         <div class="exam-gen-text">
-          <span class="mono exam-gen-label">Writing your exam…</span>
-          <span class="mono faint exam-gen-sub">{mcqCount} multiple-choice · {writtenCount} written</span>
+          <span class="mono exam-gen-label">{t("Writing your exam…")}</span>
+          <span class="mono faint exam-gen-sub">{t("{n} multiple-choice · {m} written", { n: mcqCount, m: writtenCount })}</span>
         </div>
       </div>
     </div>
@@ -394,7 +395,7 @@
             <div class="exam-q-head">
               <span class="quiz-key mono">{qi + 1}</span>
               <p class="quiz-q read">{q.q}</p>
-              <span class="mono faint exam-q-marks">{q.marks} mark{q.marks === 1 ? "" : "s"}</span>
+              <span class="mono faint exam-q-marks">{q.marks === 1 ? t("{n} mark", { n: q.marks }) : t("{n} marks", { n: q.marks })}</span>
             </div>
             {#if q.type === "mcq"}
               <div class="quiz-opts">
@@ -412,7 +413,7 @@
               <textarea
                 class="input exam-textarea"
                 rows="4"
-                placeholder="Write your answer…"
+                placeholder={t("Write your answer…")}
                 value={runAnswers[q.id]?.text ?? ""}
                 oninput={(e) => write(q.id, e.currentTarget.value)}
               ></textarea>
@@ -423,7 +424,7 @@
 
       <div class="exam-run-foot">
         <button class="btn btn--primary" onclick={confirmSubmit} disabled={submitting}>
-          {#if submitting}<span class="is-spin"></span> Grading…{:else}<Icon name="check" size={13} /> Submit exam{/if}
+          {#if submitting}<span class="is-spin"></span> {t("Grading…")}{:else}<Icon name="check" size={13} /> {t("Submit exam")}{/if}
         </button>
       </div>
     </div>
@@ -431,44 +432,44 @@
   {:else if screen === "results"}
     <div class="set-pane">
       <header class="set-head">
-        <div class="eyebrow">Results</div>
+        <div class="eyebrow">{t("Results")}</div>
         <h1 class="set-title">{exam?.title}</h1>
         {#if results?.graded_by}
-          <p class="set-sub mono">Written answers graded by {results.graded_by} — double-check anything that looks off.</p>
+          <p class="set-sub mono">{t("Written answers graded by {name} — double-check anything that looks off.", { name: results.graded_by })}</p>
         {/if}
       </header>
 
       <!-- Score as an AnalyticsView-style stat card row. -->
       <div class="exam-stats">
         <div class="exam-stat">
-          <div class="exam-stat-k mono">Score</div>
+          <div class="exam-stat-k mono">{t("Score")}</div>
           <div class="exam-stat-v">{Math.round(scorePct)}<span class="exam-stat-u">%</span></div>
         </div>
         {#if results}
           <div class="exam-stat">
-            <div class="exam-stat-k mono">Marks earned</div>
+            <div class="exam-stat-k mono">{t("Marks earned")}</div>
             <div class="exam-stat-v">{results.earned ?? 0}<span class="exam-stat-u"> / {results.total ?? 0}</span></div>
           </div>
           <div class="exam-stat">
-            <div class="exam-stat-k mono">Questions</div>
+            <div class="exam-stat-k mono">{t("Questions")}</div>
             <div class="exam-stat-v">{questions.length}</div>
           </div>
         {/if}
       </div>
 
       <div class="exam-cta">
-        <button class="btn btn--primary" onclick={startNew}><Icon name="bolt" size={13} /> Retake</button>
-        <button class="btn" onclick={backToSetup}><Icon name="book" size={13} /> New exam</button>
-        <button class="btn" onclick={doRemark} disabled={remarking} title="Re-grade these answers with the same rubric — useful when grading failed or misread an answer">
+        <button class="btn btn--primary" onclick={startNew}><Icon name="bolt" size={13} /> {t("Retake")}</button>
+        <button class="btn" onclick={backToSetup}><Icon name="book" size={13} /> {t("New exam")}</button>
+        <button class="btn" onclick={doRemark} disabled={remarking} title={t("Re-grade these answers with the same rubric — useful when grading failed or misread an answer")}>
           {#if remarking}<span class="is-spin" style:width="12px" style:height="12px"></span>{:else}<Icon name="refresh" size={13} />{/if}
-          Remark
+          {t("Remark")}
         </button>
       </div>
 
       {#if weakTopics.length > 0}
         <!-- Weak-topic callout: a set-card with a warn accent. -->
         <section class="set-group">
-          <div class="set-group-h"><h3 class="set-group-t">Topics to revise</h3></div>
+          <div class="set-group-h"><h3 class="set-group-t">{t("Topics to revise")}</h3></div>
           <div class="set-card exam-weak">
             <div class="set-row stacked">
               <div class="set-row-r">
@@ -485,7 +486,7 @@
 
       <!-- Per-question review reuses Quiz.svelte's answered-state classes. -->
       <section class="set-group">
-        <div class="set-group-h"><h3 class="set-group-t">Review</h3></div>
+        <div class="set-group-h"><h3 class="set-group-t">{t("Review")}</h3></div>
         <div class="exam-review">
           {#each reviewItems as { q, r }, idx (q.id)}
             {@const correct = q.type === "mcq" ? r?.correct : (r?.score ?? 0) >= q.marks}
@@ -507,15 +508,15 @@
                     <div class="quiz-opt{isAnswer ? ' correct' : ''}{isPick && !isAnswer ? ' wrong' : ''}">
                       <span class="quiz-key mono">{String.fromCharCode(65 + oi)}</span>
                       <span class="read">{opt}</span>
-                      {#if isPick}<span class="badge">Your answer</span>{/if}
+                      {#if isPick}<span class="badge">{t("Your answer")}</span>{/if}
                       {#if isAnswer}<Icon name="check" size={13} color="var(--ok)" />{/if}
                     </div>
                   {/each}
                 </div>
               {:else}
                 <div class="exam-rev-written">
-                  <span class="mono faint exam-rev-label">Your answer</span>
-                  <p class="read exam-rev-yours">{r?.your_text || "(blank)"}</p>
+                  <span class="mono faint exam-rev-label">{t("Your answer")}</span>
+                  <p class="read exam-rev-yours">{r?.your_text || t("(blank)")}</p>
                 </div>
               {/if}
 

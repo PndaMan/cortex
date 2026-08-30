@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "../lib/i18n.svelte";
   import { app } from "../lib/store.svelte";
   import { topicGlyph } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
@@ -109,8 +110,8 @@
     <button
       class="sb-bell"
       type="button"
-      title="Notifications (u)"
-      aria-label="Notifications{app.unreadCount > 0 ? ` — ${app.unreadCount} unread` : ''}"
+      title={t("Notifications (u)")}
+      aria-label={t("Notifications{unread}", { unread: app.unreadCount > 0 ? ` — ${app.unreadCount} ${t("unread")}` : "" })}
       onclick={() => app.toggleNotifications()}
     >
       <Icon name="bell" size={15} />
@@ -118,7 +119,7 @@
         <span class="sb-bell-badge">{app.unreadCount > 99 ? "99+" : app.unreadCount}</span>
       {/if}
     </button>
-    <button class="b-cmd" type="button" title="Minimize sidebar (b)" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;display:inline-flex;align-items:center;transform:rotate(180deg)" onclick={() => app.toggleSidebar()}>
+    <button class="b-cmd" type="button" title={t("Minimize sidebar (b)")} style="background:none;border:none;padding:0;cursor:pointer;color:inherit;display:inline-flex;align-items:center;transform:rotate(180deg)" onclick={() => app.toggleSidebar()}>
       <Icon name="chevron" size={15} />
     </button>
   </div>
@@ -132,7 +133,7 @@
       tabindex="0"
       onkeydown={(e) => e.key === "Enter" && app.setView("dashboard")}
     >
-      <Icon name="home" size={14} /> Dashboard <span class="nav-k">␣ g</span>
+      <Icon name="home" size={14} /> {t("Dashboard")} <span class="nav-k">␣ g</span>
     </div>
     <div
       class="sb-nav-item{app.view === 'recorder' ? ' on' : ''}"
@@ -141,7 +142,7 @@
       tabindex="0"
       onkeydown={(e) => e.key === "Enter" && app.setView("recorder")}
     >
-      <Icon name="record" size={13} /> Record lecture <span class="nav-k">␣ r</span>
+      <Icon name="record" size={13} /> {t("Record lecture")} <span class="nav-k">␣ r</span>
     </div>
     <div
       class="sb-nav-item{app.view === 'add-source' ? ' on' : ''}"
@@ -150,7 +151,7 @@
       tabindex="0"
       onkeydown={(e) => e.key === "Enter" && app.setView("add-source")}
     >
-      <Icon name="plus" size={14} /> Add source <span class="nav-k">␣ s</span>
+      <Icon name="plus" size={14} /> {t("Add source")} <span class="nav-k">␣ s</span>
     </div>
     <div
       class="sb-nav-item{app.view === 'notes' ? ' on' : ''}"
@@ -159,7 +160,7 @@
       tabindex="0"
       onkeydown={(e) => e.key === "Enter" && app.setView("notes")}
     >
-      <Icon name="reader" size={14} /> Notes <span class="nav-k">␣ o</span>
+      <Icon name="reader" size={14} /> {t("Notes")} <span class="nav-k">␣ o</span>
     </div>
     <div
       class="sb-nav-item{app.view === 'calendar' ? ' on' : ''}"
@@ -168,7 +169,7 @@
       tabindex="0"
       onkeydown={(e) => e.key === "Enter" && app.setView("calendar")}
     >
-      <Icon name="calendar" size={14} /> Calendar <span class="nav-k">␣ a</span>
+      <Icon name="calendar" size={14} /> {t("Calendar")} <span class="nav-k">␣ a</span>
     </div>
     <div
       class="sb-nav-item{app.view === 'analytics' ? ' on' : ''}"
@@ -177,15 +178,15 @@
       tabindex="0"
       onkeydown={(e) => e.key === "Enter" && app.setView("analytics")}
     >
-      <Icon name="chart" size={14} /> Insights <span class="nav-k">␣ i</span>
+      <Icon name="chart" size={14} /> {t("Insights")} <span class="nav-k">␣ i</span>
     </div>
 
     <!-- Subjects section header -->
     <div class="sb-section-l">
-      <span class="label">Subjects</span>
+      <span class="label">{t("Subjects")}</span>
       <span
         class="add"
-        title="New subject"
+        title={t("New subject")}
         role="button"
         tabindex="0"
         onclick={() => app.setView("add-subject")}
@@ -213,7 +214,7 @@
             onclick={(e) => toggleExpand(s.id, e)}
             role="button"
             tabindex="-1"
-            aria-label="Expand {s.name}"
+            aria-label={t("Expand {name}", { name: s.name })}
           >
             <Icon name="chevron" size={11} />
           </span>
@@ -225,8 +226,8 @@
             <button
               class="s-act"
               type="button"
-              title="Edit subject"
-              aria-label="Edit {s.name}"
+              title={t("Edit subject")}
+              aria-label={t("Edit {name}", { name: s.name })}
               onclick={(e) => editSubject(s, e)}
             >
               <Icon name="pencil" size={12} />
@@ -234,12 +235,12 @@
             <button
               class="s-act"
               type="button"
-              title="Add a topic to {s.name}"
-              aria-label="Add topic to {s.name}"
+              title={t("Add a topic to {name}", { name: s.name })}
+              aria-label={t("Add topic to {name}", { name: s.name })}
               onclick={async (e) => {
                 e.stopPropagation();
                 app.activeSubjectId = s.id;
-                const n = await app.prompt({ title: "Add topic to " + s.name, label: "Topic name", placeholder: "e.g. Determinism" });
+                const n = await app.prompt({ title: t("Add topic to {name}", { name: s.name }), label: t("Topic name"), placeholder: t("e.g. Determinism") });
                 if (n) app.createTopic(n);
               }}
             >
@@ -255,51 +256,51 @@
 
         {#if expanded === s.id}
           <div class="sb-children">
-            {#each s.topics as t, ti (t.id)}
-              {@const tOpen = openTopics.has(t.id)}
+            {#each s.topics as tp, ti (tp.id)}
+              {@const tOpen = openTopics.has(tp.id)}
               <div
                 class="sb-topic"
-                data-topic-id={t.id}
+                data-topic-id={tp.id}
                 data-subject-id={s.id}
-                onclick={() => clickTopic(s, t)}
+                onclick={() => clickTopic(s, tp)}
                 role="button"
                 tabindex="0"
-                onkeydown={(e) => (e.key === "Enter" || e.key === " ") && clickTopic(s, t)}
+                onkeydown={(e) => (e.key === "Enter" || e.key === " ") && clickTopic(s, tp)}
                 use:reorderable={{ index: ti, group: "topics:" + s.id, onReorder: (from, to) => reorderTopic(s.id, s.topics.map((x) => x.id), from, to) }}
               >
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
-                <span class="t-tw{tOpen ? ' open' : ''}" role="button" tabindex="-1" aria-label="Toggle sources" onclick={(e) => toggleTopic(t.id, e)}><Icon name="chevron" size={10} /></span>
-                <span class="t-glyph" style="flex:none;font-size:11px;margin-right:5px">{t.glyph || topicGlyph(t.id)}</span>
-                <span class="t-name">{t.name}</span>
+                <span class="t-tw{tOpen ? ' open' : ''}" role="button" tabindex="-1" aria-label={t("Toggle sources")} onclick={(e) => toggleTopic(tp.id, e)}><Icon name="chevron" size={10} /></span>
+                <span class="t-glyph" style="flex:none;font-size:11px;margin-right:5px">{tp.glyph || topicGlyph(tp.id)}</span>
+                <span class="t-name">{tp.name}</span>
                 <span class="t-actions">
                   <button
                     class="s-act"
                     type="button"
-                    title="Rename topic"
-                    aria-label="Rename {t.name}"
-                    onclick={(e) => editTopic(t, s.id, e)}
+                    title={t("Rename topic")}
+                    aria-label={t("Rename {name}", { name: tp.name })}
+                    onclick={(e) => editTopic(tp, s.id, e)}
                   >
                     <Icon name="pencil" size={11} />
                   </button>
                   <button
                     class="s-act"
                     type="button"
-                    title="Add a source to {t.name}"
-                    aria-label="Add source to {t.name}"
-                    onclick={(e) => { e.stopPropagation(); app.newSourceInTopic(t.id); }}
+                    title={t("Add a source to {name}", { name: tp.name })}
+                    aria-label={t("Add source to {name}", { name: tp.name })}
+                    onclick={(e) => { e.stopPropagation(); app.newSourceInTopic(tp.id); }}
                   >
                     <Icon name="plus" size={11} />
                   </button>
-                  {#if t.sources.length === 0}
+                  {#if tp.sources.length === 0}
                     <button
                       class="s-act"
                       type="button"
-                      title="Delete empty topic"
-                      aria-label="Delete topic {t.name}"
+                      title={t("Delete empty topic")}
+                      aria-label={t("Delete topic {name}", { name: tp.name })}
                       onclick={async (e) => {
                         e.stopPropagation();
-                        const ok = await app.confirm({ title: `Delete topic "${t.name}"?`, body: "This empty topic will be removed.", danger: true, okLabel: "Delete" });
-                        if (ok) app.deleteTopic(t.id, s.id);
+                        const ok = await app.confirm({ title: t("Delete topic \"{name}\"?", { name: tp.name }), body: t("This empty topic will be removed."), danger: true, okLabel: t("Delete") });
+                        if (ok) app.deleteTopic(tp.id, s.id);
                       }}
                     >
                       <Icon name="x" size={11} />
@@ -308,7 +309,7 @@
                 </span>
               </div>
               {#if tOpen}
-                {#each t.sources as src (src.id)}
+                {#each tp.sources as src (src.id)}
                   <div
                     class="sb-src sb-src--nested"
                     role="button"
@@ -339,7 +340,7 @@
                 onkeydown={(e) => (e.key === "Enter" || e.key === " ") && toggleTopic(ugId, e)}
               >
                 <span class="t-tw{ugOpen ? ' open' : ''}"><Icon name="chevron" size={10} /></span>
-                <span class="t-name">Ungrouped</span>
+                <span class="t-name">{t("Ungrouped")}</span>
               </div>
               {#if ugOpen}
                 {#each ungroupedSources(s) as src (src.id)}
@@ -370,9 +371,9 @@
   <button
     class="sb-settings{app.view === 'settings' ? ' on' : ''}"
     onclick={() => app.setView("settings")}
-    title="Settings"
+    title={t("Settings")}
   >
-    <Icon name="settings" size={14} /> Settings
+    <Icon name="settings" size={14} /> {t("Settings")}
   </button>
 
   <!-- Music mini row — opens the study-sound panel -->
@@ -380,7 +381,7 @@
     class="sb-music"
     role="button"
     tabindex="0"
-    title="Study sound (m)"
+    title={t("Study sound (m)")}
     onclick={() => (app.musicOpen = true)}
     onkeydown={(e) => e.key === "Enter" && (app.musicOpen = true)}
   >

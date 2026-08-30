@@ -2,15 +2,16 @@
   import { jobs, jobKindLabel, type Job } from "../lib/jobs.svelte";
   import { app } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   let { job }: { job: Job } = $props();
 
   async function cancel() {
     const ok = await app.confirm({
-      title: `Stop generating ${jobKindLabel(job.kind)}?`,
-      body: "It stops being tracked and the result is discarded.",
+      title: t("Stop generating {kind}?", { kind: jobKindLabel(job.kind) }),
+      body: t("It stops being tracked and the result is discarded."),
       danger: true,
-      okLabel: "Stop",
+      okLabel: t("Stop"),
     });
     if (ok) jobs.cancel(job.id);
   }
@@ -19,7 +20,7 @@
 {#if job.status === "running"}
   <div class="gen-card">
     <span class="is-spin"></span>
-    <span class="gen-card-label mono">Generating {jobKindLabel(job.kind)}…</span>
+    <span class="gen-card-label mono">{t("Generating {kind}…", { kind: jobKindLabel(job.kind) })}</span>
     {#if job.label}
       <span class="gen-card-sub mono">{job.label}</span>
     {/if}
@@ -27,8 +28,8 @@
       class="gen-card-x"
       style="margin-left:auto"
       type="button"
-      aria-label="Stop generating"
-      title="Stop generating"
+      aria-label={t("Stop generating")}
+      title={t("Stop generating")}
       onclick={cancel}
     >
       <Icon name="x" size={13} />
@@ -38,14 +39,14 @@
   <div class="gen-card gen-card--err">
     <span class="gen-card-ico"><Icon name="bolt" size={14} color="var(--err)" /></span>
     <div class="gen-card-body">
-      <span class="gen-card-label mono">Couldn't generate {jobKindLabel(job.kind)}</span>
-      <span class="gen-card-sub mono">{job.error ?? "Unknown error"}</span>
+      <span class="gen-card-label mono">{t("Couldn't generate {kind}", { kind: jobKindLabel(job.kind) })}</span>
+      <span class="gen-card-sub mono">{job.error ?? t("Unknown error")}</span>
     </div>
     <button
       class="gen-card-x"
       type="button"
-      aria-label="Dismiss"
-      title="Dismiss"
+      aria-label={t("Dismiss")}
+      title={t("Dismiss")}
       onclick={() => jobs.dismiss(job.id)}
     >
       <Icon name="x" size={13} />

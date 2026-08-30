@@ -4,6 +4,7 @@
   // blur. Each row owns its local state (seeded from the topic) so a background
   // store refresh after a save doesn't clobber an in-progress edit.
   import { app, topicGlyph } from "../lib/store.svelte";
+  import { t } from "../lib/i18n.svelte";
   import type { Topic } from "../lib/api";
   import Icon from "./Icon.svelte";
   import EmojiPicker from "./EmojiPicker.svelte";
@@ -32,16 +33,16 @@
     await save();
   }
   async function del() {
-    if (!(await app.confirm({ title: `Delete topic "${topic.name}"?`, body: "Sources in it become ungrouped.", danger: true, okLabel: "Delete" }))) return;
+    if (!(await app.confirm({ title: t("Delete topic \"{name}\"?", { name: topic.name }), body: t("Sources in it become ungrouped."), danger: true, okLabel: t("Delete") }))) return;
     await app.deleteTopic(topic.id, subjectId);
   }
 </script>
 
 <div class="tr">
   <EmojiPicker value={glyph} onPick={pick} size={28} />
-  <input class="input tr-name" bind:value={name} onblur={save} placeholder="Topic name" />
-  <input class="input tr-tags mono" bind:value={tags} onblur={save} placeholder="tags, comma separated" />
-  <button class="btn btn--icon btn--sm btn--ghost" title="Delete topic" onclick={del}>
+  <input class="input tr-name" bind:value={name} onblur={save} placeholder={t("Topic name")} />
+  <input class="input tr-tags mono" bind:value={tags} onblur={save} placeholder={t("tags, comma separated")} />
+  <button class="btn btn--icon btn--sm btn--ghost" title={t("Delete topic")} onclick={del}>
     <Icon name="x" size={12} />
   </button>
 </div>

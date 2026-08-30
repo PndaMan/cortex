@@ -4,6 +4,7 @@
   // Cut/Copy/Paste/Select all; plain text with a selection gets Copy/Select all.
   // Right-clicking a sidebar subject/topic row gets Edit / Archive / Delete.
   import { app } from "../lib/store.svelte";
+  import { t } from "../lib/i18n.svelte";
   type Item = { label: string; key?: string; run: () => void; disabled?: boolean };
 
   // Edit / Archive / Delete for a sidebar subject or topic row, or null if the
@@ -17,9 +18,9 @@
       const topic = subj?.topics.find((t) => t.id === tid);
       if (!topic) return null;
       return [
-        { label: "Edit topic", run: () => app.openEdit({ kind: "topic", id: topic.id, name: topic.name, subjectId: sid, glyph: topic.glyph || "◆", tags: topic.tags ?? [] }) },
-        { label: "Delete topic", run: async () => {
-            if (await app.confirm({ title: `Delete topic "${topic.name}"?`, danger: true, okLabel: "Delete" })) app.deleteTopic(topic.id, sid);
+        { label: t("Edit topic"), run: () => app.openEdit({ kind: "topic", id: topic.id, name: topic.name, subjectId: sid, glyph: topic.glyph || "◆", tags: topic.tags ?? [] }) },
+        { label: t("Delete topic"), run: async () => {
+            if (await app.confirm({ title: t("Delete topic \"{name}\"?", { name: topic.name }), danger: true, okLabel: t("Delete") })) app.deleteTopic(topic.id, sid);
           } },
       ];
     }
@@ -29,12 +30,12 @@
       const s = app.subjects.find((x) => x.id === sid);
       if (!s) return null;
       return [
-        { label: "Edit subject", run: () => app.openEdit({ kind: "subject", id: s.id, name: s.name, code: s.code ?? "", glyph: s.glyph, color: app.subjectColor(s) }) },
-        { label: "Archive subject", run: async () => {
-            if (await app.confirm({ title: `Archive "${s.name}"?`, body: "Hidden everywhere but its data is kept. Restore from Settings → Data.", okLabel: "Archive" })) app.setSubjectArchived(s.id, true);
+        { label: t("Edit subject"), run: () => app.openEdit({ kind: "subject", id: s.id, name: s.name, code: s.code ?? "", glyph: s.glyph, color: app.subjectColor(s) }) },
+        { label: t("Archive subject"), run: async () => {
+            if (await app.confirm({ title: t("Archive \"{name}\"?", { name: s.name }), body: t("Hidden everywhere but its data is kept. Restore from Settings → Data."), okLabel: t("Archive") })) app.setSubjectArchived(s.id, true);
           } },
-        { label: "Delete subject", run: async () => {
-            if (await app.confirm({ title: `Delete "${s.name}"?`, danger: true, okLabel: "Delete" })) app.deleteSubject(s.id);
+        { label: t("Delete subject"), run: async () => {
+            if (await app.confirm({ title: t("Delete \"{name}\"?", { name: s.name }), danger: true, okLabel: t("Delete") })) app.deleteSubject(s.id);
           } },
       ];
     }
@@ -104,19 +105,19 @@
       const el = target;
       const hasSel = (el.selectionStart ?? 0) !== (el.selectionEnd ?? 0);
       out.push({
-        label: "Cut", key: "⌘X", disabled: !hasSel,
+        label: t("Cut"), key: "⌘X", disabled: !hasSel,
         run: async () => { const t = fieldSelection(el); if (t) { await writeClipboard(t); deleteFieldSelection(el); } },
       });
       out.push({
-        label: "Copy", key: "⌘C", disabled: !hasSel,
+        label: t("Copy"), key: "⌘C", disabled: !hasSel,
         run: async () => { const t = fieldSelection(el); if (t) await writeClipboard(t); },
       });
       out.push({
-        label: "Paste", key: "⌘V",
+        label: t("Paste"), key: "⌘V",
         run: async () => { el.focus(); const t = await readClipboard(); if (t) insertIntoField(el, t); },
       });
       out.push({
-        label: "Select all", key: "⌘A",
+        label: t("Select all"), key: "⌘A",
         run: () => { el.focus(); el.select(); },
       });
       return out;
@@ -125,11 +126,11 @@
     // Non-editable: operate on the page text selection.
     const sel = selectionText();
     out.push({
-      label: "Copy", key: "⌘C", disabled: !sel,
+      label: t("Copy"), key: "⌘C", disabled: !sel,
       run: async () => { if (sel) await writeClipboard(sel); },
     });
     out.push({
-      label: "Select all", key: "⌘A",
+      label: t("Select all"), key: "⌘A",
       run: () => {
         const range = document.createRange();
         const root = (target?.closest("p, li, td, .read, .bubble, .workspace-scroll") as Element) ?? document.body;

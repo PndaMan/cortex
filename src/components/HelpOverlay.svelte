@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
   import Icon from "./Icon.svelte";
+  import { t } from "../lib/i18n.svelte";
   import { keybinds, ACTION_LABELS, ACTION_ORDER, LEADER_ACTIONS } from "../lib/keybinds.svelte";
 
   function close() {
@@ -41,9 +42,9 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="help-pane" style:margin-top="12vh" onmousedown={(e) => e.stopPropagation()}>
       <div class="help-head">
-        <span class="help-title">Keyboard shortcuts</span>
+        <span class="help-title">{t("Keyboard shortcuts")}</span>
         <span class="help-spacer"></span>
-        <button class="help-close" type="button" title="Close" aria-label="Close" onclick={close}>
+        <button class="help-close" type="button" title={t("Close")} aria-label={t("Close")} onclick={close}>
           <Icon name="x" size={14} />
         </button>
       </div>
@@ -56,7 +57,7 @@
           </div>
         {/each}
 
-        <div class="help-sub">Space leader menu</div>
+        <div class="help-sub">{t("Space leader menu")}</div>
         {#each LEADER_ACTIONS as a (a.key)}
           <div class="help-row">
             <span class="help-label">{a.label} <span class="help-detail">· {a.detail}</span></span>
@@ -66,7 +67,7 @@
       </div>
 
       <div class="help-foot">
-        <span class="kbd">esc</span> to close
+        <span class="kbd">esc</span> {t("to close")}
       </div>
     </div>
   </div>

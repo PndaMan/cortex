@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
+  import { t } from "../lib/i18n.svelte";
   import { keybinds } from "../lib/keybinds.svelte";
   import * as api from "../lib/api";
   import Icon from "./Icon.svelte";
@@ -31,34 +32,34 @@
   async function loadCheatItems(subjectId: string) {
     try {
       const sub = app.subjects.find((s) => s.id === subjectId);
-      const topics = (sub?.topics ?? []).filter((t) => t.sources.length > 0);
+      const topics = (sub?.topics ?? []).filter((tp2) => tp2.sources.length > 0);
       const sheets = await Promise.all(
-        topics.map((t) => api.getCheatsheet(subjectId, t.id).catch(() => null))
+        topics.map((tp2) => api.getCheatsheet(subjectId, tp2.id).catch(() => null))
       );
       const items: CmdItem[] = [];
-      topics.forEach((t, ti) => {
+      topics.forEach((tp, ti) => {
         const cs = sheets[ti];
         if (!cs) return;
         for (const sec of cs.sections) {
           // jump to the section heading
           items.push({
-            id: `csh-${t.id}-${sec.id}`,
-            group: "Cheatsheet",
+            group: t("Cheatsheet"),
+            id: `csh-${tp.id}-${sec.id}`,
             label: sec.title,
-            kind: t.name,
+            kind: tp.name,
             icon: "book",
-            run: () => jumpToCheat(subjectId, t.id, "cs-sec-" + sec.id),
+            run: () => jumpToCheat(subjectId, tp.id, "cs-sec-" + sec.id),
           });
           // jump to each term/subheading within the section
           sec.items.forEach((it, i) => {
             if (it.t.startsWith("__topic__")) return; // composed-only divider sentinel
             items.push({
-              id: `csi-${t.id}-${sec.id}-${i}`,
-              group: "Cheatsheet",
+              group: t("Cheatsheet"),
+              id: `csi-${tp.id}-${sec.id}-${i}`,
               label: it.t,
-              kind: `${t.name} · ${sec.title}`,
+              kind: `${tp.name} · ${sec.title}`,
               icon: "book",
-              run: () => jumpToCheat(subjectId, t.id, "cs-it-" + sec.id + "-" + i),
+              run: () => jumpToCheat(subjectId, tp.id, "cs-it-" + sec.id + "-" + i),
             });
           });
         }
@@ -82,7 +83,7 @@
     ...cheatItems,
     ...app.subjects.map((s) => ({
       id: "subj-" + s.id,
-      group: "Subjects",
+      group: t("Subjects"),
       label: s.name,
       kind: s.code ?? "",
       icon: "diamond",
@@ -90,32 +91,32 @@
     })),
     // Topics — type a topic name in ":" to open that topic's cheatsheet directly.
     ...app.subjects.flatMap((s) =>
-      s.topics.map((t) => ({
-        id: "topic-" + t.id,
-        group: "Topics",
-        label: t.name,
+      s.topics.map((tp) => ({
+        id: "topic-" + tp.id,
+        group: t("Topics"),
+        label: tp.name,
         kind: s.name,
         icon: "chevron",
-        run: () => app.openTopicSheet(s.id, t.id),
+        run: () => app.openTopicSheet(s.id, tp.id),
       }))
     ),
-    { id: "a-record", group: "Actions", label: "Record lecture", kind: "command", icon: "record", hint: kh(keybinds.map.recorder), run: () => app.setView("recorder") },
-    { id: "a-source", group: "Actions", label: "Add source", kind: "command", icon: "plus", hint: kh(keybinds.map.leader) + " s", run: () => app.setView("add-source") },
-    { id: "a-diff", group: "Actions", label: "Review cheatsheet diff", kind: "command", icon: "book", hint: app.pending ? app.pending + " pending" : kh(keybinds.map.leader) + " d", run: () => app.reviewDiff() },
-    { id: "a-regen", group: "Actions", label: "Regenerate cheatsheet", kind: "command", icon: "refresh", run: () => app.regenCheatsheet() },
-    { id: "a-flash", group: "Actions", label: "Study flashcards", kind: "command", icon: "cards", run: () => { app.setView("subject"); app.setTab("materials"); } },
-    { id: "a-quiz", group: "Actions", label: "Generate quiz", kind: "command", icon: "check", run: () => { app.setView("subject"); app.setTab("materials"); } },
-    { id: "a-chat", group: "Actions", label: app.chatOpen ? "Hide chat panel" : "Show chat panel", kind: "command", icon: "chat", hint: kh(keybinds.map.toggleChat), run: () => app.toggleChat() },
-    { id: "a-music", group: "Actions", label: "Study sound…", kind: "command", icon: "music", hint: kh(keybinds.map.music), run: () => (app.musicOpen = true) },
-    { id: "a-pomo", group: "Actions", label: "Pomodoro timer", kind: "command", icon: "record", hint: "␣ p", run: () => (app.pomodoroOpen = true) },
-    { id: "a-newsubj", group: "Actions", label: "New subject", kind: "command", icon: "plus", hint: kh(keybinds.map.newSubject), run: () => app.setView("add-subject") },
-    { id: "v-dash", group: "Go to", label: "Dashboard", kind: "view", icon: "home", hint: "g " + kh(keybinds.map.dashboard), run: () => app.setView("dashboard") },
-    { id: "v-analytics", group: "Go to", label: "Study analytics", kind: "view", icon: "chart", run: () => app.setView("analytics") },
-    { id: "v-exam", group: "Go to", label: "Start exam", kind: "view", icon: "check", run: () => app.setView("exam") },
-    { id: "s-settings", group: "Settings", label: "Open settings", kind: "setting", icon: "settings", run: () => app.setView("settings") },
-    { id: "s-keys", group: "Settings", label: "API keys & models", kind: "setting", icon: "lock", run: () => app.setView("settings") },
-    { id: "s-profile", group: "Settings", label: "Edit your profile", kind: "setting", icon: "diamond", run: () => app.setView("settings") },
-    { id: "s-theme", group: "Settings", label: "Cycle Omarchy theme", kind: "setting", icon: "settings", hint: "␣ t", run: () => app.cycleTheme() },
+    { id: "a-record", group: t("Actions"), label: t("Record lecture"), kind: "command", icon: "record", hint: kh(keybinds.map.recorder), run: () => app.setView("recorder") },
+    { id: "a-source", group: t("Actions"), label: t("Add source"), kind: "command", icon: "plus", hint: kh(keybinds.map.leader) + " s", run: () => app.setView("add-source") },
+    { id: "a-diff", group: t("Actions"), label: t("Review cheatsheet diff"), kind: "command", icon: "book", hint: app.pending ? app.pending + " pending" : kh(keybinds.map.leader) + " d", run: () => app.reviewDiff() },
+    { id: "a-regen", group: t("Actions"), label: t("Regenerate cheatsheet"), kind: "command", icon: "refresh", run: () => app.regenCheatsheet() },
+    { id: "a-flash", group: t("Actions"), label: t("Study flashcards"), kind: "command", icon: "cards", run: () => { app.setView("subject"); app.setTab("materials"); } },
+    { id: "a-quiz", group: t("Actions"), label: t("Generate quiz"), kind: "command", icon: "check", run: () => { app.setView("subject"); app.setTab("materials"); } },
+    { id: "a-chat", group: t("Actions"), label: app.chatOpen ? t("Hide chat panel") : t("Show chat panel"), kind: "command", icon: "chat", hint: kh(keybinds.map.toggleChat), run: () => app.toggleChat() },
+    { id: "a-music", group: t("Actions"), label: t("Study sound…"), kind: "command", icon: "music", hint: kh(keybinds.map.music), run: () => (app.musicOpen = true) },
+    { id: "a-pomo", group: t("Actions"), label: t("Pomodoro timer"), kind: "command", icon: "record", hint: "␣ p", run: () => (app.pomodoroOpen = true) },
+    { id: "a-newsubj", group: t("Actions"), label: t("New subject"), kind: "command", icon: "plus", hint: kh(keybinds.map.newSubject), run: () => app.setView("add-subject") },
+    { id: "v-dash", group: t("Go to"), label: t("Dashboard"), kind: "view", icon: "home", hint: "g " + kh(keybinds.map.dashboard), run: () => app.setView("dashboard") },
+    { id: "v-analytics", group: t("Go to"), label: t("Study analytics"), kind: "view", icon: "chart", run: () => app.setView("analytics") },
+    { id: "v-exam", group: t("Go to"), label: t("Start exam"), kind: "view", icon: "check", run: () => app.setView("exam") },
+    { id: "s-settings", group: t("Settings"), label: t("Open settings"), kind: "setting", icon: "settings", run: () => app.setView("settings") },
+    { id: "s-keys", group: t("Settings"), label: t("API keys & models"), kind: "setting", icon: "lock", run: () => app.setView("settings") },
+    { id: "s-profile", group: t("Settings"), label: t("Edit your profile"), kind: "setting", icon: "diamond", run: () => app.setView("settings") },
+    { id: "s-theme", group: t("Settings"), label: t("Cycle Omarchy theme"), kind: "setting", icon: "settings", hint: "␣ t", run: () => app.cycleTheme() },
   ]);
 
   const filtered = $derived(
@@ -189,15 +190,14 @@
           bind:value={q}
           oninput={() => { sel = 0; }}
           onkeydown={onKey}
-          placeholder="Search actions, subjects, sources…"
+          placeholder={t("Search actions, subjects, sources…")}
         />
-        <span class="kbd">esc</span>
       </div>
 
       <div style:max-height="46vh" style:overflow-y="auto" style:overflow-x="hidden">
         {#if flat.length === 0}
           <div style:padding="22px" style:text-align="center" style:color="var(--fg-faint)" style:font-size="var(--t-sm)">
-            No matches
+            {t("No matches")}
           </div>
         {/if}
 

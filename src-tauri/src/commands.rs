@@ -813,7 +813,7 @@ pub async fn reingest_source(app: AppHandle, id: String) -> Result<IngestResult>
             if let Some(p) = input.path.as_deref() {
                 emit_progress(&app, &id, "parsing", "transcribing audio (Whisper)", 35);
                 let remote = whisper_remote(&state);
-                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_ref(), &whisper_model(&state));
+                let (t, w) = transcribe(Path::new(p), &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), true, remote.as_ref(), &whisper_model(&state), &whisper_language(&state));
                 if !t.trim().is_empty() {
                     text = t;
                     warning = w;
@@ -3126,6 +3126,23 @@ pub struct RemoteWhisper {
 const DEFAULT_CLOUD_WHISPER_URL: &str = "https://api.groq.com/openai/v1";
 const DEFAULT_CLOUD_WHISPER_MODEL: &str = "whisper-large-v3-turbo";
 
+/// Spoken language hint for Whisper. "auto" (default) = detect per recording;
+/// otherwise an ISO-639-1 code ("ru", "en", …) read from the `whisper_lang`
+/// setting. Every transcription path (local CLIs, faster-whisper venv, the
+/// WhisperX /asr endpoint and OpenAI-compatible servers) takes this hint.
+const DEFAULT_WHISPER_LANG: &str = "auto";
+
+fn whisper_language(state: &AppState) -> String {
+    state
+        .db
+        .lock()
+        .ok()
+        .and_then(|c| crate::repo::get_setting(&c, "whisper_lang").ok().flatten())
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && s != "auto")
+        .unwrap_or_else(|| DEFAULT_WHISPER_LANG.to_string())
+}
+
 fn transcription_mode(state: &AppState) -> String {
     state
         .db
@@ -3447,6 +3464,7 @@ fn transcribe(
     allow_install: bool,
     remote: Option<&RemoteWhisper>,
     remote_model: &str,
+    lang: &str,
 ) -> (String, Option<String>) {
     use std::process::Command;
     let outdir = std::env::temp_dir().join(format!("cortex-asr-{}", crate::db::new_id()));
@@ -3455,7 +3473,7 @@ fn transcribe(
     // 0. Remote Whisper (homelab or cloud; OpenAI-compatible /v1/audio/transcriptions).
     //    Tried first when configured so users never need a local Python toolchain.
     if let Some(rw) = remote.filter(|rw| !rw.url.trim().is_empty()) {
-        match transcribe_remote(rw, file, remote_model, allow_install) {
+        match transcribe_remote(rw, file, remote_model, allow_install, lang) {
             Ok(t) => {
                 let _ = std::fs::remove_dir_all(&outdir);
                 return (t, None); // empty = ran but recognised nothing
@@ -3497,11 +3515,28 @@ fn transcribe(
     // Local model tiering: the ~7s live-transcript segments (allow_install=false)
     // stay on the fast base model so the preview keeps real-time cadence; the
     // final on-save transcription pays for the markedly more accurate small model.
-    let (cli_model, fw_model) = if allow_install { ("small", "small.en") } else { ("base", "base.en") };
+    // English-only .en models only make sense when the user pinned English;
+    // any other language (or auto-detect) needs the multilingual checkpoints.
+    let en_only = lang == "en";
+    let (cli_model, fw_model) = if en_only {
+        ("small", "small.en")
+    } else if allow_install {
+        ("small", "small")
+    } else {
+        ("base", "base")
+    };
+    // openai-whisper has no "auto" — omit --language to let it detect.
+    let lang_args: Vec<&str> = if lang == "auto" {
+        vec![]
+    } else {
+        vec!["--language", lang]
+    };
     if let Some(bin) = whisper_bin {
         let out = Command::new(&bin)
             .arg(file)
-            .args(["--model", cli_model, "--language", "en", "--output_format", "txt", "--output_dir"])
+            .args(["--model", cli_model])
+            .args(&lang_args)
+            .args(["--output_format", "txt", "--output_dir"])
             .arg(&outdir)
             .output();
         if let Ok(o) = out {
@@ -3528,7 +3563,12 @@ fn transcribe(
                 .map(|o| o.status.success())
                 .unwrap_or(false);
         let target = if converted { wav.clone() } else { file.to_path_buf() };
-        let out = Command::new(&bin).arg("-f").arg(&target).arg("-otxt").arg("-of").arg(outdir.join("out")).output();
+        let mut wcpp = Command::new(bin.as_str());
+        wcpp.arg("-f").arg(&target).arg("-otxt").arg("-of").arg(outdir.join("out"));
+        if lang != "auto" {
+            wcpp.arg("-l").arg(lang);
+        }
+        let out = wcpp.output();
         if let Ok(o) = out {
             if o.status.success() {
                 if let Ok(t) = std::fs::read_to_string(outdir.join("out.txt")) {
@@ -3594,7 +3634,9 @@ fn transcribe(
             // vad_filter=True so silences are skipped instead of hallucinated, and
             // condition_on_previous_text=False so one bad segment can't cascade into
             // the repetition loops that collapsed long lectures into a page of noise.
-            let runner = format!("import sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('{fw_model}',device='cpu',compute_type='int8',download_root=sys.argv[2])\nsegs,_=m.transcribe(sys.argv[1],language='en',vad_filter=True,condition_on_previous_text=False)\nprint(' '.join(s.text.strip() for s in segs))");
+            let fw_lang = if lang == "auto" { "" } else { lang };
+            let runner = format!("import sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('{fw_model}',device='cpu',compute_type='int8',download_root=sys.argv[2])\nsegs,_=m.transcribe(sys.argv[1]{},vad_filter=True,condition_on_previous_text=False)\nprint(' '.join(s.text.strip() for s in segs))",
+                if fw_lang.is_empty() { String::new() } else { format!(",language='{fw_lang}'") });
             let out = Command::new(&py).arg("-c").arg(&runner).arg(&decodable).arg(&models_dir).output();
             match out {
                 Ok(o) if o.status.success() => {
@@ -3877,14 +3919,14 @@ fn format_diarized_segments(segments: &[serde_json::Value]) -> Option<String> {
 }
 
 /// Transcribe against a WhisperX whisper-asr-webservice `/asr` endpoint. The
-/// model lives SERVER-side (ASR_MODEL env in the homelab compose); diarization
-/// adds per-segment speaker labels when the server has an HF token configured.
-fn transcribe_asr(rw: &RemoteWhisper, file: &Path, full: bool) -> std::result::Result<String, String> {
+fn transcribe_asr(rw: &RemoteWhisper, file: &Path, full: bool, lang: &str) -> std::result::Result<String, String> {
     let base = rw.url.trim_end_matches('/');
     // encode=true lets the server ffmpeg-normalize whatever container we send.
     let diarize = rw.diarize && full;
+    // language= is optional: absent → the server auto-detects per recording.
+    let lang_q = if lang == "auto" { String::new() } else { format!("&language={lang}") };
     let url = format!(
-        "{base}/asr?task=transcribe&output=json&encode=true{}",
+        "{base}/asr?task=transcribe&output=json&encode=true{lang_q}{}",
         if diarize { "&diarize=true" } else { "" }
     );
     let bytes = std::fs::read(file).map_err(|e| format!("read audio: {e}"))?;
@@ -3920,12 +3962,12 @@ fn transcribe_asr(rw: &RemoteWhisper, file: &Path, full: bool) -> std::result::R
 // `full`: true for the on-save/background transcription of a whole lecture
 // (hours-long timeout), false for the ~7s live-preview partials (fail fast so a
 // hung request degrades the preview, not the whole live loop).
-fn transcribe_remote(rw: &RemoteWhisper, file: &Path, model: &str, full: bool) -> std::result::Result<String, String> {
+fn transcribe_remote(rw: &RemoteWhisper, file: &Path, model: &str, full: bool, lang: &str) -> std::result::Result<String, String> {
     // Homelab servers may speak either protocol — the WhisperX lecture server
     // (whisper-asr-webservice, the robust long-form + diarization pipeline) or
     // the legacy OpenAI-compatible speaches. Detect once, dispatch accordingly.
     if rw.allow_pull && homelab_server_kind(rw.url.trim_end_matches('/')) == WhisperServerKind::Asr {
-        return transcribe_asr(rw, file, full);
+        return transcribe_asr(rw, file, full, lang);
     }
     let url = format!("{}/audio/transcriptions", whisper_v1_url(&rw.url));
     let model = model.trim();
@@ -3992,6 +4034,11 @@ fn transcribe_remote(rw: &RemoteWhisper, file: &Path, model: &str, full: bool) -
             .part("file", part);
         if !model.is_empty() {
             form = form.text("model", model.to_string());
+        }
+        // Optional spoken-language hint (ISO-639-1). Absent for "auto" —
+        // servers then run language detection per recording.
+        if lang != "auto" {
+            form = form.text("language", lang.to_string());
         }
         // Transcription is slow — and long-form is SLOW: an hour-long lecture on
         // a CPU homelab can legitimately take hours (the old 10-minute timeout is
@@ -4152,7 +4199,7 @@ pub async fn transcribe_partial(app: AppHandle, audio: Vec<u8>, ext: Option<Stri
     std::fs::write(&file, &audio)?;
 
     let remote = whisper_remote(&app.state::<AppState>());
-    let (transcript, _warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), false, remote.as_ref(), &whisper_model(&app.state::<AppState>()));
+    let (transcript, _warning) = transcribe(&file, &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()), false, remote.as_ref(), &whisper_model(&app.state::<AppState>()), &whisper_language(&app.state::<AppState>()));
     let _ = std::fs::remove_file(&file);
     Ok(transcript)
     })
@@ -4304,7 +4351,7 @@ pub(crate) fn run_transcription_job(app: &AppHandle, source_id: &str) {
         rw.diarize = d;
     }
     let (transcript, warning) =
-        transcribe(Path::new(&path), &data_dir, true, remote.as_ref(), &whisper_model(&state));
+        transcribe(Path::new(&path), &data_dir, true, remote.as_ref(), &whisper_model(&state), &whisper_language(&state));
 
     if transcript.trim().is_empty() {
         // Ran but produced nothing (or the server errored — `warning` says which).

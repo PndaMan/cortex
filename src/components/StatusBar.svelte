@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from "../lib/store.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   // The status-bar "PWD": subject › topic › source, reflecting where the user is
   // (a source view, or the current chat scope). Uses Design-System scope styling.
@@ -35,10 +36,10 @@
   <button
     class="sb-seg sb-seg-btn"
     type="button"
-    title="Leader actions (Space)"
+    title={t("Leader actions (Space)")}
     onclick={() => (app.leaderOpen = true)}
   >
-    <span class="sb-key">␣</span> actions
+    <span class="sb-key">␣</span> {t("actions")}
   </button>
 
   <!-- scope breadcrumb (present working directory) -->
@@ -65,12 +66,12 @@
 
   <div class="sb-spacer"></div>
 
-  <button class="sb-seg sb-seg-btn" type="button" title="Keyboard shortcuts (?)" onclick={() => (app.helpOpen = true)}>
-    <span class="sb-key">?</span> help
+  <button class="sb-seg sb-seg-btn" type="button" title={t("Keyboard shortcuts (?)")} onclick={() => (app.helpOpen = true)}>
+    <span class="sb-key">?</span> {t("help")}
   </button>
 
-  <button class="sb-seg sb-seg-btn" type="button" title="Command palette (:)" style:border-right="none" onclick={() => (app.cmdkOpen = true)}>
-    <span class="sb-key">:</span> command
+  <button class="sb-seg sb-seg-btn" type="button" title={t("Command palette :)")} style:border-right="none" onclick={() => (app.cmdkOpen = true)}>
+    <span class="sb-key">:</span> {t("command")}
   </button>
 </div>
 

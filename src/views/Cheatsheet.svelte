@@ -11,6 +11,7 @@
   import { savePdf } from "../lib/pdf";
   import { isMobile } from "../lib/platform";
   import { safeUrl, safeImgSrc } from "../lib/url";
+  import { t } from "../lib/i18n.svelte";
 
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -197,20 +198,20 @@
       const n = bucketCount;
       if (n === 0) return;
       const ok = await app.confirm({
-        title: "Regenerate all topic cheatsheets?",
+        title: t("Regenerate all topic cheatsheets?"),
         body:
-          `This generates a fresh cheatsheet for each of the ${n} ` +
-          `${n === 1 ? "topic" : "topics"} with sources` +
-          `${ungroupedCount > 0 ? " (including the ungrouped “General” sources)" : ""}, ` +
-          `running in parallel. It overwrites the existing cheatsheets and uses AI ` +
-          `tokens for every source.`,
-        okLabel: "Regenerate all",
+          (n === 1
+            ? t("This generates a fresh cheatsheet for each of the {n} topic with sources", { n })
+            : t("This generates a fresh cheatsheet for each of the {n} topics with sources", { n })) +
+          (ungroupedCount > 0 ? t(" (including the ungrouped “General” sources)") : "") +
+          t(", running in parallel. It overwrites the existing cheatsheets and uses AI tokens for every source."),
+        okLabel: t("Regenerate all"),
       });
       if (!ok) return;
     }
     jobs.start({
       kind: "cheatsheet",
-      label: topicId === null ? `${topicName} (all topics)` : topicName,
+      label: topicId === null ? t("{name} (all topics)", { name: topicName }) : topicName,
       subjectId: sub.id,
       topicId,
       // Whole subject regenerates every topic's sheet then composes; a topic
@@ -278,13 +279,19 @@
     const el = document.querySelector(".cs-doc .cs-sections");
     const sub = app.activeSubject;
     if (!el || !sub || !hasCheatsheet) {
-      app.pushToast({ kind: "warning", title: "Nothing to export", body: "Generate a cheatsheet first." });
+      app.pushToast({ kind: "warning", title: t("Nothing to export"), body: t("Generate a cheatsheet first.") });
       return;
     }
-    const subtitle = `${sub.name}${sub.code ? " · " + sub.code : ""} · synthesized from ${sourceCount} source${sourceCount !== 1 ? "s" : ""} · ${sectionCount} enforced sections`;
+    const subtitle =
+      `${sub.name}${sub.code ? " · " + sub.code : ""} · ` +
+      (sourceCount === 1
+        ? t("synthesized from {n} source", { n: sourceCount })
+        : t("synthesized from {n} sources", { n: sourceCount })) +
+      ` · ` +
+      t("{n} enforced sections", { n: sectionCount });
     const body =
       `<article class="cs-doc"><div class="cs-doc-head"><div>` +
-      `<div class="eyebrow">Cheatsheet · ${selectedTopicId === null ? "Whole subject" : "Topic"}</div>` +
+      `<div class="eyebrow">${t("Cheatsheet")} · ${selectedTopicId === null ? t("Whole subject") : t("Topic")}</div>` +
       `<h1 class="cs-title">${esc(cheatTopic)}</h1>` +
       `<div class="cs-sub">${esc(subtitle)}</div></div></div>` +
       `<div class="cs-sections">${el.innerHTML}</div></article>`;
@@ -353,7 +360,7 @@
     draft = [];
   }
   function addItem(si: number) {
-    draft[si].items = [...draft[si].items, { t: "New term", d: "" }];
+    draft[si].items = [...draft[si].items, { t: t("New term"), d: "" }];
   }
   function removeItem(si: number, ii: number) {
     draft[si].items = draft[si].items.filter((_, i) => i !== ii);
@@ -361,7 +368,7 @@
   function addSection() {
     draft = [
       ...draft,
-      { id: "sec-" + Math.random().toString(36).slice(2), title: "New section", state: "approved", items: [], image: null },
+      { id: "sec-" + Math.random().toString(36).slice(2), title: t("New section"), state: "approved", items: [], image: null },
     ];
   }
   function removeSection(si: number) {
@@ -403,9 +410,9 @@
       if (data) applyCheatsheet(data);
       mode = "preview";
       draft = [];
-      app.pushToast({ kind: "success", title: "Cheatsheet saved", body: "A new version was recorded." });
+      app.pushToast({ kind: "success", title: t("Cheatsheet saved"), body: t("A new version was recorded.") });
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Save failed", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Save failed"), body: String(e) });
     } finally {
       saving = false;
     }
@@ -488,7 +495,7 @@
       await api.updateCheatsheet(sub.id, selectedTopicId ?? undefined, clean as ApiCsSection[], snapshot);
       inlineDirty = false;
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Autosave failed", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Autosave failed"), body: String(e) });
     }
   }
   async function exitInsert() {
@@ -561,7 +568,7 @@
     const out: string[] = [];
     for (const s of secs) {
       out.push("# " + s.title);
-      if (s.image) out.push("[image attached]");
+      if (s.image) out.push(t("[image attached]"));
       for (const it of s.items) {
         out.push("## " + it.t);
         for (const ln of (it.d ?? "").split("\n")) out.push(ln);
@@ -602,7 +609,7 @@
       // Default: diff the previous version (index 1, since 0 is the current save).
       if (versions.length >= 2) selectCompare(versions[1].id);
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Couldn't load history", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Couldn't load history"), body: String(e) });
     } finally {
       histLoading = false;
     }
@@ -614,7 +621,7 @@
       const old = await api.getCheatsheetVersion(versionId);
       diffRows = lineDiff(sheetLines(old), sheetLines(sections));
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Couldn't load version", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Couldn't load version"), body: String(e) });
     }
   }
   const diffAdds = $derived(diffRows.filter((r) => r.type === "add").length);
@@ -631,14 +638,14 @@
       <!-- No subject open -->
       <div class="cs-empty-state">
         <Icon name="diamond" size={28} color="var(--fg3)" />
-        <div class="ces-title">No subject open</div>
-        <div class="ces-sub">Open a subject from the sidebar to view its cheatsheet.</div>
+        <div class="ces-title">{t("No subject open")}</div>
+        <div class="ces-sub">{t("Open a subject from the sidebar to view its cheatsheet.")}</div>
       </div>
     {:else}
       {@const sub = app.activeSubject}
 
       <!-- ── TOPIC TAB BAR ──────────────────────────────────── -->
-      <div class="cs-tabs" role="tablist" aria-label="Cheatsheet scope">
+      <div class="cs-tabs" role="tablist" aria-label={t("Cheatsheet scope")}>
         <button
           class="cs-tab{selectedTopicId === null ? ' is-active' : ''}"
           role="tab"
@@ -646,7 +653,7 @@
           style={selectedTopicId === null ? `--tab-accent:${accent}` : ""}
           onclick={() => selectTopic(null)}
         >
-          <Icon name="grid" size={12} /> Whole subject
+          <Icon name="grid" size={12} /> {t("Whole subject")}
         </button>
         {#each topicTabs as t (t.id)}
           <button
@@ -674,7 +681,7 @@
           <div class="cs-working-ico">
             <Icon name="diamond" size={26} color="var(--fg3)" />
           </div>
-          <p class="cs-working-sub mono muted">Loading cheatsheet…</p>
+          <p class="cs-working-sub mono muted">{t("Loading cheatsheet…")}</p>
         </div>
       {:else if !hasCheatsheet}
         <!-- Selection has no stored cheatsheet yet -->
@@ -687,25 +694,29 @@
           <div class="cs-working-ico">
             <Icon name="diamond" size={26} color="var(--fg3)" />
           </div>
-          <h1 class="cs-working-title read">No cheatsheet yet</h1>
+          <h1 class="cs-working-title read">{t("No cheatsheet yet")}</h1>
           <p class="cs-working-sub mono muted">
             {#if noSources}
-              Add sources to {selectedTopicId === null
-                ? "this subject"
-                : "this topic"} first — your cheatsheet is synthesized from them.
+              {selectedTopicId === null
+                ? t("Add sources to this subject first — your cheatsheet is synthesized from them.")
+                : t("Add sources to this topic first — your cheatsheet is synthesized from them.")}
+            {:else if scopeSources === 1}
+              {selectedTopicId === null
+                ? t("A completeness-checked cheatsheet will be generated from this subject's {n} source.", { n: scopeSources })
+                : t("A completeness-checked cheatsheet will be generated from this topic's {n} source.", { n: scopeSources })}
             {:else}
-              A completeness-checked cheatsheet will be generated from
-              {selectedTopicId === null ? "this subject's" : "this topic's"}
-              {scopeSources} source{scopeSources !== 1 ? "s" : ""}.
+              {selectedTopicId === null
+                ? t("A completeness-checked cheatsheet will be generated from this subject's {n} sources.", { n: scopeSources })
+                : t("A completeness-checked cheatsheet will be generated from this topic's {n} sources.", { n: scopeSources })}
             {/if}
           </p>
           {#if !noSources && app.webImagesEnabled}
             <p class="cs-imgopt mono faint">
-              <Icon name="globe" size={11} /> Diagrams on · via your homelab SearXNG
+              <Icon name="globe" size={11} /> {t("Diagrams on · via your homelab SearXNG")}
             </p>
           {/if}
           <button class="btn btn--primary btn--sm" onclick={generate} disabled={csGenerating || noSources}>
-            <Icon name="refresh" size={13} /> {csGenerating ? "Synthesizing…" : "Generate cheatsheet"}
+            <Icon name="refresh" size={13} /> {csGenerating ? t("Synthesizing…") : t("Generate cheatsheet")}
           </button>
         </div>
       {:else}
@@ -713,51 +724,51 @@
         <div class="cs-doc-head">
           <div>
             <div class="eyebrow">
-              Cheatsheet · {selectedTopicId === null ? "Whole subject" : "Topic"}
+              {t("Cheatsheet")} · {selectedTopicId === null ? t("Whole subject") : t("Topic")}
             </div>
             <h1 class="cs-title">{cheatTopic}</h1>
             <div class="cs-sub mono">
               {sub.name}{sub.code ? " · " + sub.code : ""} ·
               {#if sourcesUsed < sourceCount}
-                <span class="cs-cov-warn" title="Some sources could not be synthesized — regenerate to retry">⚠ synthesized from {sourcesUsed}/{sourceCount} sources</span>
+                <span class="cs-cov-warn" title={t("Some sources could not be synthesized — regenerate to retry")}>⚠ {t("synthesized from {n}/{m} sources", { n: sourcesUsed, m: sourceCount })}</span>
               {:else}
-                synthesized from {sourceCount} source{sourceCount !== 1 ? "s" : ""}
+                {sourceCount === 1 ? t("synthesized from {n} source", { n: sourceCount }) : t("synthesized from {n} sources", { n: sourceCount })}
               {/if} ·
-              {selectedTopicId === null ? "composed from topics" : `${sectionCount} enforced sections`}
+              {selectedTopicId === null ? t("composed from topics") : t("{n} enforced sections", { n: sectionCount })}
             </div>
           </div>
           <div class="cs-doc-actions">
             {#if insertMode}
-              <span class="cs-insert-badge mono">— INSERT —</span>
-              <span class="cs-insert-hint faint">click any block to edit</span>
-              <span class="cs-insert-status mono faint">{inlineDirty ? "saving…" : "saved ✓"}</span>
+              <span class="cs-insert-badge mono">{t("— INSERT —")}</span>
+              <span class="cs-insert-hint faint">{t("click any block to edit")}</span>
+              <span class="cs-insert-status mono faint">{inlineDirty ? t("saving…") : t("saved ✓")}</span>
               <button class="btn btn--sm btn--primary" onclick={exitInsert}>
-                <Icon name="check" size={13} /> Done <span class="kbd">Esc</span>
+                <Icon name="check" size={13} /> {t("Done")} <span class="kbd">Esc</span>
               </button>
             {:else if mode === "edit"}
               <button class="btn btn--sm btn--ghost" onclick={cancelEdit} disabled={saving}>
-                <Icon name="x" size={13} /> Cancel
+                <Icon name="x" size={13} /> {t("Cancel")}
               </button>
               <button class="btn btn--sm btn--primary" onclick={saveEdit} disabled={saving}>
-                <Icon name="check" size={13} /> {saving ? "Saving…" : "Save"}
+                <Icon name="check" size={13} /> {saving ? t("Saving…") : t("Save")}
               </button>
             {:else}
-              <button class="btn btn--sm" onclick={exportCurrent} title="Opens the print dialog — choose “Save as PDF”">
-                <Icon name="doc" size={13} /> Save as PDF
+              <button class="btn btn--sm" onclick={exportCurrent} title={t("Opens the print dialog — choose “Save as PDF”")}>
+                <Icon name="doc" size={13} /> {t("Save as PDF")}
               </button>
-              <button class="btn btn--sm" onclick={openHistory} title="Browse versions and diff changes">
-                <Icon name="refresh" size={13} /> History
+              <button class="btn btn--sm" onclick={openHistory} title={t("Browse versions and diff changes")}>
+                <Icon name="refresh" size={13} /> {t("History")}
               </button>
               {#if !isMobile}
-                <button class="btn btn--sm" onclick={enterInsert} title="Edit inline — just type, it autosaves; Esc to finish (i)">
-                  <Icon name="pencil" size={13} /> Inline edit <span class="kbd">i</span>
+                <button class="btn btn--sm" onclick={enterInsert} title={t("Edit inline — just type, it autosaves; Esc to finish (i)")}>
+                  <Icon name="pencil" size={13} /> {t("Inline edit")} <span class="kbd">i</span>
                 </button>
               {/if}
-              <button class="btn btn--sm" onclick={enterEdit} title="Structured editor — add/remove sections + images">
-                <Icon name="grid" size={13} /> Restructure
+              <button class="btn btn--sm" onclick={enterEdit} title={t("Structured editor — add/remove sections + images")}>
+                <Icon name="grid" size={13} /> {t("Restructure")}
               </button>
               <button class="btn btn--sm" onclick={generate} disabled={csGenerating}>
-                <Icon name="refresh" size={13} /> {csGenerating ? "Synthesizing…" : "Regenerate"}
+                <Icon name="refresh" size={13} /> {csGenerating ? t("Synthesizing…") : t("Regenerate")}
               </button>
             {/if}
           </div>
@@ -776,21 +787,21 @@
             {#each draft as sec, si (sec.id)}
               <section class="cs-edit-sec" id={"cs-sec-" + sec.id}>
                 <div class="cs-edit-sechead">
-                  <input class="cs-edit-title mono" bind:value={sec.title} placeholder="Section title" />
+                  <input class="cs-edit-title mono" bind:value={sec.title} placeholder={t("Section title")} />
                   <div class="grow"></div>
                   {#if sec.image}
-                    <button class="btn btn--sm btn--ghost" onclick={() => pickImage(si)} title="Replace image">
-                      <Icon name="refresh" size={12} /> Image
+                    <button class="btn btn--sm btn--ghost" onclick={() => pickImage(si)} title={t("Replace image")}>
+                      <Icon name="refresh" size={12} /> {t("Image")}
                     </button>
-                    <button class="btn btn--icon btn--sm btn--ghost" onclick={() => clearImage(si)} title="Remove image">
+                    <button class="btn btn--icon btn--sm btn--ghost" onclick={() => clearImage(si)} title={t("Remove image")}>
                       <Icon name="x" size={12} />
                     </button>
                   {:else}
-                    <button class="btn btn--sm btn--ghost" onclick={() => pickImage(si)} title="Attach an image">
-                      <Icon name="plus" size={12} /> Image
+                    <button class="btn btn--sm btn--ghost" onclick={() => pickImage(si)} title={t("Attach an image")}>
+                      <Icon name="plus" size={12} /> {t("Image")}
                     </button>
                   {/if}
-                  <button class="btn btn--icon btn--sm btn--ghost" onclick={() => removeSection(si)} title="Remove section">
+                  <button class="btn btn--icon btn--sm btn--ghost" onclick={() => removeSection(si)} title={t("Remove section")}>
                     <Icon name="x" size={13} />
                   </button>
                 </div>
@@ -802,8 +813,8 @@
                 {#each sec.items as item, ii (ii)}
                   <div class="cs-edit-item" id={"cs-it-" + sec.id + "-" + ii}>
                     <div class="cs-edit-itemhead">
-                      <input class="cs-edit-term" bind:value={item.t} placeholder="Term / concept" />
-                      <button class="btn btn--icon btn--sm btn--ghost" onclick={() => removeItem(si, ii)} title="Remove item">
+                      <input class="cs-edit-term" bind:value={item.t} placeholder={t("Term / concept")} />
+                      <button class="btn btn--icon btn--sm btn--ghost" onclick={() => removeItem(si, ii)} title={t("Remove item")}>
                         <Icon name="x" size={12} />
                       </button>
                     </div>
@@ -814,12 +825,12 @@
                 {/each}
 
                 <button class="btn btn--sm btn--ghost cs-edit-add" onclick={() => addItem(si)}>
-                  <Icon name="plus" size={12} /> Add item
+                  <Icon name="plus" size={12} /> {t("Add item")}
                 </button>
               </section>
             {/each}
             <button class="btn btn--sm cs-edit-addsec" onclick={addSection}>
-              <Icon name="plus" size={13} /> Add section
+              <Icon name="plus" size={13} /> {t("Add section")}
             </button>
           </div>
         {:else}
@@ -843,7 +854,7 @@
 
                   {#if sec.state === "draft-pending"}
                     <span class="status-pill status-pill--draft">
-                      <span class="dot"></span>pending
+                      <span class="dot"></span>{t("pending")}
                     </span>
                   {:else}
                     <span class="cs-sec-count mono">{sec.items.filter((x) => !x.t.startsWith("__topic__")).length}</span>
@@ -851,7 +862,7 @@
                 </header>
 
                 {#if sec.image}
-                  <a class="cs-sec-img" href={safeUrl(sec.image)} target="_blank" rel="noreferrer" title="Open image">
+                  <a class="cs-sec-img" href={safeUrl(sec.image)} target="_blank" rel="noreferrer" title={t("Open image")}>
                     <img src={safeImgSrc(sec.image)} alt={sec.title} loading="lazy" />
                   </a>
                 {/if}
@@ -887,11 +898,11 @@
                               class="cs-ce-rich"
                               role="button"
                               tabindex="0"
-                              title="Click to edit"
+                              title={t("Click to edit")}
                               onclickcapture={(e) => { e.preventDefault(); e.stopPropagation(); openBodyEdit(bk); }}
                               onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); openBodyEdit(bk); } }}
                             >
-                              {#if item.d.trim()}<RichText text={item.d} />{:else}<span class="cs-ce-empty">Empty — click to write…</span>{/if}
+                              {#if item.d.trim()}<RichText text={item.d} />{:else}<span class="cs-ce-empty">{t("Empty — click to write…")}</span>{/if}
                             </div>
                           {/if}
                         {:else}<RichText text={item.d} />{/if}
@@ -913,12 +924,12 @@
           class="cs-index"
           class:is-pinned={indexPinned}
           style:right={chatDockOpen ? "calc(var(--chat-w, 396px) + 14px)" : "16px"}
-          aria-label="Cheatsheet index"
+          aria-label={t("Cheatsheet index")}
         >
           <button
             class="cs-index-tab"
             onclick={() => (indexPinned = !indexPinned)}
-            title={indexPinned ? "Unpin index" : "Pin index"}
+            title={indexPinned ? t("Unpin index") : t("Pin index")}
           >
             <Icon name="grid" size={13} />
           </button>
@@ -928,7 +939,7 @@
                 <button
                   class="cs-idx-caret"
                   onclick={() => toggleIdxSec(sec.id)}
-                  title={idxExpanded[sec.id] ? "Collapse" : "Expand"}
+                  title={idxExpanded[sec.id] ? t("Collapse") : t("Expand")}
                   aria-expanded={!!idxExpanded[sec.id]}
                 >{idxExpanded[sec.id] ? "▾" : "▸"}</button>
                 <button class="cs-idx-sec" onclick={() => jumpTo("cs-sec-" + sec.id)}>{sec.title}</button>
@@ -953,22 +964,22 @@
        "Inline edit" button, which is hidden on mobile. -->
   {#if isMobile && hasCheatsheet && mode === "preview"}
     {#if insertMode}
-      <button class="cs-fab-edit" onclick={exitInsert} aria-label="Done editing" title="Finish editing (Esc)"><Icon name="check" size={16} /> Done</button>
+      <button class="cs-fab-edit" onclick={exitInsert} aria-label={t("Done editing")} title={t("Finish editing (Esc)")}><Icon name="check" size={16} /> {t("Done")}</button>
     {:else}
-      <button class="cs-fab-edit" onclick={enterInsert} aria-label="Edit cheatsheet" title="Edit inline"><Icon name="pencil" size={16} /> Edit</button>
+      <button class="cs-fab-edit" onclick={enterInsert} aria-label={t("Edit cheatsheet")} title={t("Edit inline")}><Icon name="pencil" size={16} /> {t("Edit")}</button>
     {/if}
     <!-- Mobile section jump (desktop's top-right index, as a bottom-left button → sheet). -->
-    <button class="cs-fab-sections" onclick={() => (sectionsOpen = true)} aria-label="Jump to a section" title="Sections">
+    <button class="cs-fab-sections" onclick={() => (sectionsOpen = true)} aria-label={t("Jump to a section")} title={t("Sections")}>
       <Icon name="grid" size={16} />
     </button>
   {/if}
 
   {#if isMobile && sectionsOpen}
-    <button class="cs-sheet-back" aria-label="Close" onclick={() => (sectionsOpen = false)}></button>
-    <nav class="cs-sheet" aria-label="Jump to section">
+    <button class="cs-sheet-back" aria-label={t("Close")} onclick={() => (sectionsOpen = false)}></button>
+    <nav class="cs-sheet" aria-label={t("Jump to section")}>
       <div class="cs-sheet-head">
-        <span class="page-title">Sections</span>
-        <button class="btn btn--icon btn--sm btn--ghost" aria-label="Close" onclick={() => (sectionsOpen = false)}><Icon name="x" size={15} /></button>
+        <span class="page-title">{t("Sections")}</span>
+        <button class="btn btn--icon btn--sm btn--ghost" aria-label={t("Close")} onclick={() => (sectionsOpen = false)}><Icon name="x" size={15} /></button>
       </div>
       <div class="cs-sheet-list">
         {#each indexSections as sec (sec.id)}
@@ -989,15 +1000,15 @@
     onmousedown={() => (historyOpen = false)}
     role="dialog"
     aria-modal="true"
-    aria-label="Cheatsheet version history"
+    aria-label={t("Cheatsheet version history")}
     tabindex="-1"
   >
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="cs-hist" onmousedown={(e) => e.stopPropagation()}>
       <header class="cs-hist-head">
         <div>
-          <div class="eyebrow">Version history</div>
-          <div class="cs-hist-title mono">{cheatTopic} · diff vs current</div>
+          <div class="eyebrow">{t("Version history")}</div>
+          <div class="cs-hist-title mono">{cheatTopic} · {t("diff vs current")}</div>
         </div>
         <div class="cs-hist-stats mono">
           <span class="st-add">+{diffAdds}</span>
@@ -1010,19 +1021,19 @@
       <div class="cs-hist-body">
         <aside class="cs-hist-list">
           {#if histLoading}
-            <div class="mono faint" style="padding:12px">Loading…</div>
+            <div class="mono faint" style="padding:12px">{t("Loading…")}</div>
           {:else if versions.length === 0}
-            <div class="mono faint" style="padding:12px">No versions yet.</div>
+            <div class="mono faint" style="padding:12px">{t("No versions yet.")}</div>
           {:else}
             {#each versions as v, i (v.id)}
               <button
                 class="cs-hist-ver{compareId === v.id ? ' on' : ''}"
                 onclick={() => selectCompare(v.id)}
                 disabled={i === 0}
-                title={i === 0 ? "Current version" : "Diff this version against current"}
+                title={i === 0 ? t("Current version") : t("Diff this version against current")}
               >
                 <span class="cs-hist-when mono">{fmtTime(v.created_at)}</span>
-                <span class="cs-hist-note">{i === 0 ? "current" : v.note} · {v.section_count} sec</span>
+                <span class="cs-hist-note">{i === 0 ? t("current") : v.note} · {t("{n} sec", { n: v.section_count })}</span>
               </button>
             {/each}
           {/if}
@@ -1030,7 +1041,7 @@
         <div class="cs-hist-diff">
           {#if compareId === null}
             <div class="mono faint" style="padding:16px">
-              {versions.length < 2 ? "Only one version so far — edits and regenerations will appear here." : "Pick a version on the left to see what changed."}
+              {versions.length < 2 ? t("Only one version so far — edits and regenerations will appear here.") : t("Pick a version on the left to see what changed.")}
             </div>
           {:else}
             <div class="diff-inline">

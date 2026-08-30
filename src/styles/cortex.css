@@ -11,6 +11,7 @@
    fonts depending on load timing. Local files = deterministic typography and
    no third-party request from a local-first app. */
 @import './fonts.css';
+@import './fonts-cyrillic.css';
 
 /* ============================================================
    THEME PALETTES  (semantic tokens defined per data-theme)

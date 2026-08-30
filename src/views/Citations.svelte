@@ -6,6 +6,7 @@
   import Picker from "../components/Picker.svelte";
   import DatePicker from "../components/DatePicker.svelte";
   import BoardView from "./BoardView.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   // Assignments display: kanban board (default) or the detailed list.
   let aView = $state<"board" | "list">("board");
@@ -18,10 +19,10 @@
   let editing = $state<string | null>(null); // ref id being edited, or "new"
 
   const CTYPES = [
-    { id: "article", label: "Article" },
-    { id: "book", label: "Book" },
-    { id: "web", label: "Website" },
-    { id: "other", label: "Other" },
+    { id: "article", label: t("Article") },
+    { id: "book", label: t("Book") },
+    { id: "web", label: t("Website") },
+    { id: "other", label: t("Other") },
   ] as const;
 
   // form state
@@ -32,7 +33,7 @@
 
   async function load() {
     if (!subjectId) { refs = []; return; }
-    try { refs = await api.listCitations(subjectId); } catch (e) { app.pushToast({ kind: "error", title: "Load failed", body: String(e) }); }
+    try { refs = await api.listCitations(subjectId); } catch (e) { app.pushToast({ kind: "error", title: t("Load failed"), body: String(e) }); }
   }
   $effect(() => { void subjectId; load(); });
 
@@ -48,7 +49,7 @@
 
   async function saveForm() {
     if (!subjectId) return;
-    if (!f.title.trim()) { app.pushToast({ kind: "warning", title: "Title required" }); return; }
+    if (!f.title.trim()) { app.pushToast({ kind: "warning", title: t("Title required") }); return; }
     const fields = {
       ctype: f.ctype, title: f.title.trim(),
       authors: f.authors.trim() || null, year: f.year.trim() || null,
@@ -61,14 +62,14 @@
       cancel();
       await load();
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Save failed", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Save failed"), body: String(e) });
     }
   }
 
   async function remove(r: Reference) {
-    if (!(await app.confirm({ title: `Delete "${r.title}"?`, danger: true, okLabel: "Delete" }))) return;
+    if (!(await app.confirm({ title: t("Delete \"{n}\"?", { n: r.title }), danger: true, okLabel: t("Delete") }))) return;
     try { await api.deleteCitation(r.id); await load(); }
-    catch (e) { app.pushToast({ kind: "error", title: "Delete failed", body: String(e) }); }
+    catch (e) { app.pushToast({ kind: "error", title: t("Delete failed"), body: String(e) }); }
   }
 
   // ── formatting (lightweight APA / MLA) ────────────────────────
@@ -107,14 +108,14 @@
   const fmt = $derived(style === "harvard" ? formatHarvard : style === "apa" ? formatApa : formatMla);
 
   async function copyOne(r: Reference) {
-    try { await navigator.clipboard.writeText(fmt(r)); app.pushToast({ kind: "success", title: "Citation copied" }); }
-    catch { app.pushToast({ kind: "error", title: "Copy failed" }); }
+    try { await navigator.clipboard.writeText(fmt(r)); app.pushToast({ kind: "success", title: t("Citation copied") }); }
+    catch { app.pushToast({ kind: "error", title: t("Copy failed") }); }
   }
   async function copyAll() {
     if (refs.length === 0) return;
     const list = [...refs].sort((a, b) => (a.authors ?? a.title).localeCompare(b.authors ?? b.title)).map(fmt).join("\n");
-    try { await navigator.clipboard.writeText(list); app.pushToast({ kind: "success", title: `Copied ${refs.length} references` }); }
-    catch { app.pushToast({ kind: "error", title: "Copy failed" }); }
+    try { await navigator.clipboard.writeText(list); app.pushToast({ kind: "success", title: t("Copied {n} references", { n: refs.length }) }); }
+    catch { app.pushToast({ kind: "error", title: t("Copy failed") }); }
   }
 
   // ── assignments (calendar events: assignment | project | exam | deadline) ──
@@ -124,10 +125,10 @@
   // Priority is a real event field now (migration 0015); the colour is only a
   // calendar display hint derived from it — never parsed back.
   const PRIORITIES = [
-    { id: "none", label: "None", color: null as string | null },
-    { id: "low", label: "Low", color: "#3b9eff" },
-    { id: "med", label: "Med", color: "#f5a623" },
-    { id: "high", label: "High", color: "#e5484d" },
+    { id: "none", label: t("None"), color: null as string | null },
+    { id: "low", label: t("Low"), color: "#3b9eff" },
+    { id: "med", label: t("Med"), color: "#f5a623" },
+    { id: "high", label: t("High"), color: "#e5484d" },
   ] as const;
   function colorForPriority(id: string): string | null {
     return PRIORITIES.find((p) => p.id === id)?.color ?? null;
@@ -188,7 +189,7 @@
       assignments = assignments.map((d) => (d.id === updated.id ? updated : d));
       app.notifyEventsChanged();
     } catch (err) {
-      app.pushToast({ kind: "error", title: "Update failed", body: String(err) });
+      app.pushToast({ kind: "error", title: t("Update failed"), body: String(err) });
     }
   }
 
@@ -207,14 +208,14 @@
       resetAssignmentForm();
       app.notifyEventsChanged();
       await loadAssignments();
-      app.pushToast({ kind: "success", title: "Added" });
+      app.pushToast({ kind: "success", title: t("Added") });
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Add failed", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Add failed"), body: String(e) });
     }
   }
   async function completeAssignment(e: CalEvent) {
     try { await api.setEventDone(e.id, true); app.notifyEventsChanged(); await loadAssignments(); }
-    catch (err) { app.pushToast({ kind: "error", title: "Update failed", body: String(err) }); }
+    catch (err) { app.pushToast({ kind: "error", title: t("Update failed"), body: String(err) }); }
   }
   function openInCalendar(e: CalEvent) {
     // Jump to the Calendar and focus the assignment's day.
@@ -225,10 +226,10 @@
 
   function daysLeft(ms: number): string {
     const d = Math.ceil((ms - Date.now()) / 86_400_000);
-    if (d < 0) return "overdue";
-    if (d === 0) return "today";
-    if (d === 1) return "tomorrow";
-    return `${d} days`;
+    if (d < 0) return t("overdue");
+    if (d === 0) return t("today");
+    if (d === 1) return t("tomorrow");
+    return t("{n} days", { n: d });
   }
   function fmtDate(ms: number): string {
     return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -244,15 +245,15 @@
     <!-- Assignments -->
     <section class="cit-section">
       <div class="cit-head">
-        <h2 class="cit-h read"><Icon name="calendar" size={15} /> Assignments</h2>
+        <h2 class="cit-h read"><Icon name="calendar" size={15} /> {t("Assignments")}</h2>
         {#if assignments.length}
           <span class="faint mono cit-summary">
-            {assignments.length} {assignments.length === 1 ? "assignment" : "assignments"}{#if overdueCount} · {overdueCount} overdue{/if}
+            {assignments.length} {assignments.length === 1 ? t("assignment") : t("assignments")}{#if overdueCount} · {t("{n} overdue", { n: overdueCount })}{/if}
           </span>
         {/if}
-        <div class="cit-view-seg mono" role="group" aria-label="Assignments view">
-          <button class={aView === "board" ? "on" : ""} onclick={() => (aView = "board")}>Board</button>
-          <button class={aView === "list" ? "on" : ""} onclick={() => (aView = "list")}>List</button>
+        <div class="cit-view-seg mono" role="group" aria-label={t("Assignments view")}>
+          <button class={aView === "board" ? "on" : ""} onclick={() => (aView = "board")}>{t("Board")}</button>
+          <button class={aView === "list" ? "on" : ""} onclick={() => (aView = "list")}>{t("List")}</button>
         </div>
       </div>
 
@@ -260,32 +261,32 @@
         <div class="cit-assign-row1">
           <div class="cit-kind-seg mono">
             {#each ["assignment", "project", "exam"] as k (k)}
-              <button class={aKind === k ? "on" : ""} onclick={() => (aKind = k)}>{k}</button>
+              <button class={aKind === k ? "on" : ""} onclick={() => (aKind = k)}>{t(k)}</button>
             {/each}
           </div>
-          <input class="input" placeholder="e.g. Essay 2, Capstone, Midterm…" bind:value={aTitle} />
-          <div class="cit-date"><DatePicker value={aDate} onChange={(v) => (aDate = v)} placeholder="Due date" /></div>
+          <input class="input" placeholder={t("e.g. Essay 2, Capstone, Midterm…")} bind:value={aTitle} />
+          <div class="cit-date"><DatePicker value={aDate} onChange={(v) => (aDate = v)} placeholder={t("Due date")} /></div>
         </div>
         <div class="cit-assign-row2">
-          <div class="cit-prio-seg mono" role="group" aria-label="Priority">
+          <div class="cit-prio-seg mono" role="group" aria-label={t("Priority")}>
             {#each PRIORITIES as p (p.id)}
               <button
                 class={aPriority === p.id ? "on" : ""}
-                title="Priority: {p.label}"
+                title={t("Priority: {n}", { n: p.label })}
                 onclick={() => (aPriority = p.id)}
               >
                 <span class="cit-prio-dot" style={p.color ? `background:${p.color}` : ""}></span>{p.label}
               </button>
             {/each}
           </div>
-          <input class="input" placeholder="Notes (optional)" bind:value={aNotes} />
+          <input class="input" placeholder={t("Notes (optional)")} bind:value={aNotes} />
           <button class="btn btn--sm btn--primary" disabled={!aTitle.trim() || !aDate} onclick={addAssignment}>
-            <Icon name="plus" size={12} /> Add
+            <Icon name="plus" size={12} /> {t("Add")}
           </button>
         </div>
         {#if (app.activeSubject?.topics ?? []).length}
           <div class="cit-topic-pick">
-            <span class="onb-label mono">TOPICS COVERED</span>
+            <span class="onb-label mono">{t("TOPICS COVERED")}</span>
             <div class="cit-topic-chips">
               {#each app.activeSubject?.topics ?? [] as t (t.id)}
                 {@const on = aTopics.includes(t.id)}
@@ -302,7 +303,7 @@
       {#if aView === "board"}
         <div class="cit-board-wrap"><BoardView /></div>
       {:else if assignments.length === 0}
-        <p class="mono faint cit-empty">No upcoming assignments.</p>
+        <p class="mono faint cit-empty">{t("No upcoming assignments.")}</p>
       {:else}
         <ul class="cit-deadlines">
           {#each assignments as e (e.id)}
@@ -317,19 +318,19 @@
                 <div class="cit-dl-bar" style="width:{pct * 100}%"></div>
               {/if}
               <div class="cit-dl-main">
-                <button class="cit-dl-check" title="Mark done" aria-label="Mark done" onclick={(ev) => { ev.stopPropagation(); completeAssignment(e); }}>
+                <button class="cit-dl-check" title={t("Mark done")} aria-label={t("Mark done")} onclick={(ev) => { ev.stopPropagation(); completeAssignment(e); }}>
                   <Icon name="check" size={11} />
                 </button>
                 {#if prio.color}
-                  <span class="cit-prio-dot" style="background:{prio.color}" title="Priority: {prio.label}"></span>
+                  <span class="cit-prio-dot" style="background:{prio.color}" title={t("Priority: {n}", { n: prio.label })}></span>
                 {/if}
-                <span class="cit-dl-kind mono cit-dl-kind--{e.kind}">{e.kind === "deadline" ? "due" : e.kind}</span>
-                <button class="cit-dl-title" title="Open in calendar" onclick={() => openInCalendar(e)}>
+                <span class="cit-dl-kind mono cit-dl-kind--{e.kind}">{e.kind === "deadline" ? t("due") : t(e.kind)}</span>
+                <button class="cit-dl-title" title={t("Open in calendar")} onclick={() => openInCalendar(e)}>
                   {e.title}<Icon name="external" size={11} />
                 </button>
                 {#if topics.length}
                   <span class="cit-dl-prog mono" class:complete={doneN === topics.length}>{doneN}/{topics.length}</span>
-                  <svg class="cit-ring" width="24" height="24" viewBox="0 0 24 24" aria-label="{Math.round(pct * 100)} percent complete">
+                  <svg class="cit-ring" width="24" height="24" viewBox="0 0 24 24" aria-label={t("{n} percent complete", { n: Math.round(pct * 100) })}>
                     <circle class="cit-ring-track" cx="12" cy="12" r={RING_R} />
                     <circle
                       class="cit-ring-fill"
@@ -343,7 +344,7 @@
                 <span class="cit-dl-date mono">{fmtDate(e.start_ms)}</span>
                 <span class="cit-dl-left mono{overdue ? ' overdue' : ''}">{daysLeft(e.start_ms)}</span>
                 {#if topics.length}
-                  <button class="cit-dl-expand" class:open title="Topic checklist" aria-label="Toggle checklist" onclick={(ev) => { ev.stopPropagation(); toggleExpanded(e.id); }}>
+                  <button class="cit-dl-expand" class:open title={t("Topic checklist")} aria-label={t("Toggle checklist")} onclick={(ev) => { ev.stopPropagation(); toggleExpanded(e.id); }}>
                     <Icon name="chevron" size={13} />
                   </button>
                 {/if}
@@ -373,17 +374,17 @@
     <!-- References -->
     <section class="cit-section">
       <div class="cit-head">
-        <h2 class="cit-h read"><Icon name="book" size={15} /> References <span class="faint mono">{refs.length}</span></h2>
+        <h2 class="cit-h read"><Icon name="book" size={15} /> {t("References")} <span class="faint mono">{refs.length}</span></h2>
         <div class="grow"></div>
         <div class="cit-style-toggle mono">
           <button class={style === "harvard" ? "on" : ""} onclick={() => (style = "harvard")}>Harvard</button>
           <button class={style === "apa" ? "on" : ""} onclick={() => (style = "apa")}>APA</button>
           <button class={style === "mla" ? "on" : ""} onclick={() => (style = "mla")}>MLA</button>
         </div>
-        <button class="btn btn--sm" disabled={refs.length === 0} onclick={copyAll} title="Copy the full bibliography">
-          <Icon name="doc" size={12} /> Copy all
+        <button class="btn btn--sm" disabled={refs.length === 0} onclick={copyAll} title={t("Copy the full bibliography")}>
+          <Icon name="doc" size={12} /> {t("Copy all")}
         </button>
-        <button class="btn btn--sm btn--primary" onclick={startNew}><Icon name="plus" size={12} /> Add</button>
+        <button class="btn btn--sm btn--primary" onclick={startNew}><Icon name="plus" size={12} /> {t("Add")}</button>
       </div>
 
       {#if editing === "new"}
@@ -391,7 +392,7 @@
       {/if}
 
       {#if refs.length === 0 && editing !== "new"}
-        <p class="mono faint cit-empty">No references yet. Add your sources to build a bibliography.</p>
+        <p class="mono faint cit-empty">{t("No references yet. Add your sources to build a bibliography.")}</p>
       {:else}
         <ul class="cit-list">
           {#each refs as r (r.id)}
@@ -400,15 +401,15 @@
                 {@render form()}
               {:else}
                 <div class="cit-row">
-                  <span class="cit-badge mono">{r.ctype}</span>
+                  <span class="cit-badge mono">{t(r.ctype)}</span>
                   <div class="cit-formatted read">{fmt(r)}</div>
                   <div class="cit-acts">
                     {#if r.url}
-                      <a class="btn btn--icon btn--sm btn--ghost" href={r.url} target="_blank" rel="noreferrer" title="Open link"><Icon name="external" size={12} /></a>
+                      <a class="btn btn--icon btn--sm btn--ghost" href={r.url} target="_blank" rel="noreferrer" title={t("Open link")}><Icon name="external" size={12} /></a>
                     {/if}
-                    <button class="btn btn--icon btn--sm btn--ghost" title="Copy" aria-label="Copy citation" onclick={() => copyOne(r)}><Icon name="doc" size={12} /></button>
-                    <button class="btn btn--icon btn--sm btn--ghost" title="Edit" aria-label="Edit" onclick={() => startEdit(r)}><Icon name="pencil" size={12} /></button>
-                    <button class="btn btn--icon btn--sm btn--ghost" title="Delete" aria-label="Delete" onclick={() => remove(r)}><Icon name="x" size={12} /></button>
+                    <button class="btn btn--icon btn--sm btn--ghost" title={t("Copy")} aria-label={t("Copy citation")} onclick={() => copyOne(r)}><Icon name="doc" size={12} /></button>
+                    <button class="btn btn--icon btn--sm btn--ghost" title={t("Edit")} aria-label={t("Edit")} onclick={() => startEdit(r)}><Icon name="pencil" size={12} /></button>
+                    <button class="btn btn--icon btn--sm btn--ghost" title={t("Delete")} aria-label={t("Delete")} onclick={() => remove(r)}><Icon name="x" size={12} /></button>
                   </div>
                 </div>
                 {#if r.notes}<div class="cit-notes mono faint">{r.notes}</div>{/if}
@@ -425,46 +426,46 @@
   <div class="cit-form">
     <div class="cit-form-grid">
       <div class="cit-field cit-field--type">
-        <span class="onb-label mono">TYPE</span>
+        <span class="onb-label mono">{t("TYPE")}</span>
         <Picker
           value={f.ctype}
           onChange={(id) => (f.ctype = id)}
           options={CTYPES.map((t) => ({ id: t.id, label: t.label }))}
-          placeholder="Type"
+          placeholder={t("Type")}
         />
       </div>
       <label class="cit-field cit-field--wide">
-        <span class="onb-label mono">TITLE</span>
-        <input class="input" bind:value={f.title} placeholder="Title of the work" />
+        <span class="onb-label mono">{t("TITLE")}</span>
+        <input class="input" bind:value={f.title} placeholder={t("Title of the work")} />
       </label>
       <label class="cit-field">
-        <span class="onb-label mono">AUTHORS</span>
-        <input class="input" bind:value={f.authors} placeholder="Last, F.; Last, F." />
+        <span class="onb-label mono">{t("AUTHORS")}</span>
+        <input class="input" bind:value={f.authors} placeholder={t("Last, F.; Last, F.")} />
       </label>
       <label class="cit-field">
-        <span class="onb-label mono">YEAR</span>
+        <span class="onb-label mono">{t("YEAR")}</span>
         <input class="input" bind:value={f.year} placeholder="2024" />
       </label>
       <label class="cit-field">
-        <span class="onb-label mono">CONTAINER</span>
-        <input class="input" bind:value={f.container} placeholder="Journal / publisher / site" />
+        <span class="onb-label mono">{t("CONTAINER")}</span>
+        <input class="input" bind:value={f.container} placeholder={t("Journal / publisher / site")} />
       </label>
       <label class="cit-field">
-        <span class="onb-label mono">DOI</span>
+        <span class="onb-label mono">{t("DOI")}</span>
         <input class="input" bind:value={f.doi} placeholder="10.xxxx/…" />
       </label>
       <label class="cit-field cit-field--wide">
-        <span class="onb-label mono">URL</span>
+        <span class="onb-label mono">{t("URL")}</span>
         <input class="input" bind:value={f.url} placeholder="https://…" />
       </label>
       <label class="cit-field cit-field--wide">
-        <span class="onb-label mono">NOTES</span>
-        <input class="input" bind:value={f.notes} placeholder="Optional note" />
+        <span class="onb-label mono">{t("NOTES")}</span>
+        <input class="input" bind:value={f.notes} placeholder={t("Optional note")} />
       </label>
     </div>
     <div class="cit-form-foot">
-      <button class="btn btn--ghost btn--sm" onclick={cancel}>Cancel</button>
-      <button class="btn btn--primary btn--sm" onclick={saveForm}><Icon name="check" size={12} /> Save</button>
+      <button class="btn btn--ghost btn--sm" onclick={cancel}>{t("Cancel")}</button>
+      <button class="btn btn--primary btn--sm" onclick={saveForm}><Icon name="check" size={12} /> {t("Save")}</button>
     </div>
   </div>
 {/snippet}

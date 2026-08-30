@@ -9,6 +9,7 @@
   import Icon from "./Icon.svelte";
   import Picker from "./Picker.svelte";
   import DatePicker from "./DatePicker.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   let {
     event,
@@ -56,11 +57,11 @@
 
   // ---- reminder offsets ----
   const REMINDER_OPTS = [
-    { id: "none", label: "None" },
-    { id: "0", label: "At time of event" },
-    { id: "600000", label: "10 minutes before" },
-    { id: "3600000", label: "1 hour before" },
-    { id: "86400000", label: "1 day before" },
+    { id: "none", label: t("None") },
+    { id: "0", label: t("At time of event") },
+    { id: "600000", label: t("10 minutes before") },
+    { id: "3600000", label: t("1 hour before") },
+    { id: "86400000", label: t("1 day before") },
   ];
 
   // ---- kind segmented control (top-level event/task/deadline) ----
@@ -163,7 +164,7 @@
   }
 
   const subjectOptions = $derived([
-    { id: "", label: "— no subject —" },
+    { id: "", label: t("— no subject —") },
     ...app.subjects.map((s) => ({ id: s.id, label: s.name })),
   ]);
 
@@ -183,20 +184,20 @@
   }
 
   async function save() {
-    const t = title.trim();
+    const tt = title.trim();
     const startMs = startMsOf();
-    if (!t) {
-      app.pushToast({ kind: "warning", title: "Title required" });
+    if (!tt) {
+      app.pushToast({ kind: "warning", title: t("Title required") });
       return;
     }
     if (startMs == null) {
-      app.pushToast({ kind: "warning", title: "Date required" });
+      app.pushToast({ kind: "warning", title: t("Date required") });
       return;
     }
     const endMs = endMsOf();
     const reminderMs = computeReminderMs(startMs);
     const payload = {
-      title: t,
+      title: tt,
       startMs,
       subjectId: subjectId || null,
       description: description.trim() || null,
@@ -218,25 +219,24 @@
       onSaved();
       onClose();
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Save failed", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Save failed"), body: String(e) });
     }
   }
 
   async function del() {
     if (!event) return;
     const ok = await app.confirm({
-      title: "Delete event?",
+      title: t("Delete event?"),
       danger: true,
-      okLabel: "Delete",
+      okLabel: t("Delete"),
     });
-    if (!ok) return;
     try {
       await api.deleteEvent(event.id);
       app.notifyEventsChanged();
       onSaved();
       onClose();
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Delete failed", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Delete failed"), body: String(e) });
     }
   }
 
@@ -266,8 +266,8 @@
     onmousedown={(e) => e.stopPropagation()}
   >
     <div class="ev-head">
-      <div class="ev-title">{event ? "Edit event" : "New event"}</div>
-      <button class="btn btn--ghost btn--icon btn--sm" type="button" aria-label="Close" onclick={() => onClose()}>
+      <div class="ev-title">{event ? t("Edit event") : t("New event")}</div>
+      <button class="btn btn--ghost btn--icon btn--sm" type="button" aria-label={t("Close")} onclick={() => onClose()}>
         <Icon name="x" size={13} />
       </button>
     </div>
@@ -277,50 +277,50 @@
       bind:this={firstInput}
       bind:value={title}
       class="input ev-title-input"
-      placeholder="Add a title…"
+      placeholder={t("Add a title…")}
     />
 
     <!-- WHEN block: date + all-day toggle, then a start–end time row. -->
     <div class="ev-when">
       <div class="ev-when-row">
         <div class="ev-date">
-          <DatePicker value={dateVal} onChange={(v) => (dateVal = dateOf(v))} withTime={false} placeholder="Pick a date" />
+          <DatePicker value={dateVal} onChange={(v) => (dateVal = dateOf(v))} withTime={false} placeholder={t("Pick a date")} />
         </div>
         <button
           type="button"
           class={"st-toggle" + (allDay ? " on" : "")}
           role="switch"
           aria-checked={allDay}
-          aria-label="All day"
+          aria-label={t("All day")}
           onclick={() => (allDay = !allDay)}
         >
           <span class="st-knob"></span>
         </button>
-        <span class="ev-allday-lbl">All day</span>
+        <span class="ev-allday-lbl">{t("All day")}</span>
       </div>
 
       {#if !allDay}
         <div class="ev-time-row">
-          <input class="input ev-time" type="time" bind:value={startTime} aria-label="Start time" />
+          <input class="input ev-time" type="time" bind:value={startTime} aria-label={t("Start time")} />
           <span class="ev-time-dash">→</span>
-          <input class="input ev-time" type="time" bind:value={endTime} aria-label="End time" />
-          <span class="ev-time-opt">end optional</span>
+          <input class="input ev-time" type="time" bind:value={endTime} aria-label={t("End time")} />
+          <span class="ev-time-opt">{t("end optional")}</span>
         </div>
       {/if}
     </div>
 
     <!-- KIND — segmented control, active accent matches the kind color. -->
     <div class="ev-seg-block" style:--kind-accent={kindColor(kind)}>
-      <div class="seg ev-kind-seg" role="group" aria-label="Type">
-        <button type="button" class={"seg-opt" + (kind === "event" ? " on" : "")} onclick={() => (kind = "event")}>Event</button>
-        <button type="button" class={"seg-opt" + (kind === "task" ? " on" : "")} onclick={() => (kind = "task")}>Task</button>
-        <button type="button" class={"seg-opt" + (isDeadline ? " on" : "")} onclick={setDeadline}>Deadline</button>
+      <div class="seg ev-kind-seg" role="group" aria-label={t("Type")}>
+        <button type="button" class={"seg-opt" + (kind === "event" ? " on" : "")} onclick={() => (kind = "event")}>{t("Event")}</button>
+        <button type="button" class={"seg-opt" + (kind === "task" ? " on" : "")} onclick={() => (kind = "task")}>{t("Task")}</button>
+        <button type="button" class={"seg-opt" + (isDeadline ? " on" : "")} onclick={setDeadline}>{t("Deadline")}</button>
       </div>
       {#if isDeadline}
-        <div class="seg ev-kind-seg ev-kind-sub" role="group" aria-label="Deadline type">
+        <div class="seg ev-kind-seg ev-kind-sub" role="group" aria-label={t("Deadline type")}>
           {#each DEADLINE_KINDS as dk (dk)}
             <button type="button" class={"seg-opt" + (kind === dk ? " on" : "")} onclick={() => (kind = dk)}>
-              {dk.charAt(0).toUpperCase() + dk.slice(1)}
+              {t(dk.charAt(0).toUpperCase() + dk.slice(1))}
             </button>
           {/each}
         </div>
@@ -337,43 +337,43 @@
       <span class={"ev-disclose-caret" + (showDetails ? " open" : "")}>
         <Icon name="chevron" size={11} />
       </span>
-      <span>{showDetails ? "Hide details" : "Add details"}</span>
+      <span>{showDetails ? t("Hide details") : t("Add details")}</span>
     </button>
 
     {#if showDetails}
       <div class="ev-details">
         <label class="ev-field">
-          <span class="ev-lbl">Location</span>
-          <input bind:value={location} class="input" placeholder="Room, link, place…" />
+          <span class="ev-lbl">{t("Location")}</span>
+          <input bind:value={location} class="input" placeholder={t("Room, link, place…")} />
         </label>
 
         <div class="ev-field">
-          <span class="ev-lbl">Subject</span>
+          <span class="ev-lbl">{t("Subject")}</span>
           <Picker
             value={subjectId}
             onChange={(id) => (subjectId = id)}
             options={subjectOptions}
-            placeholder="— no subject —"
+            placeholder={t("— no subject —")}
           />
         </div>
 
         <div class="ev-field">
-          <span class="ev-lbl">Reminder</span>
+          <span class="ev-lbl">{t("Reminder")}</span>
           <Picker
             value={reminder}
             onChange={(id) => (reminder = id)}
             options={REMINDER_OPTS}
-            placeholder="None"
+            placeholder={t("None")}
           />
         </div>
 
         <label class="ev-field">
-          <span class="ev-lbl">Tags <span class="ev-opt">{isDeadline ? "— topics with these tags become this deadline's checklist" : "(optional)"}</span></span>
-          <input bind:value={tagsText} class="input" placeholder="e.g. A2, midterm" />
+          <span class="ev-lbl">{t("Tags")} <span class="ev-opt">{isDeadline ? t("— topics with these tags become this deadline's checklist") : t("(optional)")}</span></span>
+          <input bind:value={tagsText} class="input" placeholder={t("e.g. A2, midterm")} />
         </label>
 
         <div class="ev-field">
-          <span class="ev-lbl">Color</span>
+          <span class="ev-lbl">{t("Color")}</span>
           <div class="ev-colors">
             {#each SUBJECT_COLORS as c}
               <button
@@ -387,8 +387,8 @@
             <button
               type="button"
               class={"swatch swatch-clear" + (color === null ? " on" : "")}
-              aria-label="No color"
-              title="No color (use subject / accent)"
+              aria-label={t("No color")}
+              title={t("No color (use subject / accent)")}
               onclick={() => (color = null)}
             >
               <span class="swatch-x">×</span>
@@ -397,12 +397,12 @@
         </div>
 
         <label class="ev-field">
-          <span class="ev-lbl">Description</span>
+          <span class="ev-lbl">{t("Description")}</span>
           <textarea
             bind:value={description}
             class="input ev-textarea"
             rows="3"
-            placeholder="Notes…"
+            placeholder={t("Notes…")}
           ></textarea>
         </label>
       </div>
@@ -410,10 +410,10 @@
 
     <div class="ev-actions">
       {#if event}
-        <button class="btn btn--danger btn--sm ev-del" type="button" onclick={del}>Delete</button>
+        <button class="btn btn--danger btn--sm ev-del" type="button" onclick={del}>{t("Delete")}</button>
       {/if}
-      <button class="btn btn--ghost btn--sm" type="button" onclick={() => onClose()}>Cancel</button>
-      <button class="btn btn--primary btn--sm" type="button" onclick={save}>Save</button>
+      <button class="btn btn--ghost btn--sm" type="button" onclick={() => onClose()}>{t("Cancel")}</button>
+      <button class="btn btn--primary btn--sm" type="button" onclick={save}>{t("Save")}</button>
     </div>
   </div>
 </div>

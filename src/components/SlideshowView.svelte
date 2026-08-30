@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   export interface Slide {
     title: string;
@@ -9,7 +10,7 @@
 
   let {
     slides,
-    title = "Slideshow",
+    title = t("Slideshow"),
     onExit,
   }: { slides: Slide[]; title?: string; onExit?: () => void } = $props();
 
@@ -40,7 +41,7 @@
   <!-- ── Header bar ── -->
   <div class="ss-bar">
     {#if onExit}
-      <button class="btn btn--icon btn--sm btn--ghost" onclick={onExit} title="Back to materials">
+      <button class="btn btn--icon btn--sm btn--ghost" onclick={onExit} title={t("Back to materials")}>
         <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={14} /></span>
       </button>
     {/if}
@@ -49,9 +50,9 @@
       <button
         class="btn btn--sm btn--ghost{showNotes ? ' on' : ''}"
         onclick={() => (showNotes = !showNotes)}
-        title="Toggle speaker notes"
+        title={t("Toggle speaker notes")}
       >
-        <Icon name="grid" size={12} /> Notes
+        <Icon name="grid" size={12} /> {t("Notes")}
       </button>
     {/if}
     <span class="mono faint" style="font-size: var(--t-xs);">{idx + 1} / {slides.length}</span>
@@ -60,7 +61,7 @@
   {#if slides.length === 0}
     <div class="ss-empty">
       <Icon name="play" size={26} color="var(--fg-faint)" />
-      <p class="mono faint" style="margin-top: 12px;">No slides available.</p>
+      <p class="mono faint" style="margin-top: 12px;">{t("No slides available.")}</p>
     </div>
   {:else if current}
     <!-- ── Slide content ── -->
@@ -79,7 +80,7 @@
 
       {#if showNotes && current.notes}
         <div class="ss-notes">
-          <div class="ss-notes-h mono">Speaker notes</div>
+          <div class="ss-notes-h mono">{t("Speaker notes")}</div>
           <p class="ss-notes-body read">{current.notes}</p>
         </div>
       {/if}
@@ -93,7 +94,7 @@
         disabled={!hasPrev}
       >
         <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={13} /></span>
-        Prev
+        {t("Prev")}
       </button>
 
       <!-- Slide pips -->
@@ -102,7 +103,7 @@
           <button
             class="ss-pip{n === idx ? ' on' : ''}"
             onclick={() => (idx = n)}
-            title="Slide {n + 1}"
+            title={t("Slide {n}", { n: n + 1 })}
           ></button>
         {/each}
       </div>
@@ -112,7 +113,7 @@
         onclick={next}
         disabled={!hasNext}
       >
-        Next
+        {t("Next")}
         <Icon name="chevron" size={13} />
       </button>
     </div>

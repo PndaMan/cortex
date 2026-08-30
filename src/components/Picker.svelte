@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import { menuPosition, menuStyle, type MenuPos } from "../lib/dropdown";
+  import { t } from "../lib/i18n.svelte";
 
   let {
     value,
@@ -54,7 +55,7 @@
       <Icon name={icon} size={12} color="var(--fg-faint)" />
     {/if}
     <span class={"picker-val" + (cur ? "" : " ph")}>
-      {cur ? cur.label : (placeholder ?? "Select…")}
+      {cur ? cur.label : (placeholder ?? t("Select…"))}
     </span>
     <Icon name="chevron" size={11} style="transform:rotate(90deg);color:var(--fg-faint)" />
   </button>

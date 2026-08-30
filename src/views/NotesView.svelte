@@ -12,6 +12,7 @@
   import RichText from "../components/RichText.svelte";
   import { savePdf } from "../lib/pdf";
   import { isMobile } from "../lib/platform";
+  import { t } from "../lib/i18n.svelte";
 
   let { embedded = false }: { embedded?: boolean } = $props();
 
@@ -55,7 +56,7 @@
         select(list[0] ?? null);
       }
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Failed to load notes", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Failed to load notes"), body: String(e) });
     } finally {
       loading = false;
     }
@@ -71,11 +72,11 @@
 
   async function newNote() {
     try {
-      const n = await api.createNote("Untitled", "", app.activeSubjectId ?? null);
+      const n = await api.createNote(t("Untitled"), "", app.activeSubjectId ?? null);
       notes = [n, ...notes];
       select(n);
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Couldn't create note", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Couldn't create note"), body: String(e) });
     }
   }
 
@@ -94,7 +95,7 @@
       notes = notes.map((n) => (n.id === id ? updated : n));
       saved = true;
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Save failed", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Save failed"), body: String(e) });
     }
   }
 
@@ -105,17 +106,17 @@
     try {
       if (!saved) await save();
       await api.noteToSource(id);
-      app.pushToast({ kind: "success", title: "Converted to source", body: title || "Untitled" });
+      app.pushToast({ kind: "success", title: t("Converted to source"), body: title || t("Untitled") });
       await app.refresh();
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Convert failed", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Convert failed"), body: String(e) });
     }
   }
 
   async function remove() {
     const id = selectedId;
     if (!id) return;
-    const ok = await app.confirm({ title: "Delete note?", danger: true, okLabel: "Delete" });
+    const ok = await app.confirm({ title: t("Delete note?"), danger: true, okLabel: t("Delete") });
     if (!ok) return;
     try {
       await api.deleteNote(id);
@@ -123,29 +124,29 @@
       notes = rest;
       select(rest[0] ?? null);
     } catch (e) {
-      app.pushToast({ kind: "error", title: "Delete failed", body: String(e) });
+      app.pushToast({ kind: "error", title: t("Delete failed"), body: String(e) });
     }
   }
 
   async function exportPdf() {
     const el = document.querySelector(".notes-print-preview");
     if (!el) {
-      app.pushToast({ kind: "warning", title: "Nothing to export" });
+      app.pushToast({ kind: "warning", title: t("Nothing to export") });
       return;
     }
     const body = `<article class="note-export cs-doc">${el.innerHTML}</article>`;
-    await savePdf(body, title || "note");
+    await savePdf(body, title || t("note"));
   }
 
   function relTime(ms: number): string {
     const diff = Date.now() - ms;
     const m = Math.round(diff / 60000);
-    if (m < 1) return "just now";
-    if (m < 60) return `${m}m ago`;
+    if (m < 1) return t("just now");
+    if (m < 60) return t("{n}m ago", { n: m });
     const h = Math.round(m / 60);
-    if (h < 24) return `${h}h ago`;
+    if (h < 24) return t("{n}h ago", { n: h });
     const d = Math.round(h / 24);
-    if (d < 7) return `${d}d ago`;
+    if (d < 7) return t("{n}d ago", { n: d });
     return new Date(ms).toLocaleDateString();
   }
 
@@ -156,12 +157,12 @@
   <div class={"notes" + (embedded ? " notes--embedded" : "") + (listCollapsed && !isMobile ? " notes--collapsed" : "") + (isMobile ? (selected ? " notes--m notes--m-detail" : " notes--m notes--m-list") : "")}>
     <!-- Left: note list or slim rail when collapsed -->
     {#if listCollapsed && !isMobile}
-      <aside class="notes-rail" aria-label="Note list (collapsed)">
+      <aside class="notes-rail" aria-label={t("Note list (collapsed)")}>
         <button
           type="button"
           class="notes-rail-toggle"
-          title="Expand note list"
-          aria-label="Expand note list"
+          title={t("Expand note list")}
+          aria-label={t("Expand note list")}
           onclick={() => (listCollapsed = false)}
         >
           <!-- Chevron points right → "open left panel" -->
@@ -170,8 +171,8 @@
         <button
           type="button"
           class="notes-rail-new"
-          title="New note"
-          aria-label="New note"
+          title={t("New note")}
+          aria-label={t("New note")}
           onclick={newNote}
         >
           <Icon name="plus" size={13} />
@@ -180,17 +181,17 @@
     {:else}
       <aside class="notes-list">
         <div class="notes-list-head">
-          <span class="notes-list-title">Notes</span>
+          <span class="notes-list-title">{t("Notes")}</span>
           <div class="notes-list-head-actions">
-            <button class="btn btn--primary btn--sm" type="button" onclick={newNote} title="New note">
-              <Icon name="plus" size={12} /> New note
+            <button class="btn btn--primary btn--sm" type="button" onclick={newNote} title={t("New note")}>
+              <Icon name="plus" size={12} /> {t("New note")}
             </button>
             <!-- Collapse button: visually prominent, chevron points left (← close) -->
             <button
               type="button"
               class="notes-collapse-btn"
-              title="Collapse note list"
-              aria-label="Collapse note list"
+              title={t("Collapse note list")}
+              aria-label={t("Collapse note list")}
               onclick={() => (listCollapsed = true)}
             >
               <!-- Chevron default points right; rotate 180° to point left = collapse -->
@@ -200,16 +201,16 @@
         </div>
         <div class="notes-items">
           {#if loading}
-            <div class="notes-hint">Loading…</div>
+            <div class="notes-hint">{t("Loading…")}</div>
           {:else if notes.length === 0}
             <div class="notes-empty">
               <div class="notes-empty-glyph">📝</div>
-              <div class="notes-empty-title">No notes yet</div>
+              <div class="notes-empty-title">{t("No notes yet")}</div>
               <div class="notes-empty-body">
-                {app.activeSubjectId ? "Capture ideas in Markdown for this subject." : "Capture ideas in Markdown."}
+                {app.activeSubjectId ? t("Capture ideas in Markdown for this subject.") : t("Capture ideas in Markdown.")}
               </div>
               <button class="btn btn--primary btn--sm" type="button" onclick={newNote}>
-                <Icon name="plus" size={12} /> New note
+                <Icon name="plus" size={12} /> {t("New note")}
               </button>
             </div>
           {:else}
@@ -219,7 +220,7 @@
                 class={"notes-item" + (n.id === selectedId ? " on" : "")}
                 onclick={() => select(n)}
               >
-                <span class="notes-item-title">{n.title || "Untitled"}</span>
+                <span class="notes-item-title">{n.title || t("Untitled")}</span>
                 <span class="notes-item-time">{relTime(n.updated_at)}</span>
               </button>
             {/each}
@@ -232,25 +233,25 @@
       {#if selected}
         <div class="notes-detail-head">
           {#if isMobile}
-            <button class="btn btn--icon btn--sm btn--ghost" title="Back to notes" aria-label="Back to notes" onclick={() => select(null)}>
+            <button class="btn btn--icon btn--sm btn--ghost" title={t("Back to notes")} aria-label={t("Back to notes")} onclick={() => select(null)}>
               <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={14} /></span>
             </button>
           {/if}
           <input
             class="notes-title"
-            placeholder="Untitled"
+            placeholder={t("Untitled")}
             value={title}
             oninput={(e) => { title = (e.target as HTMLInputElement).value; markDirty(); }}
           />
           <span class={"notes-saved" + (saved ? " on" : "")}>
-            {#if saved}<Icon name="check" size={12} /> Saved{:else}Editing…{/if}
+            {#if saved}<Icon name="check" size={12} /> {t("Saved")}{:else}{t("Editing…")}{/if}
           </span>
           <!-- Fullscreen toggle -->
           <button
             type="button"
             class={"notes-fullscreen-btn" + (fullscreen ? " on" : "")}
-            title={fullscreen ? "Exit fullscreen (Esc)" : "Enter fullscreen"}
-            aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            title={fullscreen ? t("Exit fullscreen (Esc)") : t("Enter fullscreen")}
+            aria-label={fullscreen ? t("Exit fullscreen") : t("Enter fullscreen")}
             onclick={() => (fullscreen = !fullscreen)}
           >
             {#if fullscreen}
@@ -267,7 +268,7 @@
 
         <!-- Print-only rendered preview — hidden on screen, shown when printing -->
         <div class="notes-print-preview" aria-hidden="true">
-          <h1 class="notes-print-title">{title || "Untitled"}</h1>
+          <h1 class="notes-print-title">{title || t("Untitled")}</h1>
           <RichText text={body} />
         </div>
 
@@ -277,34 +278,34 @@
             type="button"
             style="margin-right:auto"
             onclick={remove}
-            title="Delete this note"
+            title={t("Delete this note")}
           >
-            Delete
+            {t("Delete")}
           </button>
           <button
             class="btn btn--ghost btn--sm"
             type="button"
             onclick={exportPdf}
-            title="Export note as PDF"
+            title={t("Export note as PDF")}
           >
-            <Icon name="doc" size={13} /> Save as PDF
+            <Icon name="doc" size={13} /> {t("Save as PDF")}
           </button>
-          <span class="notes-convert-wrap" title={canConvert ? "" : "Notes need a subject to become a source"}>
+          <span class="notes-convert-wrap" title={canConvert ? "" : t("Notes need a subject to become a source")}>
             <button class="btn btn--ghost btn--sm" type="button" disabled={!canConvert} onclick={convert}>
-              <Icon name="arrowR" size={13} /> Convert to source
+              <Icon name="arrowR" size={13} /> {t("Convert to source")}
             </button>
           </span>
           {#if !isMobile}
-            <button class="btn btn--primary btn--sm" type="button" disabled={saved} onclick={save} title="Save note">
-              Save
+            <button class="btn btn--primary btn--sm" type="button" disabled={saved} onclick={save} title={t("Save note")}>
+              {t("Save")}
             </button>
           {/if}
         </div>
       {:else if !loading}
         <div class="notes-detail-empty">
           <div class="notes-empty-glyph">🗒️</div>
-          <div class="notes-empty-title">Select or create a note</div>
-          <div class="notes-empty-body">Your Markdown notes live here.</div>
+          <div class="notes-empty-title">{t("Select or create a note")}</div>
+          <div class="notes-empty-body">{t("Your Markdown notes live here.")}</div>
         </div>
       {/if}
     </section>
@@ -313,25 +314,25 @@
 
 <!-- Fullscreen overlay: renders the editor maximised over the whole window -->
 {#if fullscreen && selected}
-  <div class="notes-fs-overlay" role="dialog" aria-modal="true" aria-label="Note — fullscreen">
+  <div class="notes-fs-overlay" role="dialog" aria-modal="true" aria-label={t("Note — fullscreen")}>
     <div class="notes-fs-head">
       <input
         class="notes-fs-title"
-        placeholder="Untitled"
+        placeholder={t("Untitled")}
         value={title}
         oninput={(e) => { title = (e.target as HTMLInputElement).value; markDirty(); }}
       />
       <span class={"notes-saved notes-fs-saved" + (saved ? " on" : "")}>
-        {#if saved}<Icon name="check" size={12} /> Saved{:else}Editing…{/if}
+        {#if saved}<Icon name="check" size={12} /> {t("Saved")}{:else}{t("Editing…")}{/if}
       </span>
       <button
         type="button"
         class="notes-fs-exit-btn"
-        title="Exit fullscreen (Esc)"
-        aria-label="Exit fullscreen"
+        title={t("Exit fullscreen (Esc)")}
+        aria-label={t("Exit fullscreen")}
         onclick={() => (fullscreen = false)}
       >
-        <Icon name="x" size={15} /> Exit fullscreen
+        <Icon name="x" size={15} /> {t("Exit fullscreen")}
       </button>
     </div>
     <div class="notes-fs-editor">
@@ -343,26 +344,26 @@
         type="button"
         style="margin-right:auto"
         onclick={remove}
-        title="Delete this note"
+        title={t("Delete this note")}
       >
-        Delete
+        {t("Delete")}
       </button>
       <button
         class="btn btn--ghost btn--sm"
         type="button"
         onclick={exportPdf}
-        title="Export note as PDF"
+        title={t("Export note as PDF")}
       >
-        <Icon name="doc" size={13} /> Save as PDF
+        <Icon name="doc" size={13} /> {t("Save as PDF")}
       </button>
-      <span class="notes-convert-wrap" title={canConvert ? "" : "Notes need a subject to become a source"}>
+      <span class="notes-convert-wrap" title={canConvert ? "" : t("Notes need a subject to become a source")}>
         <button class="btn btn--ghost btn--sm" type="button" disabled={!canConvert} onclick={convert}>
-          <Icon name="arrowR" size={13} /> Convert to source
+          <Icon name="arrowR" size={13} /> {t("Convert to source")}
         </button>
       </span>
       {#if !isMobile}
-        <button class="btn btn--primary btn--sm" type="button" disabled={saved} onclick={save} title="Save note">
-          Save
+        <button class="btn btn--primary btn--sm" type="button" disabled={saved} onclick={save} title={t("Save note")}>
+          {t("Save")}
         </button>
       {/if}
     </div>
@@ -375,11 +376,11 @@
   <div class="workspace-scroll notes-workspace-scroll">
     <div class="notes-page">
       <div class="notes-page-head">
-        <div class="eyebrow">Notes</div>
+        <div class="eyebrow">{t("Notes")}</div>
         <h1 class="notes-page-title">
-          {app.activeSubject ? app.activeSubject.name + " · Notes" : "Notes"}
+          {app.activeSubject ? app.activeSubject.name + " · " + t("Notes") : t("Notes")}
         </h1>
-        <div class="mono faint" style="font-size:var(--t-xs)">Markdown notes you can convert into sources</div>
+        <div class="mono faint" style="font-size:var(--t-xs)">{t("Markdown notes you can convert into sources")}</div>
       </div>
       {@render notesWorkspace()}
     </div>

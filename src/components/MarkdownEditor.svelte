@@ -5,6 +5,7 @@
   // Supports keyboard shortcuts: Ctrl/Cmd+B/I/K/E/1/2.
   import Icon from "./Icon.svelte";
   import RichText from "./RichText.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   let { value, onChange }: { value: string; onChange: (v: string) => void } = $props();
 
@@ -113,17 +114,17 @@
 
   type Tool = { id: string; label: string; icon?: string; glyph?: string; run: () => void };
   const tools: Tool[] = [
-    { id: "bold",      label: "Bold (⌘B)",         glyph: "B",   run: bold },
-    { id: "italic",    label: "Italic (⌘I)",        glyph: "I",   run: italic },
-    { id: "h1",        label: "Heading 1 (⌘1)",     glyph: "H1",  run: h1 },
-    { id: "h2",        label: "Heading 2 (⌘2)",     glyph: "H2",  run: h2 },
-    { id: "ul",        label: "Bullet list",         glyph: "•",   run: () => prefixLines((l) => "- " + l, "List item") },
-    { id: "ol",        label: "Numbered list",       glyph: "1.",  run: () => prefixLines((l, i) => `${i + 1}. ` + l, "List item") },
-    { id: "code",      label: "Inline code (⌘E)",   glyph: "`",   run: code },
-    { id: "codeblock", label: "Code block",          glyph: "{ }", run: codeBlock },
-    { id: "link",      label: "Link (⌘K)",           icon: "link", run: link },
-    { id: "image",     label: "Insert image",        icon: "camera", run: pickImage },
-    { id: "quote",     label: "Quote",               glyph: "❝",  run: () => prefixLines((l) => "> " + l, "Quote") },
+    { id: "bold",      label: t("Bold (⌘B)"),         glyph: "B",   run: bold },
+    { id: "italic",    label: t("Italic (⌘I)"),        glyph: "I",   run: italic },
+    { id: "h1",        label: t("Heading 1 (⌘1)"),     glyph: "H1",  run: h1 },
+    { id: "h2",        label: t("Heading 2 (⌘2)"),     glyph: "H2",  run: h2 },
+    { id: "ul",        label: t("Bullet list"),         glyph: "•",   run: () => prefixLines((l) => "- " + l, "List item") },
+    { id: "ol",        label: t("Numbered list"),       glyph: "1.",  run: () => prefixLines((l, i) => `${i + 1}. ` + l, "List item") },
+    { id: "code",      label: t("Inline code (⌘E)"),   glyph: "`",   run: code },
+    { id: "codeblock", label: t("Code block"),          glyph: "{ }", run: codeBlock },
+    { id: "link",      label: t("Link (⌘K)"),           icon: "link", run: link },
+    { id: "image",     label: t("Insert image"),        icon: "camera", run: pickImage },
+    { id: "quote",     label: t("Quote"),               glyph: "❝",  run: () => prefixLines((l) => "> " + l, "Quote") },
   ];
 </script>
 
@@ -136,35 +137,35 @@
     onchange={onImageFile}
   />
   <div class="md-bar">
-    <div class="md-tools" role="toolbar" aria-label="Formatting">
-      {#each tools as t}
+    <div class="md-tools" role="toolbar" aria-label={t("Formatting")}>
+      {#each tools as tool}
         <button
           type="button"
           class="md-tool"
-          title={t.label}
-          aria-label={t.label}
+          title={tool.label}
+          aria-label={tool.label}
           disabled={tab !== "write"}
-          onclick={t.run}
+          onclick={tool.run}
         >
-          {#if t.icon}<Icon name={t.icon} size={14} />{:else}<span class="md-glyph">{t.glyph}</span>{/if}
+          {#if tool.icon}<Icon name={tool.icon} size={14} />{:else}<span class="md-glyph">{tool.glyph}</span>{/if}
         </button>
       {/each}
     </div>
-    <div class="md-seg" role="tablist" aria-label="Editor view">
+    <div class="md-seg" role="tablist" aria-label={t("Editor view")}>
       <button
         type="button"
         role="tab"
         aria-selected={tab === "write"}
         class={"md-segbtn" + (tab === "write" ? " on" : "")}
         onclick={() => (tab = "write")}
-      >Write</button>
+      >{t("Write")}</button>
       <button
         type="button"
         role="tab"
         aria-selected={tab === "preview"}
         class={"md-segbtn" + (tab === "preview" ? " on" : "")}
         onclick={() => (tab = "preview")}
-      >Preview</button>
+      >{t("Preview")}</button>
     </div>
   </div>
 
@@ -173,7 +174,7 @@
       bind:this={ta}
       class="md-area"
       spellcheck="true"
-      placeholder="Write your notes in Markdown…"
+      placeholder={t("Write your notes in Markdown…")}
       value={value}
       oninput={(e) => onChange((e.target as HTMLTextAreaElement).value)}
       onkeydown={handleKeydown}
@@ -184,7 +185,7 @@
         {#if value.trim()}
           <RichText text={value} />
         {:else}
-          <div class="md-empty">Nothing to preview yet.</div>
+          <div class="md-empty">{t("Nothing to preview yet.")}</div>
         {/if}
       </div>
     </div>

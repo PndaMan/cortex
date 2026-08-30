@@ -8,6 +8,7 @@
   import * as api from "../lib/api";
   import Icon from "../components/Icon.svelte";
   import EventModal from "../components/EventModal.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   // Tapping a card opens the full event editor (title, due date, priority,
   // topics, notes, reminder) with edit + delete.
@@ -15,9 +16,9 @@
 
   type Status = "todo" | "doing" | "done";
   const COLUMNS: { id: Status; label: string }[] = [
-    { id: "todo", label: "To-do" },
-    { id: "doing", label: "Doing" },
-    { id: "done", label: "Done" },
+    { id: "todo", label: t("To-do") },
+    { id: "doing", label: t("Doing") },
+    { id: "done", label: t("Done") },
   ];
   // Kinds that belong on the board (plain calendar "event"s are excluded).
   const BOARD_KINDS = new Set(["assignment", "project", "deadline", "exam", "task"]);
@@ -100,7 +101,7 @@
       await api.setEventStatus(id, status);
       app.notifyEventsChanged(); // keep the Assignments list + calendar in sync
     } catch (err) {
-      app.pushToast({ kind: "error", title: "Couldn't move card", body: String(err) });
+      app.pushToast({ kind: "error", title: t("Couldn't move card"), body: String(err) });
       events = events.map((e) => (e.id === id ? { ...e, status: ev.status } : e));
     }
   }
@@ -130,7 +131,7 @@
       events = [...events, ev];
       app.notifyEventsChanged();
     } catch (err) {
-      app.pushToast({ kind: "error", title: "Couldn't add card", body: String(err) });
+      app.pushToast({ kind: "error", title: t("Couldn't add card"), body: String(err) });
     }
     newTitle = "";
     adding = null;
@@ -139,7 +140,7 @@
   const prioClass = (p: string | null) =>
     p === "high" ? "p-high" : p === "med" ? "p-med" : p === "low" ? "p-low" : "";
   const kindLabel = (k: string) =>
-    ({ assignment: "Assignment", project: "Project", deadline: "Deadline", exam: "Exam", task: "Task" })[k] ?? k;
+    ({ assignment: t("Assignment"), project: t("Project"), deadline: t("Deadline"), exam: t("Exam"), task: t("Task") })[k] ?? k;
   function dueLabel(e: api.CalEvent): string {
     if (e.kind === "task") return "";
     const d = new Date(e.start_ms);
@@ -149,7 +150,7 @@
 
 <div class="board">
   {#if loading}
-    <div class="board-empty">Loading board…</div>
+    <div class="board-empty">{t("Loading board…")}</div>
   {:else}
     {#each COLUMNS as col (col.id)}
       <section
@@ -160,7 +161,7 @@
         <header class="bcol-h">
           <span class="bcol-t">{col.label}</span>
           <span class="bcol-n">{byStatus(col.id).length}</span>
-          <button class="bcol-add" title="Add card" onclick={() => { adding = col.id; newTitle = ""; }}>
+          <button class="bcol-add" title={t("Add card")} onclick={() => { adding = col.id; newTitle = ""; }}>
             <Icon name="plus" size={13} />
           </button>
         </header>
@@ -170,7 +171,7 @@
             <!-- svelte-ignore a11y_autofocus -->
             <input
               class="bcard-input"
-              placeholder="Card title…"
+              placeholder={t("Card title…")}
               bind:value={newTitle}
               autofocus
               onkeydown={(e) => { if (e.key === "Enter") addCard(col.id); else if (e.key === "Escape") { adding = null; newTitle = ""; } }}
@@ -188,7 +189,7 @@
             >
               <div class="bcard-top">
                 <span class="bcard-kind">{kindLabel(e.kind)}</span>
-                {#if e.priority}<span class="bcard-prio {prioClass(e.priority)}">{e.priority}</span>{/if}
+                {#if e.priority}<span class="bcard-prio {prioClass(e.priority)}">{t(e.priority)}</span>{/if}
                 {#if dueLabel(e)}<span class="bcard-due">{dueLabel(e)}</span>{/if}
               </div>
               <div class="bcard-title">{e.title}</div>
@@ -200,13 +201,13 @@
                 </div>
               {/if}
               <div class="bcard-move">
-                <button title="Move left" disabled={col.id === "todo"} onpointerdown={(ev) => ev.stopPropagation()} onclick={() => move(e.id, nextStatus(col.id, -1))}>◂</button>
-                <button title="Move right" disabled={col.id === "done"} onpointerdown={(ev) => ev.stopPropagation()} onclick={() => move(e.id, nextStatus(col.id, 1))}>▸</button>
+                <button title={t("Move left")} disabled={col.id === "todo"} onpointerdown={(ev) => ev.stopPropagation()} onclick={() => move(e.id, nextStatus(col.id, -1))}>◂</button>
+                <button title={t("Move right")} disabled={col.id === "done"} onpointerdown={(ev) => ev.stopPropagation()} onclick={() => move(e.id, nextStatus(col.id, 1))}>▸</button>
               </div>
             </article>
           {/each}
           {#if byStatus(col.id).length === 0 && adding !== col.id}
-            <div class="bcol-empty">Drop cards here</div>
+            <div class="bcol-empty">{t("Drop cards here")}</div>
           {/if}
         </div>
       </section>

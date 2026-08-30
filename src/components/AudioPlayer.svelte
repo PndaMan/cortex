@@ -3,6 +3,7 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import * as api from "../lib/api";
   import { app } from "../lib/store.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   export interface ScriptSegment {
     speaker: string;
@@ -10,7 +11,7 @@
   }
 
   let {
-    title = "Audio overview",
+    title = t("Audio overview"),
     script: scriptProp = [],
     materialId,
     onExit,
@@ -75,7 +76,7 @@
 
   // ── Playback state ──────────────────────────────────────────
   let playing = $state(false);
-  let t       = $state(0);
+  let pos     = $state(0);
   let speed   = $state<number>(1);
   const speeds = [1, 1.25, 1.5, 2] as const;
 
@@ -94,12 +95,12 @@
       const path = await api.synthesizeOverview(materialId, scriptProp);
       audioSrc = convertFileSrc(path);
       playing = false;
-      t = 0;
-      app.pushToast({ kind: "success", title: "Audio ready", body: "Generated a real audio overview." });
+      pos = 0;
+      app.pushToast({ kind: "success", title: t("Audio ready"), body: t("Generated a real audio overview.") });
     } catch (e) {
       app.pushToast({
         kind: "error",
-        title: "Couldn't generate audio",
+        title: t("Couldn't generate audio"),
         body: String(e instanceof Error ? e.message : e),
       });
     } finally {
@@ -137,7 +138,7 @@
   const curIdx = $derived.by(() => {
     if (segments.length === 0) return 0;
     let idx = 0;
-    for (let n = 0; n < effStarts.length; n++) { if (t >= effStarts[n]) idx = n; }
+    for (let n = 0; n < effStarts.length; n++) { if (pos >= effStarts[n]) idx = n; }
     return idx;
   });
 
@@ -153,8 +154,8 @@
       if (last == null) last = now;
       const dt = (now - last) / 1000 * curSpeed;
       last = now;
-      t = Math.min(total, t + dt);
-      if (t >= total) { playing = false; return; }
+      pos = Math.min(total, pos + dt);
+      if (pos >= total) { playing = false; return; }
       rafId = requestAnimationFrame(tick);
     }
 
@@ -167,11 +168,11 @@
   $effect(() => {
     if (!playing || !synth || !voicesAvailable || segments.length === 0 || realMode) return;
     let cancelled = false;
-    const startIdx = t >= total ? 0 : curIdx;
+    const startIdx = pos >= total ? 0 : curIdx;
     function speakFrom(n: number) {
       if (cancelled) return;
-      if (n >= segments.length) { t = total; playing = false; return; }
-      t = starts[n];
+      if (n >= segments.length) { pos = total; playing = false; return; }
+      pos = starts[n];
       const u = new SpeechSynthesisUtterance(segments[n].text);
       u.rate = speed;
       const v = voiceFor(segments[n].speaker);
@@ -204,8 +205,8 @@
 
   function seekTo(nt: number) {
     const clamped = Math.max(0, Math.min(effTotal, nt));
-    t = clamped;
-    // In real mode the bound currentTime follows `t`, but set it explicitly too
+    pos = clamped;
+    // In real mode the bound currentTime follows `pos`, but set it explicitly too
     // so a seek while paused takes effect immediately.
     if (realMode && audioEl) audioEl.currentTime = clamped;
   }
@@ -235,7 +236,7 @@
   <!-- ── Left: player chrome ── -->
   <div class="ao-main">
     {#if onExit}
-      <button class="btn btn--icon btn--sm btn--ghost ao-back" onclick={onExit} title="Back to materials">
+      <button class="btn btn--icon btn--sm btn--ghost ao-back" onclick={onExit} title={t("Back to materials")}>
         <span style="display:inline-flex;transform:rotate(180deg)"><Icon name="chevron" size={14} /></span>
       </button>
     {/if}
@@ -248,7 +249,7 @@
             <span
               class={playing ? "ao-bar live" : "ao-bar"}
               style:height="{playing
-                ? 20 + Math.abs(Math.sin((t * 3 + idx) * 0.6)) * 70
+                ? 20 + Math.abs(Math.sin((pos * 3 + idx) * 0.6)) * 70
                 : 16 + (idx % 5) * 8}%"
               style:animation-delay="{idx * 40}ms"
             ></span>
@@ -259,7 +260,7 @@
 
     <!-- Title / hosts -->
     <div class="ao-meta">
-      <div class="eyebrow">Audio overview</div>
+      <div class="eyebrow">{t("Audio overview")}</div>
       <h1 class="ao-title read">{title}</h1>
       {#if speakers.length > 0}
         <div class="ao-hosts">
@@ -267,7 +268,7 @@
             {@const isSpeaking = segments.length > 0 && segments[curIdx]?.speaker === h.name && playing}
             <span class="ao-host{isSpeaking ? ' speaking' : ''}">
               <span class="ao-avatar" style:background={h.color}>{h.name[0]}</span>
-              {h.name} <span class="faint">· {hidx === 0 ? "host" : "co-host"}</span>
+              {h.name} <span class="faint">· {hidx === 0 ? t("host") : t("co-host")}</span>
             </span>
           {/each}
         </div>
@@ -275,7 +276,7 @@
     </div>
 
     {#if segments.length === 0}
-      <p class="mono faint" style="font-size: var(--t-sm);">No audio script.</p>
+      <p class="mono faint" style="font-size: var(--t-sm);">{t("No audio script.")}</p>
     {:else}
       {#if realMode}
         <!-- The real generated audio file; drives the timeline + transcript sync. -->
@@ -283,35 +284,35 @@
         <audio
           bind:this={audioEl}
           src={audioSrc}
-          bind:currentTime={t}
+          bind:currentTime={pos}
           bind:duration={realTotal}
           onplay={() => (playing = true)}
           onpause={() => (playing = false)}
           onended={() => (playing = false)}
         ></audio>
         <p class="mono faint" style="font-size: var(--t-xs); margin: 0 0 6px; color: var(--ok);">
-          ● Real audio — narrated by your cloud voices.
+          {t("● Real audio — narrated by your cloud voices.")}
         </p>
       {:else}
         <!-- Offline / not-yet-generated: real audio button + on-device fallback. -->
         {#if materialId}
           <button class="btn btn--sm btn--primary ao-gen" onclick={generateRealAudio} disabled={generating}>
-            <Icon name="bolt" size={13} /> {generating ? "Generating audio…" : "Generate real audio"}
+            <Icon name="bolt" size={13} /> {generating ? t("Generating audio…") : t("Generate real audio")}
           </button>
         {/if}
         {#if !voicesAvailable}
           <p class="mono faint" style="font-size: var(--t-xs); margin: 6px 0 6px;">
-            Offline preview uses on-device voices — install <span class="kbd">espeak-ng</span> or
-            <span class="kbd">speech-dispatcher</span> for spoken playback, or generate real audio above.
+            {t("Offline preview uses on-device voices — install")} <span class="kbd">espeak-ng</span> {t("or")}
+            <span class="kbd">speech-dispatcher</span> {t("for spoken playback, or generate real audio above.")}
           </p>
         {/if}
       {/if}
       <!-- Scrubber -->
       <div class="ao-scrubber">
-        <span class="ao-time mono">{fmt(t)}</span>
+        <span class="ao-time mono">{fmt(pos)}</span>
         <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <div class="ao-track" onclick={scrub} role="slider" aria-valuenow={t} aria-valuemin={0} aria-valuemax={effTotal} tabindex="0">
-          <div class="ao-fill" style:width="{effTotal > 0 ? (t / effTotal * 100) : 0}%">
+        <div class="ao-track" onclick={scrub} role="slider" aria-valuenow={pos} aria-valuemin={0} aria-valuemax={effTotal} tabindex="0">
+          <div class="ao-fill" style:width="{effTotal > 0 ? (pos / effTotal * 100) : 0}%">
             <span class="ao-knob"></span>
           </div>
         </div>
@@ -320,7 +321,7 @@
 
       <!-- Controls -->
       <div class="ao-controls">
-        <button class="btn btn--icon btn--ghost" onclick={() => seekTo(t - 15)} title="Back 15s">
+        <button class="btn btn--icon btn--ghost" onclick={() => seekTo(pos - 15)} title={t("Back 15s")}>
           <span style="display:inline-flex;transform:scaleX(-1)"><Icon name="refresh" size={15} /></span>
         </button>
         <button class="ao-play" onclick={togglePlay}>
@@ -330,7 +331,7 @@
             <Icon name="play"  size={22} color="var(--accent-fg)" />
           {/if}
         </button>
-        <button class="btn btn--icon btn--ghost" onclick={() => seekTo(t + 15)} title="Forward 15s">
+        <button class="btn btn--icon btn--ghost" onclick={() => seekTo(pos + 15)} title={t("Forward 15s")}>
           <Icon name="refresh" size={15} />
         </button>
         <button class="ao-speed mono" onclick={nextSpeed}>{speed}×</button>
@@ -341,25 +342,25 @@
   <!-- ── Right: transcript ── -->
   <aside class="ao-transcript">
     <div class="ao-tr-head">
-      <span class="label">Transcript</span>
+      <span class="label">{t("Transcript")}</span>
       {#if segments.length > 0}
-        <span class="mono faint">{segments.length} turns · synced</span>
+        <span class="mono faint">{t("{n} turns · synced", { n: segments.length })}</span>
       {:else}
-        <span class="mono faint">no script</span>
+        <span class="mono faint">{t("no script")}</span>
       {/if}
     </div>
     <div class="ao-tr-body" bind:this={bodyEl}>
       {#if segments.length === 0}
-        <p class="mono faint" style="padding: 16px; font-size: var(--t-sm);">No audio script.</p>
+        <p class="mono faint" style="padding: 16px; font-size: var(--t-sm);">{t("No audio script.")}</p>
       {:else}
         {#each segments as seg, idx (idx)}
           {@const col = speakerColor(seg.speaker)}
           <div
             class="ao-line{idx === curIdx ? ' cur' : ''}{idx < curIdx ? ' past' : ''}"
-            onclick={() => { t = starts[idx]; }}
+            onclick={() => { pos = starts[idx]; }}
             role="button"
             tabindex="0"
-            onkeydown={(e) => { if (e.key === "Enter") t = starts[idx]; }}
+            onkeydown={(e) => { if (e.key === "Enter") pos = starts[idx]; }}
           >
             <div class="ao-line-head">
               <span class="ao-avatar sm" style:background={col}>{seg.speaker[0]}</span>

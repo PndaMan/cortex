@@ -6,6 +6,7 @@
   import { app } from "../lib/store.svelte";
   import { safeImgSrc } from "../lib/url";
   import { katex } from "../lib/katex.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   let { text }: { text: string } = $props();
 
@@ -210,7 +211,7 @@
   }
 
   const CALLOUT_LABEL: Record<CalloutKind, string> = {
-    note: "Note", tip: "Tip", warning: "Warning", important: "Important", example: "Example",
+    note: t("Note"), tip: t("Tip"), warning: t("Warning"), important: t("Important"), example: t("Example"),
   };
 
   const blocks = $derived(parse(text));
@@ -225,7 +226,7 @@
       app.activeSources().find((s) => s.name.toLowerCase() === name) ??
       app.activeSources().find((s) => s.name.toLowerCase().includes(name) || name.includes(s.name.toLowerCase()));
     if (src) app.openSource(src, loc);
-    else app.pushToast({ kind: "info", title: "Source", body: v });
+    else app.pushToast({ kind: "info", title: t("Source"), body: v });
   }
 </script>
 

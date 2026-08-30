@@ -6,7 +6,7 @@ import * as api from "./api";
 import type { Subject, Source } from "./api";
 import { music, BUILTIN_STATION_IDS, builtinStationUrl, builtinStationUrls } from "./music";
 import { keybinds } from "./keybinds.svelte";
-import { isMobile } from "./platform";
+import { isMobile, isTauri } from "./platform";
 
 export type View =
   | "dashboard"
@@ -626,8 +626,18 @@ class AppStore {
     // Safety net: never let the window stay hidden if init stalls or throws
     // before the normal reveal below.
     setTimeout(() => void this.revealWindow(), 3000);
-    // Surface stream/playback failures instead of swallowing them.
-    music.onError = (m) => this.pushToast({ kind: "warning", title: "Music", body: m });
+    // Plain-browser dev mode (vite without the Tauri runtime): invoke() never
+    // settles, so the real init would hang on the loading screen forever.
+    // Surface the shell with an empty library instead — views render their
+    // proper empty states; backend-dependent actions fail their own toasts.
+    if (!isTauri) {
+      // Debug handle for the browser-dev shell: lets tooling read the live store
+      // instance the rendered component actually holds (module-duplication check).
+      type ProbeWindow = Window & { __cortexAppRef?: AppStore };
+      (window as ProbeWindow).__cortexAppRef = this;
+      this.loading = false;
+      return;
+    }
     // The engine is the authority on playback state: a failed stream/mpv start
     // flips the icon back to paused, and buffering drives the panel spinner.
     music.onState = (s) => {
@@ -635,21 +645,27 @@ class AppStore {
       this.musicBuffering = s.buffering;
     };
     // Tray menu "Play / pause music" (works while the window is hidden).
-    void api.onTrayMusicToggle(() => this.toggleMusic());
-    void api.onTrayGoDashboard(() => this.setView("dashboard"));
+    // Guarded: in a plain browser (vite dev without the Tauri runtime) listen()
+    // throws synchronously — it must never prevent the rest of init().
+    try { void api.onTrayMusicToggle(() => this.toggleMusic()); } catch { /* not under Tauri */ }
+    try { void api.onTrayGoDashboard(() => this.setView("dashboard")); } catch { /* not under Tauri */ }
     // Background auto-summary finished → tell the user where to find it.
-    void api.onNoteCreated(() => {
-      this.pushToast({
-        kind: "success",
-        title: "Lecture summary ready",
-        body: "Key points + terms saved to Notes.",
+    try {
+      void api.onNoteCreated(() => {
+        this.pushToast({
+          kind: "success",
+          title: "Lecture summary ready",
+          body: "Key points + terms saved to Notes.",
+        });
       });
-    });
+    } catch { /* not under Tauri */ }
     // Live sync applied peers' changes — refresh so they show up instantly.
-    void api.onSyncApplied(() => {
-      this.syncLive = true;
-      void this.refresh();
-    });
+    try {
+      void api.onSyncApplied(() => {
+        this.syncLive = true;
+        void this.refresh();
+      });
+    } catch { /* not under Tauri */ }
     // Tapping an OS notification (lecture ready, deadline alert, reminder)
     // deep-links to the right place: subject for lectures, calendar day for
     // deadlines/reminders, otherwise the notification centre. Mobile-only —
