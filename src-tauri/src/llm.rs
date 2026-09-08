@@ -273,22 +273,47 @@ pub struct OpenAiCompatLlm {
 }
 
 impl OpenAiCompatLlm {
-    /// One chat/completions attempt with an explicit max_tokens (or none).
+    /// Newer OpenAI reasoning models reject custom temperature values and use
+    /// `max_completion_tokens` plus the `developer` instruction role. Keep the
+    /// legacy shape for other OpenAI-compatible providers and models.
+    fn uses_modern_openai_chat_schema(&self) -> bool {
+        if self.label != "openai" {
+            return false;
+        }
+        let model = self.model.strip_prefix("openai/").unwrap_or(&self.model);
+        ["gpt-5", "gpt-6", "o1", "o3", "o4"]
+            .iter()
+            .any(|prefix| model.starts_with(prefix))
+    }
+
+    fn chat_body(&self, system: &str, user: &str, max_tokens: Option<u32>) -> serde_json::Value {
+        let modern = self.uses_modern_openai_chat_schema();
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "messages": [
+                { "role": if modern { "developer" } else { "system" }, "content": system },
+                { "role": "user", "content": user }
+            ]
+        });
+        if modern {
+            if let Some(n) = max_tokens {
+                body["max_completion_tokens"] = serde_json::json!(n);
+            }
+        } else {
+            body["temperature"] = serde_json::json!(0.3);
+            if let Some(n) = max_tokens {
+                body["max_tokens"] = serde_json::json!(n);
+            }
+        }
+        body
+    }
+
+    /// One chat/completions attempt with an explicit token limit (or none).
     fn complete_once(&self, system: &str, user: &str, max_tokens: Option<u32>) -> Result<String> {
         let key = self.api_key.trim();
         let client = llm_client();
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let mut body = serde_json::json!({
-            "model": self.model,
-            "messages": [
-                { "role": "system", "content": system },
-                { "role": "user", "content": user }
-            ],
-            "temperature": 0.3
-        });
-        if let Some(n) = max_tokens {
-            body["max_tokens"] = serde_json::json!(n);
-        }
+        let body = self.chat_body(system, user, max_tokens);
         let json = send_json(
             self.label,
             client
@@ -351,11 +376,13 @@ impl Llm for OpenAiCompatLlm {
                 "image_url": { "url": format!("data:{mime};base64,{b64}") }
             }));
         }
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.model,
-            "messages": [{ "role": "user", "content": content }],
-            "temperature": 0.0
+            "messages": [{ "role": "user", "content": content }]
         });
+        if !self.uses_modern_openai_chat_schema() {
+            body["temperature"] = serde_json::json!(0.0);
+        }
         let json = send_json(
             self.label,
             client
@@ -530,7 +557,7 @@ pub fn from_spec_or_any(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
     } else if nonempty(&keys.gemini).is_some() {
         "gemini:gemini-2.5-flash"
     } else if nonempty(&keys.openai).is_some() {
-        "openai:gpt-4o-mini"
+        "openai:gpt-5.6-luna"
     } else if nonempty(&keys.claude).is_some() {
         "claude:claude-3-5-sonnet-20241022"
     } else if nonempty(&keys.custom_endpoint).is_some() {
@@ -649,6 +676,44 @@ fn repair_json(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn openai_compat(model: &str) -> OpenAiCompatLlm {
+        OpenAiCompatLlm {
+            base_url: "https://api.openai.com/v1".into(),
+            api_key: "test".into(),
+            model: model.into(),
+            label: "openai",
+            max_tokens: None,
+        }
+    }
+
+    #[test]
+    fn modern_openai_chat_body_uses_supported_fields() {
+        let body = openai_compat("gpt-5.6-luna").chat_body("instructions", "question", Some(4096));
+        assert_eq!(body["messages"][0]["role"], "developer");
+        assert_eq!(body["max_completion_tokens"], 4096);
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn legacy_compatible_chat_body_is_unchanged() {
+        let body = openai_compat("gpt-4o-mini").chat_body("instructions", "question", Some(4096));
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(body["temperature"], 0.3);
+        assert_eq!(body["max_tokens"], 4096);
+        assert!(body.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn other_openai_compatible_providers_keep_their_existing_shape() {
+        let mut llm = openai_compat("openai/gpt-5.6-luna");
+        llm.label = "openrouter";
+        let body = llm.chat_body("instructions", "question", Some(4096));
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(body["temperature"], 0.3);
+        assert_eq!(body["max_tokens"], 4096);
+    }
 
     #[test]
     fn extract_json_from_fenced_prose() {

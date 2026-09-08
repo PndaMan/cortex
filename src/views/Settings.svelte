@@ -120,12 +120,10 @@
       { id: "deepseek/deepseek-r1",               label: "DeepSeek R1" },
     ] },
     { id: "openai", label: "OpenAI", models: [
-      { id: "gpt-4o-mini", label: "GPT-4o mini — cheap" },
-      { id: "gpt-5-mini",  label: "GPT-5 mini — cheap + smart" },
-      { id: "gpt-4o",      label: "GPT-4o — balanced" },
-      { id: "gpt-5",       label: "GPT-5 — ★ frontier" },
-      { id: "o3-mini",     label: "o3-mini — cheap reasoning" },
-      { id: "o3",          label: "o3 — deep reasoning" },
+      { id: "gpt-5.6-luna",  label: "GPT-5.6 Luna — ⚡ best value" },
+      { id: "gpt-5.6-terra", label: "GPT-5.6 Terra — balanced" },
+      { id: "gpt-5.6-sol",   label: "GPT-5.6 Sol — ★ flagship" },
+      { id: "gpt-6-astra",   label: "GPT-6 Astra — most capable" },
     ] },
     { id: "claude", label: "Claude", models: [
       { id: "claude-haiku-4-5-20251001",  label: "Claude Haiku 4.5 — fast + cheap" },

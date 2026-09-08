@@ -45,7 +45,7 @@
   const CHAT_FALLBACK = [
     { id: "gemini:gemini-2.5-flash", label: "Gemini 2.5 Flash" },
     { id: "gemini:gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-    { id: "openai:gpt-4o-mini", label: "GPT-4o mini" },
+    { id: "openai:gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { id: "claude:claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet" },
   ];
   let chatModel = $state("");
