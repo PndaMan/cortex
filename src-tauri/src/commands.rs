@@ -753,11 +753,11 @@ fn ingest_remote(state: &State<AppState>, path: &str) -> Result<Option<String>> 
         .header("Accept", "text/plain; charset=UTF-8")
         .body(bytes)
         .send()
-        .map_err(|e| Error::Other(format!("ingest request failed: {e}")))?;
+        .map_err(|e| Error::Other(format!("ingest request failed: {}", crate::error::redact(e))))?;
     if !resp.status().is_success() {
         return Err(Error::Other(format!("ingest service HTTP {}", resp.status())));
     }
-    Ok(Some(resp.text().map_err(|e| Error::Other(e.to_string()))?))
+    Ok(Some(resp.text().map_err(|e| Error::Other(crate::error::redact(e).to_string()))?))
 }
 
 /// Re-run ingestion for an EXISTING source in place: re-parse (re-OCR / re-

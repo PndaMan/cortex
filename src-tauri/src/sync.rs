@@ -312,7 +312,7 @@ fn file_url(cfg: &SyncCfg, name: &str) -> String {
 fn remote_stamp(cfg: &SyncCfg) -> Result<Option<i64>> {
     let resp = auth(client().get(file_url(cfg, REMOTE_STAMP)), cfg)
         .send()
-        .map_err(|e| Error::Other(format!("sync: {e}")))?;
+        .map_err(|e| Error::Other(format!("sync: {}", crate::error::redact(e))))?;
     if resp.status().as_u16() == 404 {
         return Ok(None);
     }
@@ -327,7 +327,7 @@ fn remote_stamp(cfg: &SyncCfg) -> Result<Option<i64>> {
 fn put(cfg: &SyncCfg, name: &str, body: Vec<u8>) -> Result<()> {
     let resp = auth(client().put(file_url(cfg, name)).body(body), cfg)
         .send()
-        .map_err(|e| Error::Other(format!("sync: upload {name}: {e}")))?;
+        .map_err(|e| Error::Other(format!("sync: upload {name}: {}", crate::error::redact(e))))?;
     if !resp.status().is_success() {
         return Err(Error::Other(format!(
             "sync: upload {name} HTTP {}",
@@ -340,7 +340,7 @@ fn put(cfg: &SyncCfg, name: &str, body: Vec<u8>) -> Result<()> {
 fn get_bytes(cfg: &SyncCfg, name: &str) -> Result<Vec<u8>> {
     let resp = auth(client().get(file_url(cfg, name)), cfg)
         .send()
-        .map_err(|e| Error::Other(format!("sync: download {name}: {e}")))?;
+        .map_err(|e| Error::Other(format!("sync: download {name}: {}", crate::error::redact(e))))?;
     if !resp.status().is_success() {
         return Err(Error::Other(format!(
             "sync: download {name} HTTP {}",
@@ -349,7 +349,7 @@ fn get_bytes(cfg: &SyncCfg, name: &str) -> Result<Vec<u8>> {
     }
     resp.bytes()
         .map(|b| b.to_vec())
-        .map_err(|e| Error::Other(format!("sync: read {name}: {e}")))
+        .map_err(|e| Error::Other(format!("sync: read {name}: {}", crate::error::redact(e))))
 }
 
 // ---- pull + merge (background, never blocks startup) ------------------------
