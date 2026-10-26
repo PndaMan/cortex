@@ -1,4 +1,5 @@
 <script lang="ts">
+  import DOMPurify from "dompurify";
   import Icon from "./Icon.svelte";
 
   // Structured infographic payload (NotebookLM-style poster). Older materials may
@@ -23,28 +24,12 @@
   );
   const takeaway = $derived(typeof data?.takeaway === "string" ? data!.takeaway!.trim() : "");
   const hasPoster = $derived(sections.length > 0 || timeline.length > 0 || !!takeaway);
-  // AI-generated SVG is untrusted — strip scripts, foreignObject (HTML embed),
-  // event-handler attributes, and javascript:/html-data: URLs before {@html}.
-  // (The app CSP's script-src 'self' is the second line of defence.)
+  // AI-generated SVG is untrusted. DOMPurify's SVG profile keeps the drawing and drops
+  // scripts, event handlers, foreignObject and script-capable URLs, including ones set
+  // through <animate>/<set>. (The app CSP's script-src 'self' is the second line of defence.)
   function sanitizeSvg(svg: string): string {
     if (!svg.trim()) return "";
-    try {
-      const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
-      if (doc.querySelector("parsererror")) return "";
-      doc.querySelectorAll("script, foreignObject, iframe, object, embed").forEach((n) => n.remove());
-      doc.querySelectorAll("*").forEach((el) => {
-        for (const attr of [...el.attributes]) {
-          const name = attr.name.toLowerCase();
-          const val = attr.value.replace(/\s+/g, "").toLowerCase();
-          if (name.startsWith("on")) el.removeAttribute(attr.name);
-          else if (/^(href|xlink:href|src)$/.test(name) && (val.startsWith("javascript:") || val.startsWith("data:text/html"))) el.removeAttribute(attr.name);
-        }
-      });
-      const root = doc.documentElement;
-      return root?.tagName?.toLowerCase() === "svg" ? root.outerHTML : "";
-    } catch {
-      return "";
-    }
+    return DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true } });
   }
   const legacySvg = $derived(sanitizeSvg(typeof data?.svg === "string" ? data!.svg! : ""));
 </script>

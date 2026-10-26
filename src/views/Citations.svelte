@@ -3,6 +3,7 @@
   import * as api from "../lib/api";
   import type { Reference, CalEvent } from "../lib/api";
   import Icon from "../components/Icon.svelte";
+  import { safeUrl } from "../lib/url";
   import Picker from "../components/Picker.svelte";
   import DatePicker from "../components/DatePicker.svelte";
   import BoardView from "./BoardView.svelte";
@@ -403,8 +404,8 @@
                   <span class="cit-badge mono">{r.ctype}</span>
                   <div class="cit-formatted read">{fmt(r)}</div>
                   <div class="cit-acts">
-                    {#if r.url}
-                      <a class="btn btn--icon btn--sm btn--ghost" href={r.url} target="_blank" rel="noreferrer" title="Open link"><Icon name="external" size={12} /></a>
+                    {#if safeUrl(r.url)}
+                      <a class="btn btn--icon btn--sm btn--ghost" href={safeUrl(r.url)} target="_blank" rel="noreferrer" title="Open link"><Icon name="external" size={12} /></a>
                     {/if}
                     <button class="btn btn--icon btn--sm btn--ghost" title="Copy" aria-label="Copy citation" onclick={() => copyOne(r)}><Icon name="doc" size={12} /></button>
                     <button class="btn btn--icon btn--sm btn--ghost" title="Edit" aria-label="Edit" onclick={() => startEdit(r)}><Icon name="pencil" size={12} /></button>
