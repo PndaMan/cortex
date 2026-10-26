@@ -96,7 +96,7 @@ jobs:
     # Signing secrets live in the "Production" environment.
     environment: Production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # ── macOS code signing + notarization ──
       # Imports the cert and exports the signing identity. Best-effort: any
@@ -154,17 +154,18 @@ jobs:
             libfuse2
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.rust-targets }}
 
       - name: Cache cargo
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: "./src-tauri -> target"
 
       - name: Install Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - name: Install frontend dependencies
         run: bun install
@@ -192,7 +193,7 @@ jobs:
           echo "Regenerated transparent src-tauri/icons/icon.icns"
 
       - name: Build and release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Tells scripts/fetch-sidecars.mjs (run via beforeBuildCommand) which
@@ -227,7 +228,7 @@ jobs:
     if: github.ref_type == 'tag' || inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Publish release & compute checksums
         id: meta
@@ -260,7 +261,7 @@ jobs:
           sed -i "s|^sha256sums=.*|sha256sums=('${{ steps.meta.outputs.deb }}')|" packaging/aur/PKGBUILD
 
       - name: Push to the AUR
-        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        uses: KSXGitHub/github-actions-deploy-aur@9dfe151cf48f26a957bbd0379c120e79cb990e13 # v2.7.2
         with:
           pkgname: cortex-bin
           pkgbuild: packaging/aur/PKGBUILD
