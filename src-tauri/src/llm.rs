@@ -87,8 +87,8 @@ impl Llm for GeminiLlm {
     fn complete(&self, system: &str, user: &str) -> Result<String> {
         let client = llm_client();
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            self.model, self.api_key
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+            self.model
         );
         // Gemini 2.5 models reason with hidden "thinking" tokens that draw from
         // the SAME maxOutputTokens budget. A small budget is routinely exhausted
@@ -113,7 +113,8 @@ impl Llm for GeminiLlm {
             "contents": [{ "role": "user", "parts": [{ "text": user }] }],
             "generationConfig": generation_config
         });
-        let json = send_json("gemini", client.post(&url).json(&body))?;
+        let req = client.post(&url).header("x-goog-api-key", &self.api_key);
+        let json = send_json("gemini", req.json(&body))?;
         // Concatenate every text part (some responses split across parts).
         let text: String = json["candidates"][0]["content"]["parts"]
             .as_array()
@@ -143,8 +144,8 @@ impl Llm for GeminiLlm {
     fn ocr(&self, images: &[(String, String)]) -> Result<String> {
         let client = llm_client();
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            self.model, self.api_key
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+            self.model
         );
         let mut parts = vec![serde_json::json!({ "text": OCR_PROMPT })];
         for (mime, b64) in images {
@@ -154,7 +155,8 @@ impl Llm for GeminiLlm {
             "contents": [{ "role": "user", "parts": parts }],
             "generationConfig": { "temperature": 0.0, "maxOutputTokens": 8192 }
         });
-        let json = send_json("gemini", client.post(&url).json(&body))?;
+        let req = client.post(&url).header("x-goog-api-key", &self.api_key);
+        let json = send_json("gemini", req.json(&body))?;
         Ok(json["candidates"][0]["content"]["parts"]
             .as_array()
             .map(|ps| ps.iter().filter_map(|p| p["text"].as_str()).collect::<String>())

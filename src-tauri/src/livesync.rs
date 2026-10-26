@@ -91,11 +91,11 @@ fn get_json(cfg: &LiveCfg, path: &str) -> Result<serde_json::Value> {
         .get(format!("{}{path}", cfg.base))
         .basic_auth(&cfg.user, Some(&cfg.pass))
         .send()
-        .map_err(|e| Error::Other(format!("syncd: {e}")))?;
+        .map_err(|e| Error::Other(format!("syncd: {}", crate::error::redact(e))))?;
     if !r.status().is_success() {
         return Err(Error::Other(format!("syncd HTTP {}", r.status())));
     }
-    r.json().map_err(|e| Error::Other(format!("syncd json: {e}")))
+    r.json().map_err(|e| Error::Other(format!("syncd json: {}", crate::error::redact(e))))
 }
 
 fn setting_i64(c: &Connection, key: &str) -> i64 {
@@ -206,7 +206,7 @@ fn push_once(app: &AppHandle) -> Result<bool> {
         .basic_auth(&cfg.user, Some(&cfg.pass))
         .body(bytes)
         .send()
-        .map_err(|e| Error::Other(format!("syncd push: {e}")))?;
+        .map_err(|e| Error::Other(format!("syncd push: {}", crate::error::redact(e))))?;
     if !r.status().is_success() {
         return Err(Error::Other(format!("syncd push HTTP {}", r.status())));
     }
@@ -287,7 +287,7 @@ fn catch_up(app: &AppHandle) -> Result<()> {
             .get(format!("{}/snapshot", cfg.base))
             .basic_auth(&cfg.user, Some(&cfg.pass))
             .send()
-            .map_err(|e| Error::Other(format!("syncd snapshot: {e}")))?;
+            .map_err(|e| Error::Other(format!("syncd snapshot: {}", crate::error::redact(e))))?;
         if r.status().is_success() {
             let seq = r
                 .headers()
@@ -295,7 +295,7 @@ fn catch_up(app: &AppHandle) -> Result<()> {
                 .and_then(|h| h.to_str().ok())
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(snapshot_seq);
-            let bytes = r.bytes().map_err(|e| Error::Other(e.to_string()))?;
+            let bytes = r.bytes().map_err(|e| Error::Other(crate::error::redact(e).to_string()))?;
             apply_file(app, &bytes)?;
             let c = state.db.lock().unwrap();
             set_setting_i64(&c, K_APPLIED, seq);
@@ -309,11 +309,11 @@ fn catch_up(app: &AppHandle) -> Result<()> {
             .get(format!("{}/deltas/{seq}", cfg.base))
             .basic_auth(&cfg.user, Some(&cfg.pass))
             .send()
-            .map_err(|e| Error::Other(format!("syncd delta {seq}: {e}")))?;
+            .map_err(|e| Error::Other(format!("syncd delta {seq}: {}", crate::error::redact(e))))?;
         if !r.status().is_success() {
             continue; // compacted away — the next snapshot bootstrap covers it
         }
-        let bytes = r.bytes().map_err(|e| Error::Other(e.to_string()))?;
+        let bytes = r.bytes().map_err(|e| Error::Other(crate::error::redact(e).to_string()))?;
         apply_file(app, &bytes)?;
         let c = state.db.lock().unwrap();
         set_setting_i64(&c, K_APPLIED, seq);

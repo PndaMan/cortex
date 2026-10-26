@@ -70,10 +70,9 @@ impl Embedder for GeminiEmbedder {
         // batchEmbedContents takes up to 100 contents per call — one round-trip
         // per 100 chunks instead of one per chunk.
         let client = reqwest::blocking::Client::new();
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents?key={}",
-            self.api_key
-        );
+        // Key goes in a header, never the URL: request errors echo the URL, and
+        // those messages are shown and stored.
+        let url = "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents";
         let mut out = Vec::with_capacity(texts.len());
         for batch in texts.chunks(100) {
             let requests: Vec<_> = batch
@@ -86,7 +85,8 @@ impl Embedder for GeminiEmbedder {
                 })
                 .collect();
             let resp = client
-                .post(&url)
+                .post(url)
+                .header("x-goog-api-key", &self.api_key)
                 .json(&serde_json::json!({ "requests": requests }))
                 .send()?;
             if !resp.status().is_success() {

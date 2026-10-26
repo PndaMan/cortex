@@ -199,7 +199,7 @@ fn verify_outcome(req: reqwest::blocking::RequestBuilder) -> VerifyResult {
         }
         Err(e) => VerifyResult {
             ok: false,
-            detail: if e.is_connect() || e.is_timeout() { "unreachable".into() } else { e.to_string() },
+            detail: if e.is_connect() || e.is_timeout() { "unreachable".into() } else { crate::error::redact(e).to_string() },
         },
     }
 }
@@ -236,9 +236,11 @@ fn verify_provider_blocking(provider: &str, keys: &llm::Keys, ollama: Option<Str
     let client = http_client(10);
     match provider {
         "gemini" => match nonempty(&keys.gemini) {
-            Some(k) => verify_outcome(client.get(format!(
-                "https://generativelanguage.googleapis.com/v1beta/models?key={k}"
-            ))),
+            Some(k) => verify_outcome(
+                client
+                    .get("https://generativelanguage.googleapis.com/v1beta/models")
+                    .header("x-goog-api-key", k),
+            ),
             None => VerifyResult { ok: false, detail: "not set".into() },
         },
         "openrouter" => match nonempty(&keys.openrouter) {
@@ -4007,7 +4009,7 @@ fn transcribe_remote(rw: &RemoteWhisper, file: &Path, model: &str, full: bool) -
         if let Some(key) = rw.api_key.as_deref() {
             req = req.bearer_auth(key);
         }
-        req.send().map_err(|e| e.to_string())
+        req.send().map_err(|e| crate::error::redact(e).to_string())
     };
 
     let mut resp = send()?;
@@ -4718,7 +4720,7 @@ pub async fn ping_url(url: String) -> Result<bool> {
             Ok(_) => Ok(true),
             // Only a transport failure (DNS/timeout/TLS/connection refused) is unreachable —
             // surface its message so the "Test connection" button explains WHY it failed.
-            Err(e) => Err(Error::Other(format!("{e}"))),
+            Err(e) => Err(Error::Other(crate::error::redact(e).to_string())),
         }
     })
     .await
