@@ -116,11 +116,25 @@ fn unseal_cred(stored: &str, pass: &str) -> Option<String> {
     String::from_utf8(pt).ok()
 }
 
-/// Encrypt (or, with no sync password, blank) every credential value in a snapshot DB
-/// copy about to be uploaded. Operates on the TEMP COPY only — the live DB keeps its
-/// plaintext values so the running app is unaffected.
+/// Prepare the settings in a snapshot DB copy about to be uploaded: drop every row the
+/// pulling side ignores, then encrypt (or, with no sync password, blank) the synced
+/// credentials that remain. Operates on the TEMP COPY only — the live DB is untouched.
+///
+/// Dropping matters as much as sealing: the copy also holds the sync password itself
+/// (which derives the sealing key), the provider API keys and device endpoints. Left in,
+/// anyone who can read the share could unseal everything.
 pub(crate) fn seal_snapshot_credentials(snapshot: &Path, pass: &str) -> Result<()> {
     let conn = Connection::open(snapshot)?;
+    // Zero freed space so dropped and replaced values don't linger in the file.
+    conn.execute_batch("PRAGMA secure_delete = ON;")?;
+    let keys: Vec<String> = {
+        let mut st = conn.prepare("SELECT key FROM settings")?;
+        let r = st.query_map([], |r| r.get::<_, String>(0))?;
+        r.filter_map(|x| x.ok()).collect()
+    };
+    for k in keys.iter().filter(|k| !is_syncable_setting(k)) {
+        conn.execute("DELETE FROM settings WHERE key=?1", [k])?;
+    }
     let rows: Vec<(String, String)> = {
         let mut st = conn.prepare("SELECT key, value FROM settings")?;
         let r = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
@@ -399,7 +413,7 @@ fn is_syncable_setting(key: &str) -> bool {
     //
     // Provider API keys remain NOT synced (security): a billable OpenRouter/Claude/OpenAI/
     // Gemini key is a real per-device secret. Each device holds its own; the keys tab
-    // promises "never synced". (They're still encrypted in the snapshot at rest.) The
+    // promises "never synced", and seal_snapshot_credentials drops them from uploads. The
     // `_key` substring guard below backstops this if a future key sneaks into a group.
     const SYNCED_CREDS: &[&str] = &[
         "moodle_url", "moodle_token", "moodle_userid",
@@ -969,6 +983,40 @@ mod tests {
         assert_eq!(unseal_cred("osaka-jade", pass).as_deref(), Some("osaka-jade"));
         // No password ⇒ we cannot seal (caller blanks instead of leaking).
         assert_eq!(seal_cred(secret, ""), None);
+    }
+
+    #[test]
+    fn snapshot_drops_device_secrets_and_seals_synced_creds() {
+        let dir = std::env::temp_dir().join(format!("cortex-seal-{}", now_ms()));
+        fs::create_dir_all(&dir).unwrap();
+        let snap = dir.join("snap.db");
+        {
+            let st = AppState::new(&snap).unwrap();
+            let c = st.db.lock().unwrap();
+            repo::set_setting(&c, "sync_pass", "plain-sync-pw").unwrap();
+            repo::set_setting(&c, "gemini_api_key", "AIzaPLAINKEY").unwrap();
+            repo::set_setting(&c, "homelab_token", "plain-homelab-token").unwrap();
+            repo::set_setting(&c, "moodle_token", "plainmoodletoken").unwrap();
+            repo::set_setting(&c, "theme", "osaka-jade").unwrap();
+        }
+        seal_snapshot_credentials(&snap, "plain-sync-pw").unwrap();
+
+        // The sync password derives the sealing key, so it must not ride along.
+        let bytes = fs::read(&snap).unwrap();
+        let has = |s: &str| bytes.windows(s.len()).any(|w| w == s.as_bytes());
+        for s in ["plain-sync-pw", "AIzaPLAINKEY", "plain-homelab-token", "plainmoodletoken"] {
+            assert!(!has(s), "{s} left readable in the uploaded file");
+        }
+        let c = Connection::open(&snap).unwrap();
+        let get = |k: &str| repo::get_setting(&c, k).unwrap();
+        assert_eq!(get("sync_pass"), None);
+        assert_eq!(get("gemini_api_key"), None);
+        assert_eq!(get("homelab_token"), None);
+        assert_eq!(get("theme").as_deref(), Some("osaka-jade"));
+        let sealed = get("moodle_token").expect("synced cred kept");
+        assert_eq!(unseal_cred(&sealed, "plain-sync-pw").as_deref(), Some("plainmoodletoken"));
+        drop(c);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn ins(c: &Connection, id: &str, name: &str, upd: i64) {
