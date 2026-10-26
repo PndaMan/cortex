@@ -24,15 +24,18 @@ internal to the compose network.
 
 ```bash
 cd homelab
-# (recommended) set a SearXNG secret first:
+# The access token and sync password. .env is git-ignored; compose won't start without it.
+printf 'CORTEX_TOKEN=%s\nSYNC_PASSWORD=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 24)" > .env
+# A SearXNG secret:
 sed -i "s/change-me-openssl-rand-hex-32/$(openssl rand -hex 32)/" searxng/settings.yml
 
 docker compose up -d                    # proxy + SearXNG + Whisper + Sync
 docker compose --profile ollama up -d   # also bring up Ollama
 ```
 
-Then in Cortex → **Settings → Integrations → Homelab URL**, enter the single
-address and hit **Test**:
+Then in Cortex → **Settings → Integrations**, paste `CORTEX_TOKEN` from `.env`
+as the **Access token** and `SYNC_PASSWORD` as the sync password (user
+`cortex`), enter the single **Homelab URL** and hit **Test**:
 
 ```
 http://<host>:8080
@@ -70,22 +73,16 @@ need to add TLS in front of it.
 
 ## Security — read this before using a public URL
 
-Out of the box the proxy has **no authentication**: fine on a LAN or a
-Tailscale tailnet (both private), dangerous on a public URL — anyone on the
-internet could use your Whisper/Ollama compute, hammer SearXNG, and feed
-files to ingest. (`/sync` is the exception: the WebDAV container enforces its
-own username/password, so the vault itself is always credentialed.)
+The compose file will not start without `CORTEX_TOKEN` and `SYNC_PASSWORD`
+in `homelab/.env`. Every service except `/sync` requires the access token, and
+Cortex sends it automatically on every request once it is pasted into
+**Cortex → Settings → Integrations → Homelab → Access token**. `/sync` and
+`/syncd` use the `cortex` / `SYNC_PASSWORD` login instead. Without these,
+anyone who can reach the port could use your Whisper/Ollama compute, hammer
+SearXNG, feed files to ingest and read the sync vault.
 
-To expose the homelab publicly, set an access token:
-
-```bash
-CORTEX_TOKEN='some-long-random-string' docker compose up -d
-```
-
-then paste the same token into **Cortex → Settings → Integrations → Homelab →
-Access token**. Every service (except `/sync`) now requires it; Cortex sends
-it automatically on every request. On NixOS set `cortexTokenHash` in
-`cortex.nix` (see the comment there). Also prefer HTTPS for the public URL —
+On NixOS the token is optional: set `cortexTokenHash` in `cortex.nix` (see the
+comment there) before serving it beyond your LAN or tailnet. Also prefer HTTPS for the public URL —
 put the proxy behind your TLS terminator or a Cloudflare tunnel so the token
 never crosses the wire in clear.
 
@@ -114,9 +111,8 @@ never crosses the wire in clear.
   chat model like `llama3.1`.
 - **SearXNG JSON** is pre-enabled in `searxng/settings.yml` — without it Cortex
   gets a 403.
-- **Change the WebDAV `PASSWORD`** in `docker-compose.yml` before exposing sync —
-  in BOTH the `sync` (WebDAV) and `syncd` (live sync) services; they share one
-  credential pair, which is also what you enter in Cortex → Settings → Live sync.
+- **`SYNC_PASSWORD`** in `.env` is shared by the `sync` (WebDAV) and `syncd`
+  (live sync) services, and is what you enter in Cortex → Settings → Live sync.
 - **Live sync (`syncd`)** is built from `homelab/syncd/` on first
   `docker compose up` (a small Rust service; the first build takes a few
   minutes, cached afterwards). Devices push tiny row-level deltas and receive
@@ -134,8 +130,8 @@ Everything needed is this directory — copy it to the host and run it there:
 # on the homelab host (needs docker + the compose plugin)
 scp -r homelab/ <host>:~/cortex-homelab && ssh <host>
 cd ~/cortex-homelab
+printf 'CORTEX_TOKEN=%s\nSYNC_PASSWORD=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 24)" > .env
 sed -i "s/change-me-openssl-rand-hex-32/$(openssl rand -hex 32)/" searxng/settings.yml
-sed -i "s/change-me-sync-password/<a-real-password>/" docker-compose.yml
 docker compose up -d                    # proxy + SearXNG + Whisper + Sync
 docker compose --profile ollama up -d   # …plus Ollama, if wanted
 ```

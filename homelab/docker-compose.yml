@@ -25,13 +25,11 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # OPTIONAL access token gating every service except /sync (the WebDAV
-      # container enforces its own username/password). Paste the SAME value into
-      # Cortex → Settings → Integrations → Homelab → Access token. REQUIRED
-      # before exposing this proxy on a public URL — without it, anyone on the
-      # internet can use your whisper/ollama/searxng/ingest.
-      #   CORTEX_TOKEN=some-long-random-string docker compose up -d
-      - CORTEX_TOKEN=${CORTEX_TOKEN:-}
+      # Access token gating every service except /sync (the WebDAV container
+      # enforces its own username/password). Set in homelab/.env (see README);
+      # compose refuses to start without it. Paste the SAME value into
+      # Cortex → Settings → Integrations → Homelab → Access token.
+      - CORTEX_TOKEN=${CORTEX_TOKEN:?set CORTEX_TOKEN in homelab/.env, see README quick start}
     # Generate the Caddy basic_auth snippet from CORTEX_TOKEN at startup (the
     # Caddyfile `import auth.d/*` picks it up), then run Caddy normally.
     entrypoint:
@@ -120,7 +118,7 @@ services:
     environment:
       - AUTH_TYPE=Basic
       - USERNAME=cortex
-      - PASSWORD=change-me-sync-password
+      - PASSWORD=${SYNC_PASSWORD:?set SYNC_PASSWORD in homelab/.env, see README quick start}
     volumes:
       - sync-data:/var/lib/dav
 
@@ -130,7 +128,7 @@ services:
     # — edits show up across desktop/phone instantly, no manual resync. Offline
     # devices replay from their last sequence number on reconnect, so the only
     # failure mode is "unreachable" and it self-heals. Uses the SAME credentials
-    # as the WebDAV sync container above — keep USERNAME/PASSWORD in step.
+    # as the WebDAV sync container above (both read SYNC_PASSWORD).
     build: ./syncd
     container_name: cortex-syncd
     restart: unless-stopped
@@ -138,7 +136,7 @@ services:
       - "8787"
     environment:
       - SYNC_USER=cortex
-      - SYNC_PASSWORD=change-me-sync-password
+      - SYNC_PASSWORD=${SYNC_PASSWORD:?set SYNC_PASSWORD in homelab/.env, see README quick start}
     volumes:
       - syncd-data:/data
 
