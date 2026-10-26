@@ -483,6 +483,8 @@ export const saveRecordingPath = (
 
 // ---- settings (bulk) ----
 export const getAllSettings = () => invoke<Record<string, string>>("get_all_settings");
+/** True when keys live in the system keychain, false when it was unavailable. */
+export const secretStorageIsKeychain = () => invoke<boolean>("secret_storage_is_keychain");
 export const setSettings = (values: Record<string, string>) =>
   invoke<void>("set_settings", { values });
 

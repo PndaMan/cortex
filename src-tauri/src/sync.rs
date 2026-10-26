@@ -135,6 +135,17 @@ pub(crate) fn seal_snapshot_credentials(snapshot: &Path, pass: &str) -> Result<(
     for k in keys.iter().filter(|k| !is_syncable_setting(k)) {
         conn.execute("DELETE FROM settings WHERE key=?1", [k])?;
     }
+    // Synced credentials kept in the system keychain aren't in the DB copy; add them so
+    // the sealing below covers them like any other row.
+    for &k in SYNCED_CREDS.iter().filter(|k| crate::secrets::is_secret(k)) {
+        if let Some(v) = crate::secrets::get(k) {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) \
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                rusqlite::params![k, v],
+            )?;
+        }
+    }
     let rows: Vec<(String, String)> = {
         let mut st = conn.prepare("SELECT key, value FROM settings")?;
         let r = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
@@ -393,6 +404,14 @@ fn pull_blocking(app: &AppHandle) -> Result<bool> {
     Ok(true)
 }
 
+/// Connection settings that sync despite being credentials (see is_syncable_setting).
+const SYNCED_CREDS: &[&str] = &[
+    "moodle_url", "moodle_token", "moodle_userid",
+    "google_client_id", "google_client_secret", "google_access_token",
+    "google_refresh_token", "google_token_expiry", "google_connected_email",
+    "google_calendar_id", "google_pull_calendars",
+];
+
 /// Whether a `settings` key is a device-independent PREFERENCE that's safe to
 /// sync across devices. The `settings` table is otherwise excluded from sync
 /// because it also holds credentials + device-specific endpoints/state. This is
@@ -415,12 +434,6 @@ fn is_syncable_setting(key: &str) -> bool {
     // Gemini key is a real per-device secret. Each device holds its own; the keys tab
     // promises "never synced", and seal_snapshot_credentials drops them from uploads. The
     // `_key` substring guard below backstops this if a future key sneaks into a group.
-    const SYNCED_CREDS: &[&str] = &[
-        "moodle_url", "moodle_token", "moodle_userid",
-        "google_client_id", "google_client_secret", "google_access_token",
-        "google_refresh_token", "google_token_expiry", "google_connected_email",
-        "google_calendar_id", "google_pull_calendars",
-    ];
     if SYNCED_CREDS.contains(&key) {
         return true;
     }
@@ -590,9 +603,7 @@ pub(crate) fn merge_attached(conn: &Connection, remote: &Path) -> Result<()> {
     // last-push-wins — fine for preferences.
     if has_table(conn, "rmt", "settings") {
         // The local sync password decrypts the snapshot's credential values.
-        let pass: String = conn
-            .query_row("SELECT value FROM main.settings WHERE key='sync_pass'", [], |r| r.get(0))
-            .unwrap_or_default();
+        let pass = repo::get_setting(conn, K_PASS)?.unwrap_or_default();
         let pairs: Vec<(String, String)> = {
             let mut st = conn.prepare("SELECT key, value FROM rmt.settings")?;
             let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
@@ -610,11 +621,7 @@ pub(crate) fn merge_attached(conn: &Connection, remote: &Path) -> Result<()> {
             if value.is_empty() && is_credential_key(&k) {
                 continue;
             }
-            conn.execute(
-                "INSERT INTO main.settings (key, value) VALUES (?1, ?2) \
-                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                rusqlite::params![k, value],
-            )?;
+            repo::set_setting(conn, &k, &value)?;
         }
     }
 
@@ -669,8 +676,14 @@ pub fn sync_status(state: tauri::State<AppState>) -> Result<SyncStatus> {
 
 /// Reachability + auth check for the Settings "Test" button.
 #[tauri::command]
-pub async fn sync_test(url: String, user: String, pass: String) -> Result<bool> {
+pub async fn sync_test(app: AppHandle, url: String, user: String, pass: String) -> Result<bool> {
     tauri::async_runtime::spawn_blocking(move || -> Result<bool> {
+        // Settings sends the mask when the saved password wasn't retyped.
+        let pass = {
+            let state = app.state::<AppState>();
+            let c = state.db.lock().unwrap();
+            crate::secrets::resolve_input(&c, K_PASS, pass)
+        };
         let cfg = SyncCfg {
             url: url.trim().trim_end_matches('/').to_string(),
             user,
@@ -1015,6 +1028,31 @@ mod tests {
         assert_eq!(get("theme").as_deref(), Some("osaka-jade"));
         let sealed = get("moodle_token").expect("synced cred kept");
         assert_eq!(unseal_cred(&sealed, "plain-sync-pw").as_deref(), Some("plainmoodletoken"));
+        drop(c);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn snapshot_carries_synced_creds_held_in_the_keychain() {
+        crate::secrets::use_test_store();
+        let dir = std::env::temp_dir().join(format!("cortex-seal-kc-{}", now_ms()));
+        fs::create_dir_all(&dir).unwrap();
+        let snap = dir.join("snap.db");
+        {
+            let st = AppState::new(&snap).unwrap();
+            let c = st.db.lock().unwrap();
+            repo::set_setting(&c, "moodle_token", "kcmoodletoken").unwrap();
+            repo::set_setting(&c, "gemini_api_key", "AIzaKEYCHAIN").unwrap();
+        }
+        seal_snapshot_credentials(&snap, "pw").unwrap();
+
+        let c = Connection::open(&snap).unwrap();
+        let row = |k: &str| -> Option<String> {
+            c.query_row("SELECT value FROM settings WHERE key=?1", [k], |r| r.get(0)).ok()
+        };
+        let sealed = row("moodle_token").expect("synced cred added from the keychain");
+        assert_eq!(unseal_cred(&sealed, "pw").as_deref(), Some("kcmoodletoken"));
+        assert_eq!(row("gemini_api_key"), None, "provider keys never ride sync");
         drop(c);
         let _ = fs::remove_dir_all(&dir);
     }

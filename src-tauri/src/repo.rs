@@ -4,6 +4,7 @@
 use crate::db::{new_id, now_ms};
 use crate::error::{Error, Result};
 use crate::models::*;
+use crate::secrets;
 use crate::vector::{blob_to_f32s, cosine};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
@@ -1619,7 +1620,8 @@ pub fn list_threads(conn: &Connection, subject_id: &str) -> Result<Vec<ThreadInf
 
 // ---- settings ----------------------------------------------------------
 
-/// All settings as a JSON object (for the Settings page to hydrate).
+/// All settings as a JSON object (for the Settings page to hydrate). Secrets that are
+/// set come back as `secrets::MASK`, never their value.
 pub fn all_settings(conn: &Connection) -> Result<serde_json::Value> {
     let mut stmt = conn.prepare("SELECT key, value FROM settings")?;
     let rows = stmt.query_map([], |r| {
@@ -1628,13 +1630,25 @@ pub fn all_settings(conn: &Connection) -> Result<serde_json::Value> {
     let mut map = serde_json::Map::new();
     for row in rows {
         let (k, v) = row?;
-        map.insert(k, serde_json::Value::String(v));
+        if !secrets::is_secret(&k) {
+            map.insert(k, serde_json::Value::String(v));
+        }
+    }
+    for &k in secrets::KEYS {
+        if get_setting(conn, k)?.is_some_and(|v| !v.is_empty()) {
+            map.insert(k.into(), serde_json::Value::String(secrets::MASK.into()));
+        }
     }
     Ok(serde_json::Value::Object(map))
 }
 
-
+/// Secrets (see `secrets::KEYS`) are read from the system keychain when one is in use.
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
+    if secrets::is_secret(key) {
+        if let Some(v) = secrets::get(key) {
+            return Ok(Some(v));
+        }
+    }
     Ok(conn
         .query_row("SELECT value FROM settings WHERE key=?1", params![key], |r| {
             r.get(0)
@@ -1642,7 +1656,12 @@ pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
         .optional()?)
 }
 
+/// Secrets go to the system keychain when one is in use, and any SQLite copy is removed.
 pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    if secrets::is_secret(key) && secrets::set(key, value) {
+        conn.execute("DELETE FROM settings WHERE key=?1", params![key])?;
+        return Ok(());
+    }
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value=excluded.value",

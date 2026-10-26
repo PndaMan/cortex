@@ -24,6 +24,7 @@ mod notes;
 mod recorder;
 mod repo;
 mod review;
+mod secrets;
 mod sync;
 mod vector;
 
@@ -92,6 +93,9 @@ pub fn run() {
             // homelab is unreachable). The frontend calls `sync_pull` in the
             // background after the window is shown; see store loadSyncStatus.
             let state = AppState::new(&db_path).expect("init database");
+            // Keys and tokens belong in the system keychain; move any still in SQLite.
+            secrets::init();
+            secrets::migrate(&state.db.lock().unwrap());
 
             // Demo/screenshot profile: when CORTEX_DEMO is set, fill a *fresh*
             // database with rich showcase data. Guarded to only seed an empty
@@ -361,6 +365,7 @@ pub fn run() {
             commands::update_citation,
             commands::delete_citation,
             commands::get_all_settings,
+            commands::secret_storage_is_keychain,
             commands::set_settings,
             commands::ollama_models,
             commands::verify_provider,

@@ -585,13 +585,30 @@ pub fn list_chunks(state: State<AppState>, source_id: String) -> Result<Vec<Chun
 #[tauri::command]
 pub fn get_setting(state: State<AppState>, key: String) -> Result<Option<String>> {
     let c = state.db.lock().unwrap();
-    repo::get_setting(&c, &key)
+    let v = repo::get_setting(&c, &key)?;
+    // The webview only learns that a secret is set, never its value.
+    if crate::secrets::is_secret(&key) {
+        return Ok(v.filter(|v| !v.is_empty()).map(|_| crate::secrets::MASK.into()));
+    }
+    Ok(v)
 }
 
 #[tauri::command]
 pub fn set_setting(state: State<AppState>, key: String, value: String) -> Result<()> {
     let c = state.db.lock().unwrap();
-    repo::set_setting(&c, &key, &value)
+    store_setting_input(&c, &key, &value)
+}
+
+/// A value typed into Settings. A secret field sent back still holding the mask is
+/// left as stored.
+fn store_setting_input(c: &rusqlite::Connection, key: &str, value: &str) -> Result<()> {
+    if crate::secrets::is_secret(key) {
+        return match crate::secrets::from_input(value) {
+            Some(v) => repo::set_setting(c, key, &v),
+            None => Ok(()),
+        };
+    }
+    repo::set_setting(c, key, value)
 }
 
 // ---- ingestion ---------------------------------------------------------
@@ -3095,9 +3112,15 @@ pub fn get_all_settings(state: State<AppState>) -> Result<serde_json::Value> {
 pub fn set_settings(state: State<AppState>, values: std::collections::HashMap<String, String>) -> Result<()> {
     let c = state.db.lock().unwrap();
     for (k, v) in values {
-        repo::set_setting(&c, &k, &v)?;
+        store_setting_input(&c, &k, &v)?;
     }
     Ok(())
+}
+
+/// Whether keys are kept in the system keychain (false: in the app database).
+#[tauri::command]
+pub fn secret_storage_is_keychain() -> bool {
+    crate::secrets::available()
 }
 
 // ---- lecture recording + Whisper transcription -----------------------

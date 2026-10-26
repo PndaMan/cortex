@@ -235,6 +235,8 @@
     { id: "custom_api_key", label: "Custom endpoint API key", note: "Bearer token for the custom endpoint", placeholder: "sk-…" },
   ] as const;
   // show/hide per key
+  // Where keys are kept: null until the backend answers.
+  let keysInKeychain = $state<boolean | null>(null);
   let showKey = $state<Record<string, boolean>>({
     openrouter: false,
     gemini: false,
@@ -992,6 +994,7 @@
   $effect(() => {
     // All three are independent; issue them concurrently.
     (async () => {
+      api.secretStorageIsKeychain().then((v) => (keysInKeychain = v)).catch(() => {});
       const [s] = await Promise.all([
         api.getAllSettings().catch(() => ({}) as Record<string, string>),
         loadMemory(),
@@ -1498,7 +1501,15 @@ Notes: {about}</pre>
         <header class="set-head">
           <div class="eyebrow">API keys</div>
           <h1 class="set-title">Bring your own keys</h1>
-          <p class="set-sub">Stored in the OS keychain, never synced. Nothing routes through Cortex servers.</p>
+          <p class="set-sub">
+            {#if keysInKeychain === true}
+              Stored in the OS keychain, never synced. Nothing routes through Cortex servers.
+            {:else if keysInKeychain === false}
+              No system keychain was found, so keys are stored in the app database. They are never synced, and nothing routes through Cortex servers.
+            {:else}
+              Never synced. Nothing routes through Cortex servers.
+            {/if}
+          </p>
         </header>
 
         <section class="set-group">

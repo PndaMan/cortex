@@ -35,6 +35,9 @@ percent-encoding = "2"
 chacha20poly1305 = "0.10"
 sha2 = "0.10"
 rand_core = { version = "0.6", features = ["getrandom"] }
+# API keys and tokens live in the OS credential store (secrets.rs), not SQLite.
+# keyring-core is the store-agnostic API; each platform links its own store below.
+keyring-core = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
@@ -77,11 +80,17 @@ libc = "0.2"
 # caffeinate / systemd-inhibit CLIs instead — no crate needed there.
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Power"] }
+windows-native-keyring-store = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
 
 # iOS-only: native lecture recording (AVAudioRecorder via the objc2 bindings).
 # WKWebView's custom-scheme pages aren't a secure context, so getUserMedia does
 # not exist on iOS — the mic must be captured natively (src/recorder.rs).
 [target.'cfg(target_os = "ios")'.dependencies]
+# iOS apps can only use the data-protection keychain.
+apple-native-keyring-store = { version = "1", features = ["protected"] }
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = [
@@ -93,6 +102,8 @@ objc2-avf-audio = { version = "0.3", default-features = false, features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0", features = ["v2_8"] }
+# Secret Service (GNOME Keyring, KWallet) over pure-Rust D-Bus, no libdbus to build.
+zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
 # Used to intercept Ctrl+F at the GTK level (WebKitGTK's native find steals
 # Ctrl+C/V). Versions match webkit2gtk 2.0's gtk-rs (0.18).
 gtk = "0.18"
