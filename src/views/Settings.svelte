@@ -128,11 +128,11 @@
       { id: "o3",          label: "o3 — deep reasoning" },
     ] },
     { id: "claude", label: "Claude", models: [
-      { id: "claude-haiku-4-5-20251001",  label: "Claude Haiku 4.5 — fast + cheap" },
-      { id: "claude-3-5-haiku-20241022",  label: "Claude 3.5 Haiku — cheap" },
-      { id: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet — strong" },
-      { id: "claude-3-7-sonnet-20250219", label: "Claude 3.7 Sonnet — strong" },
-      { id: "claude-sonnet-4-6",          label: "Claude Sonnet 4.6 — ★ premium" },
+      { id: "claude-haiku-5-5",           label: "Claude Haiku 5.5 — fast + cheap" },
+      { id: "claude-haiku-4-5-20251001",  label: "Claude Haiku 4.5 — fast" },
+      { id: "claude-sonnet-5-5",          label: "Claude Sonnet 5.5 — ★ strong" },
+      { id: "claude-sonnet-4-6",          label: "Claude Sonnet 4.6 — strong" },
+      { id: "claude-opus-5-5",            label: "Claude Opus 5.5 — top" },
       { id: "claude-opus-4-8",            label: "Claude Opus 4.8 — top, pricey" },
     ] },
     { id: "ollama", label: "Ollama (local)", models: [

@@ -29,7 +29,7 @@ const DEFAULT_CHAT_MODEL: &str = "openrouter:deepseek/deepseek-v4-flash";
 /// the chat default (DeepSeek V4 Flash) is text-only, so OCR rides its own default so
 /// image/scanned-PDF transcription keeps working out of the box. `from_spec_or_any`
 /// falls back to whichever keyed provider is available, all of whose fallbacks are
-/// multimodal (gpt-4o-mini / gemini-2.5-flash / claude-3.5-sonnet).
+/// multimodal (gpt-4o-mini / gemini-2.5-flash / claude-sonnet-5-5).
 const DEFAULT_VISION_MODEL: &str = "openrouter:google/gemini-2.5-flash";
 
 /// Default faster-whisper model id sent to the remote (speaches) transcription

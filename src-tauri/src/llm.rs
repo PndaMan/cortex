@@ -407,38 +407,95 @@ pub struct ClaudeLlm {
     pub max_tokens: Option<u32>,
 }
 
+/// Request body for the Messages API. No `temperature`: Claude Opus 4.7 and
+/// later, Sonnet 5 and later and the other 5.x models reject sampling
+/// parameters with HTTP 400, and API version 2026-10-21 rejects them on every
+/// model. Older models simply use their default.
+fn claude_body(model: &str, system: Option<&str>, content: serde_json::Value, max_tokens: u32) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{ "role": "user", "content": content }]
+    });
+    if let Some(system) = system {
+        body["system"] = serde_json::json!(system);
+    }
+    body
+}
+
+/// The answer text of a Messages API response: every `text` block joined.
+/// Models that think by default (the 5.x family) put a `thinking` block first,
+/// so reading only `content[0]` returns nothing.
+fn claude_text(json: &serde_json::Value) -> Result<String> {
+    let stop = json["stop_reason"].as_str().unwrap_or("unknown");
+    if stop == "refusal" {
+        let category = json["stop_details"]["category"].as_str().unwrap_or("unspecified");
+        return Err(Error::Other(format!(
+            "claude: the model declined this request (refusal, category {category})"
+        )));
+    }
+    let text: String = json["content"]
+        .as_array()
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|b| b["type"] == "text")
+                .filter_map(|b| b["text"].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    if text.trim().is_empty() {
+        let hint = if stop == "max_tokens" {
+            " The output budget ran out before the answer; raise the token budget in Settings → Models."
+        } else {
+            ""
+        };
+        return Err(Error::Other(format!("claude: empty response (stop_reason={stop}).{hint}")));
+    }
+    Ok(text)
+}
+
+impl ClaudeLlm {
+    fn send(&self, body: &serde_json::Value) -> Result<String> {
+        let json = send_json(
+            "claude",
+            llm_client()
+                .post("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", self.api_key.trim())
+                .header("anthropic-version", "2023-06-01")
+                .json(body),
+        )?;
+        claude_text(&json)
+    }
+}
+
 impl Llm for ClaudeLlm {
     fn set_max_tokens(&mut self, max: u32) {
         self.max_tokens = Some(max);
     }
     fn complete(&self, system: &str, user: &str) -> Result<String> {
-        let client = llm_client();
-        let body = serde_json::json!({
-            "model": self.model,
-            // Roomy enough for a full cheatsheet without cutting off mid-section.
-            // Modern Claude models support far more (Sonnet 4.x: 64K, Opus: 128K
-            // output tokens); 32K covers any cheatsheet while staying within limits.
-            "max_tokens": self.max_tokens.unwrap_or(32000),
-            "temperature": 0.3,
-            "system": system,
-            "messages": [{ "role": "user", "content": user }]
-        });
-        let json = send_json(
-            "claude",
-            client
-                .post("https://api.anthropic.com/v1/messages")
-                .header("x-api-key", &self.api_key)
-                .header("anthropic-version", "2023-06-01")
-                .json(&body),
-        )?;
-        let text = json["content"][0]["text"]
-            .as_str()
-            .ok_or_else(|| Error::Other("claude: empty response".into()))?
-            .to_string();
-        Ok(text)
+        // Roomy enough for a full cheatsheet without cutting off mid-section.
+        // Current Claude models support 64K to 128K output tokens; 32K covers
+        // any cheatsheet while staying within every model's limit.
+        let max_tokens = self.max_tokens.unwrap_or(32000);
+        self.send(&claude_body(&self.model, Some(system), serde_json::json!(user), max_tokens))
     }
     fn name(&self) -> String {
         format!("claude:{}", self.model)
+    }
+    fn ocr(&self, images: &[(String, String)]) -> Result<String> {
+        let mut content: Vec<serde_json::Value> = images
+            .iter()
+            .map(|(mime, b64)| {
+                serde_json::json!({
+                    "type": "image",
+                    "source": { "type": "base64", "media_type": mime, "data": b64 }
+                })
+            })
+            .collect();
+        content.push(serde_json::json!({ "type": "text", "text": OCR_PROMPT }));
+        let max_tokens = self.max_tokens.unwrap_or(16000);
+        self.send(&claude_body(&self.model, None, serde_json::json!(content), max_tokens))
     }
 }
 
@@ -534,7 +591,7 @@ pub fn from_spec_or_any(spec: &str, keys: &Keys) -> Option<Box<dyn Llm>> {
     } else if nonempty(&keys.openai).is_some() {
         "openai:gpt-4o-mini"
     } else if nonempty(&keys.claude).is_some() {
-        "claude:claude-3-5-sonnet-20241022"
+        "claude:claude-sonnet-5-5"
     } else if nonempty(&keys.custom_endpoint).is_some() {
         "custom:default"
     } else {
@@ -704,6 +761,62 @@ mod tests {
             Ok(t) => println!("LIVE OK: {}", truncate(&t, 200)),
             Err(e) => println!("LIVE ERR: {e}"),
         }
+    }
+
+    #[test]
+    fn claude_body_sends_no_sampling_parameters() {
+        let body = claude_body("claude-sonnet-5-5", Some("sys"), serde_json::json!("hi"), 1024);
+        assert!(body.get("temperature").is_none());
+        assert_eq!(body["system"], "sys");
+        assert_eq!(body["max_tokens"], 1024);
+        assert_eq!(body["messages"][0]["content"], "hi");
+        let ocr = claude_body("claude-sonnet-5-5", None, serde_json::json!([]), 1024);
+        assert!(ocr.get("system").is_none());
+    }
+
+    #[test]
+    fn claude_text_skips_thinking_blocks() {
+        let resp = serde_json::json!({
+            "stop_reason": "end_turn",
+            "content": [
+                { "type": "thinking", "thinking": "", "signature": "x" },
+                { "type": "text", "text": "Hello " },
+                { "type": "text", "text": "world" }
+            ]
+        });
+        assert_eq!(claude_text(&resp).unwrap(), "Hello world");
+    }
+
+    #[test]
+    fn claude_text_reports_refusal_and_exhausted_budget() {
+        let refusal = serde_json::json!({
+            "stop_reason": "refusal",
+            "stop_details": { "type": "refusal", "category": "cyber" },
+            "content": []
+        });
+        assert!(claude_text(&refusal).unwrap_err().to_string().contains("refusal, category cyber"));
+        let cut = serde_json::json!({
+            "stop_reason": "max_tokens",
+            "content": [{ "type": "thinking", "thinking": "", "signature": "x" }]
+        });
+        assert!(claude_text(&cut).unwrap_err().to_string().contains("token budget"));
+    }
+
+    // Live check (ignored by default) through the app's own client:
+    //   ANTHROPIC_API_KEY=... CLAUDE_MODEL=claude-sonnet-5-5 cargo test --lib live_claude -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_claude() {
+        let llm = ClaudeLlm {
+            api_key: std::env::var("ANTHROPIC_API_KEY").expect("set ANTHROPIC_API_KEY"),
+            model: std::env::var("CLAUDE_MODEL").unwrap_or_else(|_| "claude-sonnet-5-5".into()),
+            max_tokens: Some(2048),
+        };
+        let text = llm
+            .complete("You output JSON only.", "Return {\"ok\":true} and nothing else.")
+            .expect("live call failed");
+        assert_eq!(extract_json(&text).unwrap()["ok"], true);
+        println!("LIVE OK {}: {}", llm.name(), truncate(&text, 200));
     }
 
     #[test]
